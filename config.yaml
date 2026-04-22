@@ -1,0 +1,24 @@
+app:
+  name: "PDF OCR Tool"
+  version: "1.0.0"
+  window_size: [1400, 900]
+
+pdf:
+  render_dpi: 200
+  max_preview_size: 2000
+
+ocr:
+  lang: "ch"
+  use_gpu: false
+  use_angle_cls: true
+  det_db_box_thresh: 0.5
+  drop_score: 0.5
+
+batch:
+  max_workers: 4
+  retry_times: 2
+
+export:
+  default_format: "xlsx"
+  include_confidence: true
+  include_source_file: true
