@@ -287,8 +287,10 @@ class MainWindow(FluentWindow):
             self.status_label.setText(f"已加载 {len(files)} 个文件 - 请框选识别区域")
 
     def on_file_selected(self, pdf_path: str):
+        # 加载新 PDF 预览（自动保留已有的框选区域）
         image = self.pdf_loader.render_page(pdf_path)
         self.pdf_canvas.load_image(image)
+
         from pathlib import Path
         self.status_label.setText(f"当前: {Path(pdf_path).name} - 在画布上拖拽框选区域")
 

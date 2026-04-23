@@ -1,10 +1,10 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView
+    QHeaderView, QAbstractItemView
 )
 from PyQt6.QtCore import pyqtSignal as Signal, Qt
 from PyQt6.QtGui import QColor, QBrush
-from qfluentwidgets import SubtitleLabel, PushButton, ComboBox, BodyLabel
+from qfluentwidgets import SubtitleLabel, PushButton, ComboBox, BodyLabel, InfoBar, InfoBarPosition
 from app.models.region import Region
 from app.models.template import Template
 
@@ -25,6 +25,7 @@ class FieldPanel(QWidget):
     def __init__(self):
         super().__init__()
         self.regions = {}   # id -> Region
+        self._preview_results = {}  # region_id -> FieldResult (存储试识别结果)
         self._init_ui()
 
     def _init_ui(self):
@@ -50,7 +51,32 @@ class FieldPanel(QWidget):
                 alternate-background-color: #f5f5f5;
             }
         """)
+        # 字段名列可编辑
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
+        # 点击识别结果列显示详情
+        self.table.cellClicked.connect(self._on_cell_clicked)
         layout.addWidget(self.table, 1)
+
+        # 识别结果详情显示区域
+        self.detail_widget = QWidget()
+        self.detail_widget.setVisible(False)
+        detail_layout = QVBoxLayout(self.detail_widget)
+        detail_layout.setContentsMargins(8, 8, 8, 8)
+        detail_layout.setSpacing(4)
+
+        self.detail_title = BodyLabel("识别结果详情")
+        self.detail_title.setStyleSheet("font-weight: bold;")
+        detail_layout.addWidget(self.detail_title)
+
+        self.detail_content = BodyLabel("")
+        self.detail_content.setWordWrap(True)
+        self.detail_content.setStyleSheet("background: #f5f5f5; padding: 8px; border-radius: 4px;")
+        detail_layout.addWidget(self.detail_content)
+
+        self.detail_confidence = BodyLabel("")
+        detail_layout.addWidget(self.detail_confidence)
+
+        layout.addWidget(self.detail_widget)
 
         # 操作按钮
         btn_clear = PushButton("清空所有字段")
@@ -63,6 +89,34 @@ class FieldPanel(QWidget):
         has_fields = len(self.regions) > 0
         self.empty_label.setVisible(not has_fields)
         self.table.setVisible(has_fields)
+
+    def _on_cell_clicked(self, row: int, column: int):
+        """点击单元格事件 - 点击识别结果列显示详情"""
+        if column != 2:  # 只处理识别结果列
+            self.detail_widget.setVisible(False)
+            return
+
+        item = self.table.item(row, 0)
+        if item is None:
+            return
+        rid = item.data(Qt.ItemDataRole.UserRole)
+        if rid not in self._preview_results:
+            self.detail_widget.setVisible(False)
+            return
+
+        fr = self._preview_results[rid]
+        if fr.text:
+            self.detail_content.setText(f"内容：{fr.text}")
+            conf_text = f"置信度：{fr.confidence:.2%}"
+            if fr.confidence < 0.7:
+                conf_text += " (较低)"
+                self.detail_confidence.setStyleSheet("color: #d13438;")
+            else:
+                self.detail_confidence.setStyleSheet("color: #107c10;")
+            self.detail_confidence.setText(conf_text)
+            self.detail_widget.setVisible(True)
+        else:
+            self.detail_widget.setVisible(False)
 
     def add_region(self, region: Region):
         self.regions[region.id] = region
@@ -94,6 +148,8 @@ class FieldPanel(QWidget):
     def _delete(self, region_id):
         if region_id in self.regions:
             del self.regions[region_id]
+        if region_id in self._preview_results:
+            del self._preview_results[region_id]
         # 找到并删除对应行
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
@@ -102,12 +158,17 @@ class FieldPanel(QWidget):
                 break
         self.region_deleted.emit(region_id)
         self._update_empty_state()
+        # 隐藏详情区域
+        self.detail_widget.setVisible(False)
 
     def clear_all(self):
         self.regions.clear()
+        self._preview_results.clear()
         self.table.setRowCount(0)
         self.region_changed.emit([])
         self._update_empty_state()
+        # 隐藏详情区域
+        self.detail_widget.setVisible(False)
 
     def build_template(self) -> Template:
         regions = []
@@ -134,6 +195,7 @@ class FieldPanel(QWidget):
 
     def show_preview_result(self, file_result):
         """显示试识别结果 - 使用 region_id 匹配确保准确性"""
+        self._preview_results.clear()
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
             if item is None:
@@ -146,6 +208,7 @@ class FieldPanel(QWidget):
             field_name = region.field_name
             if field_name in file_result.fields:
                 fr = file_result.fields[field_name]
+                self._preview_results[rid] = fr  # 存储结果
                 result_item = QTableWidgetItem(fr.text)
                 if fr.confidence < 0.7:
                     result_item.setBackground(QColor("#FFE5E5"))
@@ -153,3 +216,5 @@ class FieldPanel(QWidget):
                 else:
                     result_item.setToolTip(f"置信度: {fr.confidence:.2%}")
                 self.table.setItem(row, 2, result_item)
+        # 隐藏详情区域
+        self.detail_widget.setVisible(False)
