@@ -39,3 +39,20 @@ class BatchProcessor:
             if progress_cb:
                 progress_cb(idx + 1, total, path)
         return results
+
+    def process_batch_with_templates(
+        self,
+        pdf_paths: List[str],
+        templates: List[Template],
+        progress_cb: Callable[[int, int, str], None] = None,
+    ) -> List[FileResult]:
+        """为每个PDF使用对应的模板进行批量处理"""
+        results = []
+        total = len(pdf_paths)
+        for idx, path in enumerate(pdf_paths):
+            template = templates[idx] if idx < len(templates) else templates[-1]
+            result = self.process_one(path, template)
+            results.append(result)
+            if progress_cb:
+                progress_cb(idx + 1, total, path)
+        return results

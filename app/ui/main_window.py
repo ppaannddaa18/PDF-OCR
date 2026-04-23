@@ -46,6 +46,12 @@ class MainWindow(FluentWindow):
         self.worker = None
         self.state_tooltip = None
 
+        # 字段配置存储：默认模板 + 特殊PDF的覆盖配置
+        self._default_template = None  # 第一个PDF的字段配置作为默认
+        self._pdf_overrides = {}       # pdf_path -> Template，仅存储有特殊配置的PDF
+        self._current_pdf = None       # 当前选中的PDF
+        self._current_preview_result = None  # 当前PDF的试识别结果
+
         # 创建子页面
         self.template_page = self._create_template_page()
         self.result_page = self._create_result_page()
@@ -272,6 +278,8 @@ class MainWindow(FluentWindow):
         self.pdf_canvas.region_drawn.connect(self.field_panel.add_region)
         self.field_panel.region_changed.connect(self.pdf_canvas.update_regions)
         self.field_panel.region_deleted.connect(self.pdf_canvas.remove_region)
+        self.field_panel.current_cleared.connect(self.on_clear_current_pdf_fields)
+        self.field_panel.all_cleared.connect(self.on_clear_all_pdf_fields)
 
     def switchTo(self, page: QWidget):
         """切换到指定页面"""
@@ -286,10 +294,70 @@ class MainWindow(FluentWindow):
             self.on_file_selected(files[0])
             self.status_label.setText(f"已加载 {len(files)} 个文件 - 请框选识别区域")
 
+    def _get_effective_template(self, pdf_path: str = None):
+        """获取指定PDF的有效模板配置
+
+        优先级：
+        1. 如果PDF在_pdf_overrides中，使用覆盖配置（即使是空的）
+        2. 否则使用默认模板
+        """
+        if pdf_path and pdf_path in self._pdf_overrides:
+            return self._pdf_overrides[pdf_path]
+        return self._default_template
+
+    def _save_current_pdf_config(self):
+        """保存当前PDF的配置"""
+        if self._current_pdf is None:
+            return
+        template = self.field_panel.build_template()
+
+        # 如果有字段配置，判断是设为默认还是特殊配置
+        if template.regions:
+            if self._default_template is None:
+                # 第一个有配置的PDF作为默认模板
+                self._default_template = template
+            elif self._is_template_different(template, self._default_template):
+                # 与默认模板不同，保存为特殊配置
+                self._pdf_overrides[self._current_pdf] = template
+            # 如果与默认模板相同，不保存为特殊配置（使用默认）
+        else:
+            # 当前没有字段配置
+            # 如果之前有特殊配置，保留它（用户可能想保持空配置）
+            pass
+
+    def _is_template_different(self, t1, t2):
+        """比较两个模板是否不同"""
+        if len(t1.regions) != len(t2.regions):
+            return True
+        for r1, r2 in zip(t1.regions, t2.regions):
+            if (r1.field_name != r2.field_name or
+                r1.field_type != r2.field_type or
+                r1.x != r2.x or r1.y != r2.y or
+                r1.w != r2.w or r1.h != r2.h):
+                return True
+        return False
+
     def on_file_selected(self, pdf_path: str):
+        # 保存当前PDF的配置
+        self._save_current_pdf_config()
+        self._current_pdf = pdf_path
+
         # 加载新 PDF 预览（自动保留已有的框选区域）
         image = self.pdf_loader.render_page(pdf_path)
         self.pdf_canvas.load_image(image)
+
+        # 加载该PDF的字段配置（默认或特殊配置）
+        template = self._get_effective_template(pdf_path)
+        if template and template.regions:
+            self.field_panel.load_template(template)
+            self.pdf_canvas.update_regions(template.regions)
+        else:
+            # 没有配置时清空字段面板
+            self.field_panel.clear_all()
+
+        # 清空试识别结果（切换PDF后不保留）
+        self._current_preview_result = None
+        self.field_panel._preview_results.clear()
 
         from pathlib import Path
         self.status_label.setText(f"当前: {Path(pdf_path).name} - 在画布上拖拽框选区域")
@@ -311,6 +379,7 @@ class MainWindow(FluentWindow):
         self.status_label.setText("正在试识别...")
         result = self.processor.process_one(current_pdf, template)
         self.field_panel.show_preview_result(result)
+        self._current_preview_result = result
         self.status_label.setText(f"试识别完成 - 共 {len(template.regions)} 个字段")
 
     def on_batch_run(self):
@@ -334,7 +403,16 @@ class MainWindow(FluentWindow):
         self.progress_bar.setValue(0)
         self.progress_label.setText(f"0/{len(files)}")
 
-        self.worker = BatchWorker(self.processor, files, template)
+        # 为每个文件准备对应的模板
+        templates = []
+        for f in files:
+            t = self._get_effective_template(f)
+            if t and t.regions:
+                templates.append(t)
+            else:
+                templates.append(template)  # 使用当前界面上的配置
+
+        self.worker = BatchWorker(self.processor, files, templates)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_all.connect(self._on_batch_done)
         self.worker.start()
@@ -361,7 +439,9 @@ class MainWindow(FluentWindow):
         self.stat_success.setText(f"成功: {success}")
         self.stat_fail.setText(f"失败: {fail}")
 
+        # 切换到结果页面并更新导航选中状态
         self.switchTo(self.result_page)
+        self.navigationInterface.setCurrentItem('result')
         self.status_label.setText(f"批量识别完成 - 成功 {success}/{total}")
 
         InfoBar.success(
@@ -432,6 +512,61 @@ class MainWindow(FluentWindow):
                 duration=2000,
                 parent=self
             )
+
+    def on_clear_current_pdf_fields(self):
+        """清空当前PDF的字段配置，用户手动添加的配置将作为特殊配置"""
+        if self._current_pdf is None:
+            InfoBar.warning(
+                title="提示",
+                content="请先选择一个PDF文件",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+            return
+
+        # 清空当前字段面板和画布
+        self.field_panel.clear_all()
+        self.pdf_canvas.update_regions([])
+
+        # 将该PDF标记为需要特殊配置（空配置作为占位）
+        # 当用户手动添加字段时，会保存为特殊配置
+        from app.models.template import Template
+        self._pdf_overrides[self._current_pdf] = Template(name="empty", regions=[])
+
+        InfoBar.success(
+            title="成功",
+            content="已清空当前PDF的字段配置，可手动添加特殊配置",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2000,
+            parent=self
+        )
+
+    def on_clear_all_pdf_fields(self):
+        """清空所有PDF的字段配置"""
+        # 清空默认配置
+        self._default_template = None
+        # 清空所有特殊配置
+        self._pdf_overrides.clear()
+        # 清空当前显示
+        self.field_panel.clear_all()
+        self.pdf_canvas.update_regions([])
+        # 清空试识别结果
+        self._current_preview_result = None
+
+        InfoBar.success(
+            title="成功",
+            content="已清空所有PDF的字段配置",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2000,
+            parent=self
+        )
 
     def closeEvent(self, event):
         """窗口关闭时确保 worker 线程安全终止"""

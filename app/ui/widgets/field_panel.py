@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView
+    QHeaderView, QAbstractItemView, QHBoxLayout
 )
 from PyQt6.QtCore import pyqtSignal as Signal, Qt
 from PyQt6.QtGui import QColor, QBrush
@@ -12,6 +12,8 @@ from app.models.template import Template
 class FieldPanel(QWidget):
     region_changed = Signal(list)          # List[Region]
     region_deleted = Signal(str)           # region_id
+    current_cleared = Signal()             # 清空当前字段信号
+    all_cleared = Signal()                 # 清空所有字段信号
 
     # 字段类型颜色映射
     TYPE_COLORS = {
@@ -78,10 +80,21 @@ class FieldPanel(QWidget):
 
         layout.addWidget(self.detail_widget)
 
-        # 操作按钮
-        btn_clear = PushButton("清空所有字段")
-        btn_clear.clicked.connect(self.clear_all)
-        layout.addWidget(btn_clear)
+        # 操作按钮区域（水平布局）
+        btn_layout = QHBoxLayout()
+
+        # 清空当前字段按钮
+        btn_clear_current = PushButton("清空当前字段")
+        btn_clear_current.setToolTip("仅清空当前选中PDF的字段配置，其他PDF不受影响")
+        btn_clear_current.clicked.connect(self.clear_current)
+        btn_layout.addWidget(btn_clear_current)
+
+        # 清空所有字段按钮
+        btn_clear_all = PushButton("清空所有字段")
+        btn_clear_all.clicked.connect(self._on_clear_all_clicked)
+        btn_layout.addWidget(btn_clear_all)
+
+        layout.addLayout(btn_layout)
 
         self._update_empty_state()
 
@@ -170,6 +183,17 @@ class FieldPanel(QWidget):
         # 隐藏详情区域
         self.detail_widget.setVisible(False)
 
+    def clear_current(self):
+        """清空当前字段（仅发送信号，由主窗口处理具体逻辑）"""
+        self.current_cleared.emit()
+        self._update_empty_state()
+        # 隐藏详情区域
+        self.detail_widget.setVisible(False)
+
+    def _on_clear_all_clicked(self):
+        """清空所有字段按钮点击事件"""
+        self.all_cleared.emit()
+
     def build_template(self) -> Template:
         regions = []
         for row in range(self.table.rowCount()):
@@ -218,3 +242,20 @@ class FieldPanel(QWidget):
                 self.table.setItem(row, 2, result_item)
         # 隐藏详情区域
         self.detail_widget.setVisible(False)
+
+    def _refresh_preview_results(self):
+        """根据存储的_preview_results刷新表格显示"""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is None:
+                continue
+            rid = item.data(Qt.ItemDataRole.UserRole)
+            if rid in self._preview_results:
+                fr = self._preview_results[rid]
+                result_item = QTableWidgetItem(fr.text)
+                if fr.confidence < 0.7:
+                    result_item.setBackground(QColor("#FFE5E5"))
+                    result_item.setToolTip(f"置信度: {fr.confidence:.2%}")
+                else:
+                    result_item.setToolTip(f"置信度: {fr.confidence:.2%}")
+                self.table.setItem(row, 2, result_item)
