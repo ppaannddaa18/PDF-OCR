@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import pyqtSignal as Signal, Qt
 from qfluentwidgets import SubtitleLabel, ListWidget, PushButton, BodyLabel
 from pathlib import Path
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 
 class FileListPanel(QWidget):
@@ -9,6 +10,8 @@ class FileListPanel(QWidget):
 
     def __init__(self):
         super().__init__()
+        # 启用拖拽
+        self.setAcceptDrops(True)
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -19,7 +22,7 @@ class FileListPanel(QWidget):
         layout.addWidget(self.list_widget, 1)
 
         # 空状态提示
-        self.empty_label = BodyLabel("暂无文件\n点击上方「上传」按钮添加")
+        self.empty_label = BodyLabel("暂无文件\n点击上方「上传」按钮添加\n或拖拽 PDF 文件到此处")
         self.empty_label.setStyleSheet("color: #888; text-align: center;")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.empty_label)
@@ -67,8 +70,15 @@ class FileListPanel(QWidget):
             path = item.data(256)
             if path:
                 self.file_selected.emit(path)
+
+    def current_file(self) -> str:
+        """返回当前选中的文件路径，无选中则返回第一个文件"""
         item = self.list_widget.currentItem()
-        return item.data(256) if item else None
+        if item:
+            return item.data(256)
+        if self.files:
+            return self.files[0]
+        return None
 
     def all_files(self):
         return list(self.files)
@@ -77,3 +87,26 @@ class FileListPanel(QWidget):
         self.files.clear()
         self.list_widget.clear()
         self._update_empty_state()
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """拖拽进入事件 - 只接受 PDF 文件"""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            for url in urls:
+                if url.toLocalFile().lower().endswith('.pdf'):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        """拖拽放下事件 - 处理 PDF 文件"""
+        files = []
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path.lower().endswith('.pdf'):
+                files.append(path)
+        if files:
+            self.add_files(files)
+            # 发送信号加载第一个文件
+            self.file_selected.emit(files[0])
+        event.acceptProposedAction()
