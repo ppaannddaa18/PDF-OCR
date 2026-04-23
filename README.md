@@ -5,7 +5,7 @@
 ## 一、技术栈确认
 
 - **语言**：Python 3.9+
-- **GUI**：PySide6（Qt for Python，比 PyQt 授权更友好）
+- **GUI**：PyQt6 + PyQt-Fluent-Widgets（Win11 风格）+ QtAwesome（图标）
 - **PDF 渲染**：PyMuPDF (fitz)
 - **OCR**：PaddleOCR
 - **图像处理**：Pillow + OpenCV
@@ -90,7 +90,7 @@ pdf_ocr_tool/
 
 ```python
 import sys
-from PySide6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication
 from app.ui.main_window import MainWindow
 from app.utils.logger import setup_logger
 from app.utils.config_loader import load_config
@@ -415,11 +415,11 @@ def ratio_to_pixel(rx: float, ry: float, rw: float, rh: float, img_w: int, img_h
 
 **`app/ui/main_window.py`**
 ```python
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QTabWidget
 )
-from PySide6.QtCore import Qt
+from PyQt6.QtCore import Qt
 from app.ui.widgets.pdf_canvas import PdfCanvas
 from app.ui.widgets.file_list_panel import FileListPanel
 from app.ui.widgets.field_panel import FieldPanel
@@ -483,7 +483,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _create_toolbar(self):
-        from PySide6.QtWidgets import QToolBar
+        from PyQt6.QtWidgets import QToolBar
         toolbar = QToolBar()
         toolbar.addAction("上传PDF", self.on_upload)
         toolbar.addAction("试识别", self.on_try_ocr)
@@ -569,9 +569,9 @@ class MainWindow(QMainWindow):
 
 **`app/ui/widgets/pdf_canvas.py`**（关键：PDF 展示 + 框选）
 ```python
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem
-from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QImage
-from PySide6.QtCore import Qt, QRectF, Signal, QPointF
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QImage
+from PyQt6.QtCore import Qt, QRectF, pyqtSignal as Signal, QPointF
 from PIL import Image
 import uuid
 from app.models.region import Region
@@ -673,11 +673,11 @@ class PdfCanvas(QGraphicsView):
 
 **`app/ui/widgets/field_panel.py`**（右栏字段配置）
 ```python
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QComboBox, QHeaderView, QLabel
 )
-from PySide6.QtCore import Signal
+from PyQt6.QtCore import pyqtSignal as Signal
 from app.models.region import Region
 from app.models.template import Template
 
@@ -765,15 +765,15 @@ class FieldPanel(QWidget):
                 fr = file_result.fields[name]
                 item = QTableWidgetItem(fr.text)
                 if fr.confidence < 0.7:
-                    from PySide6.QtGui import QColor
+                    from PyQt6.QtGui import QColor
                     item.setBackground(QColor("#FFE5E5"))
                 self.table.setItem(row, 2, item)
 ```
 
 **`app/ui/widgets/file_list_panel.py`**
 ```python
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QListWidget, QLabel
-from PySide6.QtCore import Signal
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QListWidget, QLabel
+from PyQt6.QtCore import pyqtSignal as Signal
 from pathlib import Path
 
 class FileListPanel(QWidget):
@@ -807,8 +807,8 @@ class FileListPanel(QWidget):
 
 **`app/ui/widgets/result_table.py`**
 ```python
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
-from PySide6.QtGui import QColor
+from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
+from PyQt6.QtGui import QColor
 from app.models.ocr_result import FileResult, FieldResult
 from pathlib import Path
 
@@ -865,7 +865,7 @@ class ResultTable(QTableWidget):
 
 **`app/workers/batch_worker.py`**
 ```python
-from PySide6.QtCore import QThread, Signal
+from PyQt6.QtCore import QThread, pyqtSignal as Signal
 
 class BatchWorker(QThread):
     progress = Signal(int, int, str)       # done, total, current_file
@@ -960,7 +960,9 @@ def validate(text: str, field_type: str) -> bool:
 ### 3.8 依赖文件 `requirements.txt`
 
 ```
-PySide6>=6.5.0
+PyQt6>=6.5.0
+PyQt-Fluent-Widgets>=1.4.0
+QtAwesome>=1.2.0
 PyMuPDF>=1.23.0
 paddleocr>=2.7.0
 paddlepaddle>=2.5.0

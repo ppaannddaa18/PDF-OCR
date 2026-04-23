@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
-from PySide6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+from qfluentwidgets import setThemeColor
 from app.ui.main_window import MainWindow
 from app.utils.logger import setup_logger
 from app.utils.config_loader import load_config
@@ -11,11 +13,15 @@ def main():
     config_path = Path(__file__).parent / "config.yaml"
     config = load_config(str(config_path))
 
+    # 启用高DPI支持
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
+
     app = QApplication(sys.argv)
-    style_path = Path(__file__).parent / "app" / "ui" / "styles" / "app.qss"
-    if style_path.exists():
-        with open(style_path, "r", encoding="utf-8") as f:
-            app.setStyleSheet(f.read())
+
+    # 设置 Fluent 主题强调色
+    setThemeColor('#4a90d9')
 
     window = MainWindow(config)
     window.show()

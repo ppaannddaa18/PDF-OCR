@@ -1,5 +1,5 @@
-from PySide6.QtWidgets import QProgressDialog
-from PySide6.QtCore import Signal
+from PyQt6.QtWidgets import QProgressDialog
+from PyQt6.QtCore import pyqtSignal as Signal
 
 
 class ProgressDialog(QProgressDialog):

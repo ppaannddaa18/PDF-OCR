@@ -1,5 +1,5 @@
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
-from PySide6.QtGui import QColor
+from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
+from PyQt6.QtGui import QColor
 from app.models.ocr_result import FileResult
 from pathlib import Path
 
@@ -7,7 +7,7 @@ from pathlib import Path
 class ResultTable(QTableWidget):
     def __init__(self):
         super().__init__()
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._results = []
 
     def load_results(self, results: list):
@@ -40,6 +40,8 @@ class ResultTable(QTableWidget):
 
     def collect_results(self) -> list:
         """用户在表格中编辑过的值回写到 results"""
+        if self.columnCount() <= 2:
+            return self._results
         field_names = [self.horizontalHeaderItem(i).text()
                        for i in range(1, self.columnCount()-1)]
         for row, r in enumerate(self._results):

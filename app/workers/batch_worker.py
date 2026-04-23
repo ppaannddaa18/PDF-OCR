@@ -1,4 +1,4 @@
-from PySide6.QtCore import QThread, Signal
+from PyQt6.QtCore import QThread, pyqtSignal as Signal
 
 
 class BatchWorker(QThread):

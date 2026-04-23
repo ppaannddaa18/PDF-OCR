@@ -16,6 +16,7 @@ class OCREngine:
     def __init__(self, lang="ch", use_gpu=False, use_angle_cls=True):
         if hasattr(self, "_initialized"):
             return
+        # PaddleOCR 2.x 版本 API
         self.ocr = PaddleOCR(
             use_angle_cls=use_angle_cls,
             lang=lang,
