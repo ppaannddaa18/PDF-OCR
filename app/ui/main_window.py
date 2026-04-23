@@ -73,9 +73,11 @@ class MainWindow(FluentWindow):
             routeKey='result',
             icon=qta.icon('fa5s.table', color='#0078d4'),
             text='识别结果',
-            onClick=lambda: self.switchTo(self.result_page),
-            position=NavigationItemPosition.BOTTOM
+            onClick=lambda: self.switchTo(self.result_page)
         )
+
+        # 隐藏返回按钮
+        self.navigationInterface.setReturnButtonVisible(False)
 
     def _create_template_page(self) -> QWidget:
         """创建模板编辑页面"""
@@ -105,19 +107,38 @@ class MainWindow(FluentWindow):
         content_layout = QHBoxLayout(content)
         content_layout.setSpacing(10)
 
-        # 左栏：文件列表
+        # 左栏：文件列表（包含标题）
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+
+        from qfluentwidgets import SubtitleLabel
+        file_title = SubtitleLabel("文件列表")
+        left_layout.addWidget(file_title)
+
         self.file_panel = FileListPanel()
         self.file_panel.setFixedWidth(200)
-        content_layout.addWidget(self.file_panel)
+        left_layout.addWidget(self.file_panel, 1)
+        content_layout.addWidget(left_panel)
 
         # 中栏：PDF 画布
         self.pdf_canvas = PdfCanvas()
         content_layout.addWidget(self.pdf_canvas, 4)
 
-        # 右栏：字段配置
+        # 右栏：字段配置（包含标题）
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
+
+        field_title = SubtitleLabel("字段配置")
+        right_layout.addWidget(field_title)
+
         self.field_panel = FieldPanel()
         self.field_panel.setFixedWidth(280)
-        content_layout.addWidget(self.field_panel)
+        right_layout.addWidget(self.field_panel, 1)
+        content_layout.addWidget(right_panel)
 
         layout.addWidget(content, 1)
 
@@ -268,7 +289,8 @@ class MainWindow(FluentWindow):
     def on_file_selected(self, pdf_path: str):
         image = self.pdf_loader.render_page(pdf_path)
         self.pdf_canvas.load_image(image)
-        self.status_label.setText(f"当前: {pdf_path.split('/')[-1]} - 在画布上拖拽框选区域")
+        from pathlib import Path
+        self.status_label.setText(f"当前: {Path(pdf_path).name} - 在画布上拖拽框选区域")
 
     def on_try_ocr(self):
         template = self.field_panel.build_template()
@@ -319,7 +341,8 @@ class MainWindow(FluentWindow):
     def _on_progress(self, done, total, current_file):
         self.progress_bar.setValue(done)
         self.progress_label.setText(f"{done}/{total}")
-        self.status_label.setText(f"处理中: {current_file.split('/')[-1]} ({done}/{total})")
+        from pathlib import Path
+        self.status_label.setText(f"处理中: {Path(current_file).name} ({done}/{total})")
 
     def _on_batch_done(self, results):
         # 隐藏进度条
@@ -407,3 +430,10 @@ class MainWindow(FluentWindow):
                 duration=2000,
                 parent=self
             )
+
+    def closeEvent(self, event):
+        """窗口关闭时确保 worker 线程安全终止"""
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.worker.wait(3000)  # 等待最多3秒
+        event.accept()

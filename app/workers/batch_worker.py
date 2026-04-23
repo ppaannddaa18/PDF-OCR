@@ -10,9 +10,19 @@ class BatchWorker(QThread):
         self.processor = processor
         self.pdf_files = pdf_files
         self.template = template
+        self._is_cancelled = False
+
+    def cancel(self):
+        """请求取消批量处理"""
+        self._is_cancelled = True
 
     def run(self):
         def cb(done, total, current):
+            if self._is_cancelled:
+                raise InterruptedError("用户取消")
             self.progress.emit(done, total, current)
-        results = self.processor.process_batch(self.pdf_files, self.template, cb)
-        self.finished_all.emit(results)
+        try:
+            results = self.processor.process_batch(self.pdf_files, self.template, cb)
+            self.finished_all.emit(results)
+        except InterruptedError:
+            self.finished_all.emit([])

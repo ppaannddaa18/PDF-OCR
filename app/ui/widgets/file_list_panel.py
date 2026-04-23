@@ -11,16 +11,11 @@ class FileListPanel(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
-
-        # Fluent 标题
-        title = SubtitleLabel("文件列表")
-        layout.addWidget(title)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # Fluent 列表
         self.list_widget = ListWidget()
-        self.list_widget.itemClicked.connect(
-            lambda item: self.file_selected.emit(item.data(256))
-        )
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self.list_widget, 1)
 
         # 空状态提示
@@ -66,7 +61,12 @@ class FileListPanel(QWidget):
             self.list_widget.takeItem(self.list_widget.row(item))
             self._update_empty_state()
 
-    def current_file(self):
+    def _on_item_clicked(self, item):
+        """处理列表项点击"""
+        if item:
+            path = item.data(256)
+            if path:
+                self.file_selected.emit(path)
         item = self.list_widget.currentItem()
         return item.data(256) if item else None
 

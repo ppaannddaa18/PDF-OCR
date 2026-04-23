@@ -16,7 +16,8 @@
       "Bash(venv/Scripts/pip.exe install *)",
       "Bash(tasklist)",
       "Bash(python -c \"from app.ui.main_window import MainWindow; print\\('Import OK'\\)\")",
-      "Bash(python -c \"from qfluentwidgets import *; print\\([x for x in dir\\(\\) if 'progress' in x.lower\\(\\) or 'Progress' in x]\\)\")"
+      "Bash(python -c \"from qfluentwidgets import *; print\\([x for x in dir\\(\\) if 'progress' in x.lower\\(\\) or 'Progress' in x]\\)\")",
+      "Bash(python *)"
     ]
   }
 }

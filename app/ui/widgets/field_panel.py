@@ -30,9 +30,7 @@ class FieldPanel(QWidget):
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
-
-        # Fluent 标签
-        layout.addWidget(SubtitleLabel("字段配置"))
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # 空状态提示
         self.empty_label = BodyLabel("暂无字段\n在 PDF 画布上拖拽框选区域")
@@ -135,13 +133,19 @@ class FieldPanel(QWidget):
         self.region_changed.emit(list(self.regions.values()))
 
     def show_preview_result(self, file_result):
+        """显示试识别结果 - 使用 region_id 匹配确保准确性"""
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
             if item is None:
                 continue
-            name = item.text()
-            if name in file_result.fields:
-                fr = file_result.fields[name]
+            rid = item.data(Qt.ItemDataRole.UserRole)
+            if rid not in self.regions:
+                continue
+            region = self.regions[rid]
+            # 使用 region_id 对应的 field_name 查找结果
+            field_name = region.field_name
+            if field_name in file_result.fields:
+                fr = file_result.fields[field_name]
                 result_item = QTableWidgetItem(fr.text)
                 if fr.confidence < 0.7:
                     result_item.setBackground(QColor("#FFE5E5"))

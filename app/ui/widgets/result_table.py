@@ -12,6 +12,7 @@ class ResultTable(QTableWidget):
 
     def load_results(self, results: list):
         self._results = results
+        self.clear()  # 清空表格
         if not results:
             return
         # 收集所有字段名
