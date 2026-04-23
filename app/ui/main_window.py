@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QStackedWidget
+    QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QStackedWidget, QSplitter
 )
 from PyQt6.QtCore import Qt, QSize
 from qfluentwidgets import (
@@ -51,6 +51,7 @@ class MainWindow(FluentWindow):
         self._pdf_overrides = {}       # pdf_path -> Template，仅存储有特殊配置的PDF
         self._current_pdf = None       # 当前选中的PDF
         self._current_preview_result = None  # 当前PDF的试识别结果
+        self._pdf_preview_results = {}  # pdf_path -> FileResult，存储每个PDF的试识别结果
 
         # 创建子页面
         self.template_page = self._create_template_page()
@@ -65,6 +66,43 @@ class MainWindow(FluentWindow):
         self.stackedWidget.setCurrentWidget(self.template_page)
 
         self._connect_signals()
+
+        # 设置快捷键
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self):
+        """设置快捷键"""
+        from PyQt6.QtGui import QShortcut, QKeySequence
+
+        # Ctrl+O: 上传PDF
+        shortcut_upload = QShortcut(QKeySequence("Ctrl+O"), self)
+        shortcut_upload.activated.connect(self.on_upload)
+
+        # Ctrl+S: 保存模板
+        shortcut_save = QShortcut(QKeySequence("Ctrl+S"), self)
+        shortcut_save.activated.connect(self.on_save_template)
+
+        # Ctrl+Enter: 批量识别
+        shortcut_batch = QShortcut(QKeySequence("Ctrl+Return"), self)
+        shortcut_batch.activated.connect(self.on_batch_run)
+
+        # Ctrl+T: 试识别
+        shortcut_try = QShortcut(QKeySequence("Ctrl+T"), self)
+        shortcut_try.activated.connect(self.on_try_ocr)
+
+        # Delete: 删除选中字段（当字段表格有焦点时）
+        shortcut_delete = QShortcut(QKeySequence("Delete"), self.field_panel)
+        shortcut_delete.activated.connect(self._delete_selected_field)
+
+    def _delete_selected_field(self):
+        """删除当前选中的字段"""
+        # 获取当前选中的行
+        current_row = self.field_panel.table.currentRow()
+        if current_row >= 0:
+            item = self.field_panel.table.item(current_row, 0)
+            if item:
+                region_id = item.data(Qt.ItemDataRole.UserRole)
+                self.field_panel._delete(region_id)
 
     def _init_navigation(self):
         """初始化侧边导航栏"""
@@ -111,7 +149,11 @@ class MainWindow(FluentWindow):
         # 主内容区（三栏布局）
         content = QWidget()
         content_layout = QHBoxLayout(content)
-        content_layout.setSpacing(10)
+        content_layout.setSpacing(0)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 使用 QSplitter 实现可拖拽调整
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # 左栏：文件列表（包含标题）
         left_panel = QWidget()
@@ -124,13 +166,21 @@ class MainWindow(FluentWindow):
         left_layout.addWidget(file_title)
 
         self.file_panel = FileListPanel()
-        self.file_panel.setFixedWidth(200)
+        self.file_panel.setMinimumWidth(180)
+        self.file_panel.setMaximumWidth(400)
         left_layout.addWidget(self.file_panel, 1)
-        content_layout.addWidget(left_panel)
 
         # 中栏：PDF 画布
+        canvas_container = QWidget()
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(4)
+
+        canvas_title = SubtitleLabel("PDF 预览")
+        canvas_layout.addWidget(canvas_title)
+
         self.pdf_canvas = PdfCanvas()
-        content_layout.addWidget(self.pdf_canvas, 4)
+        canvas_layout.addWidget(self.pdf_canvas, 1)
 
         # 右栏：字段配置（包含标题）
         right_panel = QWidget()
@@ -142,10 +192,28 @@ class MainWindow(FluentWindow):
         right_layout.addWidget(field_title)
 
         self.field_panel = FieldPanel()
-        self.field_panel.setFixedWidth(280)
+        self.field_panel.setMinimumWidth(260)
+        self.field_panel.setMaximumWidth(450)
         right_layout.addWidget(self.field_panel, 1)
-        content_layout.addWidget(right_panel)
 
+        # 添加到 splitter
+        splitter.addWidget(left_panel)
+        splitter.addWidget(canvas_container)
+        splitter.addWidget(right_panel)
+
+        # 设置初始比例 (左:中:右 = 1:4:1.5)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 4)
+        splitter.setStretchFactor(2, 2)
+
+        # 设置初始大小
+        total_width = self.width()
+        left_width = max(220, int(total_width * 0.15))
+        right_width = max(300, int(total_width * 0.22))
+        middle_width = total_width - left_width - right_width - 20
+        splitter.setSizes([left_width, middle_width, right_width])
+
+        content_layout.addWidget(splitter, 1)
         layout.addWidget(content, 1)
 
         # 底部状态栏
@@ -214,7 +282,7 @@ class MainWindow(FluentWindow):
         layout.addStretch()
 
         # 快捷键提示
-        shortcut_label = BodyLabel("Ctrl+O 上传 | Ctrl+S 保存模板 | Ctrl+Enter 批量识别")
+        shortcut_label = BodyLabel("Ctrl+O 上传 | Ctrl+S 保存模板 | Ctrl+T 试识别 | Ctrl+Enter 批量识别 | Delete 删除字段")
         shortcut_label.setStyleSheet("color: #666; font-size: 11px;")
         layout.addWidget(shortcut_label)
 
@@ -280,6 +348,7 @@ class MainWindow(FluentWindow):
         self.field_panel.region_deleted.connect(self.pdf_canvas.remove_region)
         self.field_panel.current_cleared.connect(self.on_clear_current_pdf_fields)
         self.field_panel.all_cleared.connect(self.on_clear_all_pdf_fields)
+        self.field_panel.field_name_changed.connect(self.on_field_name_changed)
 
     def switchTo(self, page: QWidget):
         """切换到指定页面"""
@@ -338,8 +407,11 @@ class MainWindow(FluentWindow):
         return False
 
     def on_file_selected(self, pdf_path: str):
-        # 保存当前PDF的配置
+        # 保存当前PDF的配置和试识别结果
         self._save_current_pdf_config()
+        if self._current_pdf and self._current_preview_result:
+            self._pdf_preview_results[self._current_pdf] = self._current_preview_result
+
         self._current_pdf = pdf_path
 
         # 加载新 PDF 预览（自动保留已有的框选区域）
@@ -355,9 +427,14 @@ class MainWindow(FluentWindow):
             # 没有配置时清空字段面板
             self.field_panel.clear_all()
 
-        # 清空试识别结果（切换PDF后不保留）
-        self._current_preview_result = None
-        self.field_panel._preview_results.clear()
+        # 恢复该PDF的试识别结果（如果有）
+        if pdf_path in self._pdf_preview_results:
+            self._current_preview_result = self._pdf_preview_results[pdf_path]
+            self.field_panel.show_preview_result(self._current_preview_result)
+        else:
+            # 清空试识别结果
+            self._current_preview_result = None
+            self.field_panel._preview_results.clear()
 
         from pathlib import Path
         self.status_label.setText(f"当前: {Path(pdf_path).name} - 在画布上拖拽框选区域")
@@ -380,6 +457,8 @@ class MainWindow(FluentWindow):
         result = self.processor.process_one(current_pdf, template)
         self.field_panel.show_preview_result(result)
         self._current_preview_result = result
+        # 保存到持久化存储
+        self._pdf_preview_results[current_pdf] = result
         self.status_label.setText(f"试识别完成 - 共 {len(template.regions)} 个字段")
 
     def on_batch_run(self):
@@ -397,12 +476,6 @@ class MainWindow(FluentWindow):
             )
             return
 
-        # 显示进度条
-        self.progress_widget.setVisible(True)
-        self.progress_bar.setRange(0, len(files))
-        self.progress_bar.setValue(0)
-        self.progress_label.setText(f"0/{len(files)}")
-
         # 为每个文件准备对应的模板
         templates = []
         for f in files:
@@ -412,21 +485,85 @@ class MainWindow(FluentWindow):
             else:
                 templates.append(template)  # 使用当前界面上的配置
 
+        # 创建并显示进度对话框
+        self._create_progress_dialog(files)
+
         self.worker = BatchWorker(self.processor, files, templates)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_all.connect(self._on_batch_done)
         self.worker.start()
         self.status_label.setText("批量识别进行中...")
 
+    def _create_progress_dialog(self, files):
+        """创建批量识别进度对话框"""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QPushButton, QHBoxLayout
+
+        self.progress_dialog = QDialog(self)
+        self.progress_dialog.setWindowTitle("批量识别进度")
+        self.progress_dialog.setFixedSize(400, 180)
+        self.progress_dialog.setModal(True)
+
+        layout = QVBoxLayout(self.progress_dialog)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # 状态标签
+        self.progress_status_label = QLabel(f"正在处理: 0/{len(files)}")
+        layout.addWidget(self.progress_status_label)
+
+        # 当前文件名
+        self.progress_file_label = QLabel("准备开始...")
+        self.progress_file_label.setStyleSheet("color: #666;")
+        layout.addWidget(self.progress_file_label)
+
+        # 进度条
+        self.progress_bar_dialog = QProgressBar()
+        self.progress_bar_dialog.setRange(0, len(files))
+        self.progress_bar_dialog.setValue(0)
+        self.progress_bar_dialog.setTextVisible(True)
+        layout.addWidget(self.progress_bar_dialog)
+
+        # 按钮区域
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel.clicked.connect(self._cancel_batch)
+        btn_layout.addWidget(self.btn_cancel)
+
+        layout.addLayout(btn_layout)
+
+        self.progress_dialog.show()
+
+    def _cancel_batch(self):
+        """取消批量识别"""
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.status_label.setText("批量识别已取消")
+            if hasattr(self, 'progress_dialog') and self.progress_dialog:
+                self.progress_dialog.close()
+
     def _on_progress(self, done, total, current_file):
+        # 更新进度条
         self.progress_bar.setValue(done)
         self.progress_label.setText(f"{done}/{total}")
         from pathlib import Path
         self.status_label.setText(f"处理中: {Path(current_file).name} ({done}/{total})")
 
+        # 更新进度对话框
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_bar_dialog.setValue(done)
+            self.progress_status_label.setText(f"正在处理: {done}/{total}")
+            self.progress_file_label.setText(f"当前文件: {Path(current_file).name}")
+
     def _on_batch_done(self, results):
         # 隐藏进度条
         self.progress_widget.setVisible(False)
+
+        # 关闭进度对话框
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
 
         self.results = results
         self.result_table.load_results(results)
@@ -443,6 +580,10 @@ class MainWindow(FluentWindow):
         self.switchTo(self.result_page)
         self.navigationInterface.setCurrentItem('result')
         self.status_label.setText(f"批量识别完成 - 成功 {success}/{total}")
+
+        # 批量识别后清空所有试识别结果
+        self._pdf_preview_results.clear()
+        self._current_preview_result = None
 
         InfoBar.success(
             title="完成",
@@ -552,6 +693,8 @@ class MainWindow(FluentWindow):
         self._default_template = None
         # 清空所有特殊配置
         self._pdf_overrides.clear()
+        # 清空所有试识别结果
+        self._pdf_preview_results.clear()
         # 清空当前显示
         self.field_panel.clear_all()
         self.pdf_canvas.update_regions([])
@@ -568,9 +711,46 @@ class MainWindow(FluentWindow):
             parent=self
         )
 
+    def on_field_name_changed(self, old_name: str, new_name: str):
+        """字段名变更处理 - 同步更新模板配置"""
+        if self._current_pdf is None:
+            return
+
+        # 更新当前PDF的模板配置
+        template = self.field_panel.build_template()
+
+        # 判断是更新默认模板还是特殊配置
+        if self._current_pdf in self._pdf_overrides:
+            # 更新特殊配置
+            self._pdf_overrides[self._current_pdf] = template
+        elif self._default_template is not None:
+            # 检查是否与默认模板相同
+            if self._is_template_different(template, self._default_template):
+                # 与默认模板不同，保存为特殊配置
+                self._pdf_overrides[self._current_pdf] = template
+            else:
+                # 与默认模板相同，更新默认模板
+                self._default_template = template
+        else:
+            # 没有默认模板，设为默认
+            self._default_template = template
+
+        # 更新试识别结果中的字段名
+        if self._current_preview_result and old_name in self._current_preview_result.fields:
+            field_result = self._current_preview_result.fields.pop(old_name)
+            field_result.field_name = new_name
+            self._current_preview_result.fields[new_name] = field_result
+
+        self.status_label.setText(f"字段名已更新: {old_name} -> {new_name}")
+
     def closeEvent(self, event):
         """窗口关闭时确保 worker 线程安全终止"""
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(3000)  # 等待最多3秒
+
+        # 关闭进度对话框（如果存在）
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+
         event.accept()

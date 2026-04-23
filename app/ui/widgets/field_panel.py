@@ -14,6 +14,7 @@ class FieldPanel(QWidget):
     region_deleted = Signal(str)           # region_id
     current_cleared = Signal()             # 清空当前字段信号
     all_cleared = Signal()                 # 清空所有字段信号
+    field_name_changed = Signal(str, str)  # (old_name, new_name) 字段名变更信号
 
     # 字段类型颜色映射
     TYPE_COLORS = {
@@ -57,6 +58,8 @@ class FieldPanel(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
         # 点击识别结果列显示详情
         self.table.cellClicked.connect(self._on_cell_clicked)
+        # 监听字段名编辑完成事件
+        self.table.itemChanged.connect(self._on_field_name_changed)
         layout.addWidget(self.table, 1)
 
         # 识别结果详情显示区域
@@ -85,12 +88,13 @@ class FieldPanel(QWidget):
 
         # 清空当前字段按钮
         btn_clear_current = PushButton("清空当前字段")
-        btn_clear_current.setToolTip("仅清空当前选中PDF的字段配置，其他PDF不受影响")
+        btn_clear_current.setToolTip("仅清空当前选中PDF的字段配置，其他PDF不受影响\n快捷键: 无")
         btn_clear_current.clicked.connect(self.clear_current)
         btn_layout.addWidget(btn_clear_current)
 
         # 清空所有字段按钮
         btn_clear_all = PushButton("清空所有字段")
+        btn_clear_all.setToolTip("清空所有PDF的字段配置\n快捷键: 无")
         btn_clear_all.clicked.connect(self._on_clear_all_clicked)
         btn_layout.addWidget(btn_clear_all)
 
@@ -102,6 +106,33 @@ class FieldPanel(QWidget):
         has_fields = len(self.regions) > 0
         self.empty_label.setVisible(not has_fields)
         self.table.setVisible(has_fields)
+
+    def _on_field_name_changed(self, item: QTableWidgetItem):
+        """字段名编辑完成事件 - 同步更新识别结果"""
+        # 只处理字段名列（第0列）
+        if item.column() != 0:
+            return
+
+        row = item.row()
+        region_id = item.data(Qt.ItemDataRole.UserRole)
+        if region_id not in self.regions:
+            return
+
+        old_name = self.regions[region_id].field_name
+        new_name = item.text()
+
+        if old_name == new_name:
+            return
+
+        # 更新 region 中的字段名
+        self.regions[region_id].field_name = new_name
+
+        # 同步更新 _preview_results 中的 key
+        if old_name in self._preview_results:
+            self._preview_results[new_name] = self._preview_results.pop(old_name)
+
+        # 发送字段名变更信号
+        self.field_name_changed.emit(old_name, new_name)
 
     def _on_cell_clicked(self, row: int, column: int):
         """点击单元格事件 - 点击识别结果列显示详情"""
@@ -232,13 +263,17 @@ class FieldPanel(QWidget):
             field_name = region.field_name
             if field_name in file_result.fields:
                 fr = file_result.fields[field_name]
-                self._preview_results[rid] = fr  # 存储结果
+                # 使用 region_id 作为 key 存储结果，便于后续查找
+                self._preview_results[rid] = fr
                 result_item = QTableWidgetItem(fr.text)
+                # 设置 Tooltip 显示完整内容和置信度
+                tooltip = f"内容: {fr.text}\n置信度: {fr.confidence:.2%}"
                 if fr.confidence < 0.7:
                     result_item.setBackground(QColor("#FFE5E5"))
-                    result_item.setToolTip(f"置信度: {fr.confidence:.2%}")
+                    tooltip += "\n(置信度较低，建议核对)"
+                    result_item.setToolTip(tooltip)
                 else:
-                    result_item.setToolTip(f"置信度: {fr.confidence:.2%}")
+                    result_item.setToolTip(tooltip)
                 self.table.setItem(row, 2, result_item)
         # 隐藏详情区域
         self.detail_widget.setVisible(False)
@@ -253,9 +288,12 @@ class FieldPanel(QWidget):
             if rid in self._preview_results:
                 fr = self._preview_results[rid]
                 result_item = QTableWidgetItem(fr.text)
+                # 设置 Tooltip 显示完整内容和置信度
+                tooltip = f"内容: {fr.text}\n置信度: {fr.confidence:.2%}"
                 if fr.confidence < 0.7:
                     result_item.setBackground(QColor("#FFE5E5"))
-                    result_item.setToolTip(f"置信度: {fr.confidence:.2%}")
+                    tooltip += "\n(置信度较低，建议核对)"
+                    result_item.setToolTip(tooltip)
                 else:
-                    result_item.setToolTip(f"置信度: {fr.confidence:.2%}")
+                    result_item.setToolTip(tooltip)
                 self.table.setItem(row, 2, result_item)
