@@ -171,6 +171,48 @@ class ImagePreprocessToolbar(QWidget):
         """获取当前处理参数"""
         return self._current_params.copy()
 
+    def set_params(self, params: dict):
+        """设置处理参数（用于恢复）"""
+        # 阻止信号触发，避免重复处理
+        self.rotation_combo.blockSignals(True)
+        self.brightness_slider.blockSignals(True)
+        self.contrast_slider.blockSignals(True)
+        self.threshold_combo.blockSignals(True)
+
+        try:
+            # 恢复旋转
+            rotation = params.get('rotation', 0)
+            angles = [0, 90, 180, 270]
+            if rotation in angles:
+                self.rotation_combo.setCurrentIndex(angles.index(rotation))
+
+            # 恢复亮度
+            brightness = params.get('brightness', 1.0)
+            brightness_value = int(brightness * 100)
+            self.brightness_slider.setValue(brightness_value)
+            self.brightness_label.setText(f"{brightness_value}%")
+
+            # 恢复对比度
+            contrast = params.get('contrast', 1.0)
+            contrast_value = int(contrast * 100)
+            self.contrast_slider.setValue(contrast_value)
+            self.contrast_label.setText(f"{contrast_value}%")
+
+            # 恢复二值化阈值
+            threshold = params.get('threshold', None)
+            values = [None, 128, 150, 180, -1]
+            if threshold in values:
+                self.threshold_combo.setCurrentIndex(values.index(threshold))
+
+            # 更新参数字典
+            self._current_params = params.copy()
+        finally:
+            # 恢复信号
+            self.rotation_combo.blockSignals(False)
+            self.brightness_slider.blockSignals(False)
+            self.contrast_slider.blockSignals(False)
+            self.threshold_combo.blockSignals(False)
+
     def set_enabled(self, enabled: bool):
         """设置控件启用状态"""
         self.rotation_combo.setEnabled(enabled)

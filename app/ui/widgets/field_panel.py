@@ -136,10 +136,10 @@ class FieldPanel(QWidget):
         """设置当前模板名称显示"""
         self._current_template_name = name
         if is_default:
-            self.template_name_label.setText(f"当前模板: {name} (默认)")
+            self.template_name_label.setText(f"当前模板: 默认")
             self.template_name_label.setStyleSheet("font-weight: bold; color: #107c10;")
             self.btn_set_default.setEnabled(False)
-            self.btn_set_default.setText("当前为默认模板")
+            self.btn_set_default.setText("设为默认")
         else:
             self.template_name_label.setText(f"当前模板: {name}")
             self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")

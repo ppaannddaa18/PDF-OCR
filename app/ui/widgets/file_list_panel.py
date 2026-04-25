@@ -7,6 +7,8 @@ from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 class FileListPanel(QWidget):
     file_selected = Signal(str)
+    files_cleared = Signal()  # 文件列表清空信号
+    file_removed = Signal(str)  # 单个文件移除信号
 
     def __init__(self):
         super().__init__()
@@ -92,6 +94,8 @@ class FileListPanel(QWidget):
                 del self._pdf_configs[path]
             self.list_widget.takeItem(self.list_widget.row(item))
             self._update_empty_state()
+            # 发送文件移除信号
+            self.file_removed.emit(path)
 
     def _on_item_clicked(self, item):
         """处理列表项点击"""
@@ -117,6 +121,7 @@ class FileListPanel(QWidget):
         self._pdf_configs.clear()
         self.list_widget.clear()
         self._update_empty_state()
+        self.files_cleared.emit()  # 发送清空信号
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         """拖拽进入事件 - 只接受 PDF 文件"""

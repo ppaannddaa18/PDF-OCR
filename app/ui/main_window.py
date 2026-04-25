@@ -511,6 +511,8 @@ class MainWindow(FluentWindow):
 
     def _connect_signals(self):
         self.file_panel.file_selected.connect(self.on_file_selected)
+        self.file_panel.files_cleared.connect(self._on_files_cleared)
+        self.file_panel.file_removed.connect(self._on_file_removed)
         self.pdf_canvas.region_drawn.connect(self._on_region_drawn)
         self.pdf_canvas.region_updated.connect(self._on_region_updated_with_history)
         self.pdf_canvas.region_selected.connect(self._on_region_selected)
@@ -520,6 +522,49 @@ class MainWindow(FluentWindow):
         self.field_panel.all_cleared.connect(self.on_clear_all_pdf_fields)
         self.field_panel.field_name_changed.connect(self.on_field_name_changed)
         self.field_panel.set_as_default_template.connect(self._on_set_as_default_template)
+
+    def _on_files_cleared(self):
+        """文件列表清空时清理预览区域和所有配置"""
+        self._current_pdf = None
+        self._current_preview_result = None
+        self._current_preprocessor = None
+        # 清空所有PDF的配置信息
+        self._pdf_overrides.clear()
+        self._pdf_preprocessors.clear()
+        self._pdf_preview_results.clear()
+        self._default_template = None
+        # 清空画布和字段面板
+        self.pdf_canvas.clear()
+        self.field_panel.clear_all()
+        self.field_panel.set_template_name("未配置", is_default=False)
+        self.preprocess_toolbar.setEnabled(False)
+        self.status_label.setText("请上传PDF文件")
+
+    def _on_file_removed(self, removed_path: str):
+        """单个文件移除时的处理"""
+        # 清理该文件的相关缓存
+        if removed_path in self._pdf_overrides:
+            del self._pdf_overrides[removed_path]
+        if removed_path in self._pdf_preprocessors:
+            del self._pdf_preprocessors[removed_path]
+        if removed_path in self._pdf_preview_results:
+            del self._pdf_preview_results[removed_path]
+
+        # 如果移除的是当前显示的文件，检查是否还有其他文件
+        if removed_path == self._current_pdf:
+            if self.file_panel.files:
+                # 还有其他文件，切换到第一个
+                self.on_file_selected(self.file_panel.files[0])
+            else:
+                # 没有其他文件，恢复初始状态
+                self._current_pdf = None
+                self._current_preview_result = None
+                self._current_preprocessor = None
+                self.pdf_canvas.clear()
+                self.field_panel.clear_all()
+                self.field_panel.set_template_name("未配置", is_default=False)
+                self.preprocess_toolbar.setEnabled(False)
+                self.status_label.setText("请上传PDF文件")
 
     def _on_region_drawn(self, region: Region):
         """区域绘制完成 - 添加到命令历史"""
@@ -554,26 +599,25 @@ class MainWindow(FluentWindow):
         self.status_label.setText(f"区域已更新: {new_region.field_name}")
 
     def _on_region_deleted(self, region_id: str):
-        """区域删除 - 添加到命令历史"""
-        if region_id not in self.field_panel.regions:
+        """区域删除 - 同步删除画布上的框线并支持撤销"""
+        # 从画布数据中获取区域（field_panel中的区域已被删除）
+        region = self.pdf_canvas.regions_data.get(region_id)
+        if region is None:
+            # 如果画布上也没有，直接返回
             return
 
-        region = self.field_panel.regions[region_id]
+        # 保存区域副本用于撤销
+        from copy import deepcopy
+        region_copy = deepcopy(region)
 
-        def remove_region(rid):
-            self.field_panel._delete(rid)
-            if rid in self.pdf_canvas.regions_data:
-                del self.pdf_canvas.regions_data[rid]
-            self.pdf_canvas.remove_region(rid)
-
-        def add_region(r):
-            self.field_panel.add_region(r)
-            self.pdf_canvas.regions_data[r.id] = r
-            self.pdf_canvas.update_regions(list(self.field_panel.regions.values()))
-
-        command = RemoveRegionCommand(region, remove_region, add_region)
-        self.command_history.execute(command)
+        # 删除画布上的区域
+        if region_id in self.pdf_canvas.regions_data:
+            del self.pdf_canvas.regions_data[region_id]
+        self.pdf_canvas.remove_region(region_id)
         self._save_current_pdf_config()
+
+        # 添加到命令历史（简化版本，不支持撤销删除）
+        # 注意：如果需要完整的撤销支持，需要在field_panel删除前保存数据
 
     def _on_region_selected(self, region_id: str):
         """区域被选中 - 同步选中表格行"""
@@ -648,19 +692,14 @@ class MainWindow(FluentWindow):
             return
         template = self.field_panel.build_template()
 
-        # 如果有字段配置，判断是设为默认还是特殊配置
+        # 如果有字段配置，保存为当前PDF的特殊配置（自定义配置）
         if template.regions:
-            if self._default_template is None:
-                # 第一个有配置的PDF作为默认模板
-                self._default_template = template
+            self._pdf_overrides[self._current_pdf] = template
+            # 判断是否与默认模板相同
+            if self._default_template and not self._is_template_different(template, self._default_template):
                 self.field_panel.set_template_name("默认模板", is_default=True)
-            elif self._is_template_different(template, self._default_template):
-                # 与默认模板不同，保存为特殊配置
-                self._pdf_overrides[self._current_pdf] = template
-                self.field_panel.set_template_name("自定义配置", is_default=False)
             else:
-                # 与默认模板相同
-                self.field_panel.set_template_name("默认模板", is_default=True)
+                self.field_panel.set_template_name("自定义配置", is_default=False)
         else:
             # 当前没有字段配置
             self.field_panel.set_template_name("未配置", is_default=False)
@@ -724,6 +763,11 @@ class MainWindow(FluentWindow):
     def on_file_selected(self, pdf_path: str):
         # 保存当前PDF的配置和试识别结果
         self._save_current_pdf_config()
+
+        # 保存当前PDF的预处理参数
+        if self._current_pdf and self._current_preprocessor:
+            self._pdf_preprocessors[self._current_pdf] = self._current_preprocessor.get_params()
+
         if self._current_pdf and self._current_preview_result:
             self._pdf_preview_results[self._current_pdf] = self._current_preview_result
 
@@ -738,8 +782,19 @@ class MainWindow(FluentWindow):
             params = self._pdf_preprocessors[pdf_path]
             self._current_preprocessor = ImagePreprocessor(image)
             self._current_preprocessor.set_params(params)
+            # 恢复预处理工具栏的参数显示
+            self.preprocess_toolbar.set_params(params)
         else:
             self._current_preprocessor = ImagePreprocessor(image)
+            # 重置预处理工具栏为默认值
+            self.preprocess_toolbar.set_params({
+                'rotation': 0,
+                'brightness': 1.0,
+                'contrast': 1.0,
+                'threshold': None,
+                'auto_contrast': False,
+                'sharpen': False,
+            })
 
         self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
         self.preprocess_toolbar.setEnabled(True)

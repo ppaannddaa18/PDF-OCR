@@ -185,6 +185,29 @@ class PdfCanvas(QGraphicsView):
             self.scene_.removeItem(self.empty_text)
             self.empty_text = None
 
+    def clear(self):
+        """清空画布，恢复到初始状态"""
+        self.scene_.clear()
+        self.pixmap_item = None
+        self.img_w = 0
+        self.img_h = 0
+        self.region_items.clear()
+        self.regions_data.clear()
+        self.selected_region_id = None
+        self.drawing = False
+        self.start_pt = None
+        self.temp_rect = None
+        self.resizing = False
+        self.moving = False
+        self.resize_handle = None
+        self.resize_start_rect = None
+        self.move_start_pos = None
+        self.move_start_rect = None
+        self.right_dragging = False
+        self.last_mouse_pos = None
+        self.empty_text = None
+        self._show_empty_state()
+
     def load_image(self, pil_image: Image.Image):
         # 保存当前的框选区域数据
         saved_regions = list(self.regions_data.values())
