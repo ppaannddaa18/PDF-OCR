@@ -39,33 +39,6 @@ class FieldPanel(QWidget):
         layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # 模板信息区域
-        self.template_info_widget = QWidget()
-        template_info_layout = QVBoxLayout(self.template_info_widget)
-        template_info_layout.setContentsMargins(8, 8, 8, 8)
-        template_info_layout.setSpacing(4)
-
-        # 模板名称标签
-        self.template_name_label = BodyLabel("当前模板: 未命名模板")
-        self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")
-        template_info_layout.addWidget(self.template_name_label)
-
-        # 设为默认模板按钮
-        self.btn_set_default = PushButton("设为默认模板")
-        self.btn_set_default.setToolTip("将当前字段配置设为默认模板，新加载的PDF将自动应用此配置")
-        self.btn_set_default.clicked.connect(self._on_set_as_default)
-        template_info_layout.addWidget(self.btn_set_default)
-
-        # 分隔线
-        from PyQt6.QtWidgets import QFrame
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background: #e0e0e0;")
-        line.setFixedHeight(1)
-        template_info_layout.addWidget(line)
-
-        layout.addWidget(self.template_info_widget)
-
         # 空状态提示
         self.empty_label = BodyLabel("暂无字段\n在 PDF 画布上拖拽框选区域")
         self.empty_label.setStyleSheet("color: #888; text-align: center;")
@@ -133,18 +106,14 @@ class FieldPanel(QWidget):
         self._update_empty_state()
 
     def set_template_name(self, name: str, is_default: bool = False):
-        """设置当前模板名称显示"""
+        """设置当前模板名称（供主窗口调用）"""
         self._current_template_name = name
-        if is_default:
-            self.template_name_label.setText(f"当前模板: 默认")
-            self.template_name_label.setStyleSheet("font-weight: bold; color: #107c10;")
-            self.btn_set_default.setEnabled(False)
-            self.btn_set_default.setText("设为默认")
-        else:
-            self.template_name_label.setText(f"当前模板: {name}")
-            self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")
-            self.btn_set_default.setEnabled(True)
-            self.btn_set_default.setText("设为默认模板")
+        # 模板名称和按钮现在由主窗口管理
+        pass
+
+    def get_template_name(self) -> str:
+        """获取当前模板名称"""
+        return self._current_template_name
 
     def _on_set_as_default(self):
         """设为默认模板按钮点击事件"""

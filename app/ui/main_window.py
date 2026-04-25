@@ -6,7 +6,7 @@ from qfluentwidgets import (
     FluentWindow, NavigationItemPosition,
     TransparentToolButton, TransparentPushButton, SubtitleLabel,
     StrongBodyLabel, BodyLabel, InfoBar, InfoBarPosition,
-    setTheme, Theme, ProgressBar
+    setTheme, Theme, ProgressBar, PushButton
 )
 import qtawesome as qta
 
@@ -243,6 +243,33 @@ class MainWindow(FluentWindow):
 
         field_title = SubtitleLabel("字段配置")
         right_layout.addWidget(field_title)
+
+        # 模板信息区域（移到字段配置标题下方）
+        template_info_widget = QWidget()
+        template_info_layout = QVBoxLayout(template_info_widget)
+        template_info_layout.setContentsMargins(8, 8, 8, 8)
+        template_info_layout.setSpacing(4)
+
+        # 模板名称标签
+        self.template_name_label = BodyLabel("当前模板: 未配置")
+        self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")
+        template_info_layout.addWidget(self.template_name_label)
+
+        # 设为默认模板按钮
+        self.btn_set_default = PushButton("设为默认模板")
+        self.btn_set_default.setToolTip("将当前字段配置设为默认模板，新加载的PDF将自动应用此配置")
+        self.btn_set_default.clicked.connect(self._on_set_as_default_template)
+        template_info_layout.addWidget(self.btn_set_default)
+
+        # 分隔线
+        from PyQt6.QtWidgets import QFrame
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background: #e0e0e0;")
+        line.setFixedHeight(1)
+        template_info_layout.addWidget(line)
+
+        right_layout.addWidget(template_info_widget)
 
         self.field_panel = FieldPanel()
         self.field_panel.setMinimumWidth(260)
@@ -536,7 +563,7 @@ class MainWindow(FluentWindow):
         # 清空画布和字段面板
         self.pdf_canvas.clear()
         self.field_panel.clear_all()
-        self.field_panel.set_template_name("未配置", is_default=False)
+        self._set_template_name("未配置", is_default=False)
         self.preprocess_toolbar.setEnabled(False)
         self.status_label.setText("请上传PDF文件")
 
@@ -562,7 +589,7 @@ class MainWindow(FluentWindow):
                 self._current_preprocessor = None
                 self.pdf_canvas.clear()
                 self.field_panel.clear_all()
-                self.field_panel.set_template_name("未配置", is_default=False)
+                self._set_template_name("未配置", is_default=False)
                 self.preprocess_toolbar.setEnabled(False)
                 self.status_label.setText("请上传PDF文件")
 
@@ -697,12 +724,12 @@ class MainWindow(FluentWindow):
             self._pdf_overrides[self._current_pdf] = template
             # 判断是否与默认模板相同
             if self._default_template and not self._is_template_different(template, self._default_template):
-                self.field_panel.set_template_name("默认模板", is_default=True)
+                self._set_template_name("默认模板", is_default=True)
             else:
-                self.field_panel.set_template_name("自定义配置", is_default=False)
+                self._set_template_name("自定义配置", is_default=False)
         else:
             # 当前没有字段配置
-            self.field_panel.set_template_name("未配置", is_default=False)
+            self._set_template_name("未配置", is_default=False)
 
         # 更新文件列表中的配置状态显示
         self._update_file_list_status()
@@ -716,6 +743,21 @@ class MainWindow(FluentWindow):
                 self.file_panel.set_pdf_config_status(pdf_path, "default")
             else:
                 self.file_panel.set_pdf_config_status(pdf_path, "empty")
+
+    def _set_template_name(self, name: str, is_default: bool = False):
+        """设置当前模板名称显示（在主窗口中）"""
+        if is_default:
+            self.template_name_label.setText(f"当前模板: 默认")
+            self.template_name_label.setStyleSheet("font-weight: bold; color: #107c10;")
+            self.btn_set_default.setEnabled(False)
+            self.btn_set_default.setText("设为默认")
+        else:
+            self.template_name_label.setText(f"当前模板: {name}")
+            self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")
+            self.btn_set_default.setEnabled(True)
+            self.btn_set_default.setText("设为默认模板")
+        # 同时更新field_panel中的记录
+        self.field_panel.set_template_name(name, is_default)
 
     def _on_set_as_default_template(self):
         """将当前配置设为默认模板"""
@@ -735,7 +777,7 @@ class MainWindow(FluentWindow):
         self._default_template = template
         # 清除所有特殊配置（因为现在都使用新的默认模板）
         self._pdf_overrides.clear()
-        self.field_panel.set_template_name("默认模板", is_default=True)
+        self._set_template_name("默认模板", is_default=True)
         self._update_file_list_status()
 
         InfoBar.success(
@@ -806,13 +848,13 @@ class MainWindow(FluentWindow):
             self.pdf_canvas.update_regions(template.regions)
             # 更新模板名称显示
             if pdf_path in self._pdf_overrides:
-                self.field_panel.set_template_name("自定义配置", is_default=False)
+                self._set_template_name("自定义配置", is_default=False)
             else:
-                self.field_panel.set_template_name("默认模板", is_default=True)
+                self._set_template_name("默认模板", is_default=True)
         else:
             # 没有配置时清空字段面板
             self.field_panel.clear_all()
-            self.field_panel.set_template_name("未配置", is_default=False)
+            self._set_template_name("未配置", is_default=False)
 
         # 恢复该PDF的试识别结果（如果有）
         if pdf_path in self._pdf_preview_results:
