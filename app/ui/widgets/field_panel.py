@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor, QBrush
 from qfluentwidgets import SubtitleLabel, PushButton, ComboBox, BodyLabel, InfoBar, InfoBarPosition
 from app.models.region import Region
 from app.models.template import Template
+from app.utils.validators import validate_with_error, normalize_by_type
 
 
 class FieldPanel(QWidget):
@@ -15,6 +16,7 @@ class FieldPanel(QWidget):
     current_cleared = Signal()             # 清空当前字段信号
     all_cleared = Signal()                 # 清空所有字段信号
     field_name_changed = Signal(str, str)  # (old_name, new_name) 字段名变更信号
+    set_as_default_template = Signal()     # 设为默认模板信号
 
     # 字段类型颜色映射
     TYPE_COLORS = {
@@ -29,12 +31,40 @@ class FieldPanel(QWidget):
         super().__init__()
         self.regions = {}   # id -> Region
         self._preview_results = {}  # region_id -> FieldResult (存储试识别结果)
+        self._current_template_name = "未命名模板"
         self._init_ui()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        # 模板信息区域
+        self.template_info_widget = QWidget()
+        template_info_layout = QVBoxLayout(self.template_info_widget)
+        template_info_layout.setContentsMargins(8, 8, 8, 8)
+        template_info_layout.setSpacing(4)
+
+        # 模板名称标签
+        self.template_name_label = BodyLabel("当前模板: 未命名模板")
+        self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")
+        template_info_layout.addWidget(self.template_name_label)
+
+        # 设为默认模板按钮
+        self.btn_set_default = PushButton("设为默认模板")
+        self.btn_set_default.setToolTip("将当前字段配置设为默认模板，新加载的PDF将自动应用此配置")
+        self.btn_set_default.clicked.connect(self._on_set_as_default)
+        template_info_layout.addWidget(self.btn_set_default)
+
+        # 分隔线
+        from PyQt6.QtWidgets import QFrame
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background: #e0e0e0;")
+        line.setFixedHeight(1)
+        template_info_layout.addWidget(line)
+
+        layout.addWidget(self.template_info_widget)
 
         # 空状态提示
         self.empty_label = BodyLabel("暂无字段\n在 PDF 画布上拖拽框选区域")
@@ -102,6 +132,24 @@ class FieldPanel(QWidget):
 
         self._update_empty_state()
 
+    def set_template_name(self, name: str, is_default: bool = False):
+        """设置当前模板名称显示"""
+        self._current_template_name = name
+        if is_default:
+            self.template_name_label.setText(f"当前模板: {name} (默认)")
+            self.template_name_label.setStyleSheet("font-weight: bold; color: #107c10;")
+            self.btn_set_default.setEnabled(False)
+            self.btn_set_default.setText("当前为默认模板")
+        else:
+            self.template_name_label.setText(f"当前模板: {name}")
+            self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")
+            self.btn_set_default.setEnabled(True)
+            self.btn_set_default.setText("设为默认模板")
+
+    def _on_set_as_default(self):
+        """设为默认模板按钮点击事件"""
+        self.set_as_default_template.emit()
+
     def _update_empty_state(self):
         has_fields = len(self.regions) > 0
         self.empty_label.setVisible(not has_fields)
@@ -127,9 +175,12 @@ class FieldPanel(QWidget):
         # 更新 region 中的字段名
         self.regions[region_id].field_name = new_name
 
-        # 同步更新 _preview_results 中的 key
-        if old_name in self._preview_results:
-            self._preview_results[new_name] = self._preview_results.pop(old_name)
+        # [修复] 使用 region_id 作为 key，而不是字段名
+        # _preview_results 使用 region_id 作为 key（见 show_preview_result 方法第332行）
+        # 所以这里不需要更新 _preview_results 的 key
+        # 只需要更新识别结果中存储的字段名即可
+        if region_id in self._preview_results:
+            self._preview_results[region_id].field_name = new_name
 
         # 发送字段名变更信号
         self.field_name_changed.emit(old_name, new_name)
@@ -148,16 +199,33 @@ class FieldPanel(QWidget):
             self.detail_widget.setVisible(False)
             return
 
+        region = self.regions.get(rid)
         fr = self._preview_results[rid]
         if fr.text:
+            # 验证字段类型
+            is_valid, error_msg = validate_with_error(fr.text, region.field_type if region else "text")
+            normalized = normalize_by_type(fr.text, region.field_type if region else "text")
+
             self.detail_content.setText(f"内容：{fr.text}")
+
+            # 显示标准化后的值（如果有变化）
+            if normalized != fr.text:
+                self.detail_content.setText(f"内容：{fr.text}\n标准化：{normalized}")
+
             conf_text = f"置信度：{fr.confidence:.2%}"
             if fr.confidence < 0.7:
                 conf_text += " (较低)"
                 self.detail_confidence.setStyleSheet("color: #d13438;")
             else:
                 self.detail_confidence.setStyleSheet("color: #107c10;")
-            self.detail_confidence.setText(conf_text)
+
+            # 显示验证结果
+            if not is_valid:
+                self.detail_confidence.setText(f"{conf_text}\n⚠ 格式错误: {error_msg}")
+                self.detail_confidence.setStyleSheet("color: #d13438;")
+            else:
+                self.detail_confidence.setText(conf_text)
+
             self.detail_widget.setVisible(True)
         else:
             self.detail_widget.setVisible(False)
@@ -226,6 +294,8 @@ class FieldPanel(QWidget):
         self.all_cleared.emit()
 
     def build_template(self) -> Template:
+        """[修复] 复制 Region 对象，避免直接修改原始对象"""
+        from copy import deepcopy
         regions = []
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
@@ -234,7 +304,8 @@ class FieldPanel(QWidget):
             rid = item.data(Qt.ItemDataRole.UserRole)
             if rid not in self.regions:
                 continue
-            r = self.regions[rid]
+            # [修复] 深拷贝 Region 对象，避免修改原始对象
+            r = deepcopy(self.regions[rid])
             r.field_name = item.text()
             combo = self.table.cellWidget(row, 1)
             if combo:
@@ -249,7 +320,7 @@ class FieldPanel(QWidget):
         self.region_changed.emit(list(self.regions.values()))
 
     def show_preview_result(self, file_result):
-        """显示试识别结果 - 使用 region_id 匹配确保准确性"""
+        """显示试识别结果 - 使用 region_id 匹配确保准确性，并进行字段类型验证"""
         self._preview_results.clear()
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
@@ -265,15 +336,28 @@ class FieldPanel(QWidget):
                 fr = file_result.fields[field_name]
                 # 使用 region_id 作为 key 存储结果，便于后续查找
                 self._preview_results[rid] = fr
-                result_item = QTableWidgetItem(fr.text)
+
+                # 根据字段类型进行验证和标准化
+                is_valid, error_msg = validate_with_error(fr.text, region.field_type)
+                normalized_text = normalize_by_type(fr.text, region.field_type)
+
+                result_item = QTableWidgetItem(normalized_text)
+
                 # 设置 Tooltip 显示完整内容和置信度
                 tooltip = f"内容: {fr.text}\n置信度: {fr.confidence:.2%}"
-                if fr.confidence < 0.7:
+
+                # 根据验证结果设置样式
+                if not is_valid:
+                    # 验证失败 - 红色背景
                     result_item.setBackground(QColor("#FFE5E5"))
+                    result_item.setForeground(QBrush(QColor("#d13438")))
+                    tooltip += f"\n⚠ 格式错误: {error_msg}"
+                elif fr.confidence < 0.7:
+                    # 置信度低 - 黄色背景
+                    result_item.setBackground(QColor("#FFF4E5"))
                     tooltip += "\n(置信度较低，建议核对)"
-                    result_item.setToolTip(tooltip)
-                else:
-                    result_item.setToolTip(tooltip)
+
+                result_item.setToolTip(tooltip)
                 self.table.setItem(row, 2, result_item)
         # 隐藏详情区域
         self.detail_widget.setVisible(False)

@@ -14,12 +14,17 @@ from app.ui.widgets.pdf_canvas import PdfCanvas
 from app.ui.widgets.file_list_panel import FileListPanel
 from app.ui.widgets.field_panel import FieldPanel
 from app.ui.widgets.result_table import ResultTable
+from app.ui.widgets.history_panel import HistoryPanel
 from app.core.pdf_loader import PdfLoader
 from app.core.ocr_engine import OCREngine
 from app.core.batch_processor import BatchProcessor
 from app.core.template_manager import TemplateManager
 from app.core.exporter import Exporter
 from app.workers.batch_worker import BatchWorker
+from app.utils.command_history import CommandHistory, AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
+from app.utils.history_manager import HistoryManager
+from app.ui.widgets.preprocess_toolbar import ImagePreprocessToolbar
+from app.models.region import Region
 
 
 class MainWindow(FluentWindow):
@@ -53,9 +58,20 @@ class MainWindow(FluentWindow):
         self._current_preview_result = None  # 当前PDF的试识别结果
         self._pdf_preview_results = {}  # pdf_path -> FileResult，存储每个PDF的试识别结果
 
+        # 命令历史管理器
+        self.command_history = CommandHistory(max_size=20)
+
+        # 图像预处理
+        self._current_preprocessor = None
+        self._pdf_preprocessors = {}  # pdf_path -> ImagePreprocessor
+
+        # 历史记录管理器
+        self.history_manager = HistoryManager()
+
         # 创建子页面
         self.template_page = self._create_template_page()
         self.result_page = self._create_result_page()
+        self.history_page = self._create_history_page()
 
         # 初始化导航
         self._init_navigation()
@@ -63,6 +79,7 @@ class MainWindow(FluentWindow):
         # 设置主内容区
         self.stackedWidget.addWidget(self.template_page)
         self.stackedWidget.addWidget(self.result_page)
+        self.stackedWidget.addWidget(self.history_page)
         self.stackedWidget.setCurrentWidget(self.template_page)
 
         self._connect_signals()
@@ -94,6 +111,14 @@ class MainWindow(FluentWindow):
         shortcut_delete = QShortcut(QKeySequence("Delete"), self.field_panel)
         shortcut_delete.activated.connect(self._delete_selected_field)
 
+        # Ctrl+Z: 撤销
+        shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        shortcut_undo.activated.connect(self._undo)
+
+        # Ctrl+Y: 重做
+        shortcut_redo = QShortcut(QKeySequence("Ctrl+Y"), self)
+        shortcut_redo.activated.connect(self._redo)
+
     def _delete_selected_field(self):
         """删除当前选中的字段"""
         # 获取当前选中的行
@@ -102,7 +127,7 @@ class MainWindow(FluentWindow):
             item = self.field_panel.table.item(current_row, 0)
             if item:
                 region_id = item.data(Qt.ItemDataRole.UserRole)
-                self.field_panel._delete(region_id)
+                self._on_region_deleted(region_id)
 
     def _init_navigation(self):
         """初始化侧边导航栏"""
@@ -118,6 +143,13 @@ class MainWindow(FluentWindow):
             icon=qta.icon('fa5s.table', color='#0078d4'),
             text='识别结果',
             onClick=lambda: self.switchTo(self.result_page)
+        )
+
+        self.navigationInterface.addItem(
+            routeKey='history',
+            icon=qta.icon('fa5s.history', color='#0078d4'),
+            text='历史记录',
+            onClick=lambda: self.switchTo(self.history_page)
         )
 
         # 隐藏返回按钮
@@ -179,6 +211,16 @@ class MainWindow(FluentWindow):
         canvas_title = SubtitleLabel("PDF 预览")
         canvas_layout.addWidget(canvas_title)
 
+        # 图像预处理工具栏
+        self.preprocess_toolbar = ImagePreprocessToolbar()
+        self.preprocess_toolbar.setEnabled(False)
+        self.preprocess_toolbar.image_changed.connect(self._on_preprocess_changed)
+        self.preprocess_toolbar.apply_to_all.connect(self._on_preprocess_apply_to_all)
+        self.preprocess_toolbar.reset_requested.connect(self._on_preprocess_reset)
+        self.preprocess_toolbar.apply_auto_contrast.connect(self._on_preprocess_auto_contrast)  # [修复]
+        self.preprocess_toolbar.apply_sharpen.connect(self._on_preprocess_sharpen)  # [修复]
+        canvas_layout.addWidget(self.preprocess_toolbar)
+
         self.pdf_canvas = PdfCanvas()
         canvas_layout.addWidget(self.pdf_canvas, 1)
 
@@ -233,11 +275,126 @@ class MainWindow(FluentWindow):
         stats_widget = self._create_stats_widget()
         layout.addWidget(stats_widget)
 
+        # 筛选和工具栏
+        toolbar = self._create_result_toolbar()
+        layout.addWidget(toolbar)
+
         # 结果表格
         self.result_table = ResultTable()
+        self.result_table.data_changed.connect(self._on_result_data_changed)
         layout.addWidget(self.result_table, 1)
 
         return page
+
+    def _create_history_page(self) -> QWidget:
+        """创建历史记录页面"""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        # 历史记录面板
+        self.history_panel = HistoryPanel(self.history_manager)
+        self.history_panel.record_restored.connect(self._on_history_record_restored)
+        layout.addWidget(self.history_panel)
+
+        return page
+
+    def _on_history_record_restored(self, record_id: str):
+        """从历史记录恢复结果"""
+        results = self.history_manager.restore_results(record_id)
+        if results:
+            self.results = results
+            self.result_table.load_results(results)
+
+            # 更新统计信息
+            total = len(results)
+            success = sum(1 for r in results if r.success)
+            fail = total - success
+            self.stat_total.setText(f"共 {total} 个文件")
+            self.stat_success.setText(f"成功: {success}")
+            self.stat_fail.setText(f"失败: {fail}")
+
+            # 切换到结果页面
+            self.switchTo(self.result_page)
+            self.navigationInterface.setCurrentItem('result')
+
+            InfoBar.success(
+                title="成功",
+                content=f"已恢复历史记录，共 {total} 个文件",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self
+            )
+
+    def _create_result_toolbar(self) -> QWidget:
+        """创建结果页面工具栏"""
+        from PyQt6.QtWidgets import QHBoxLayout
+        from qfluentwidgets import LineEdit, ComboBox, PushButton
+
+        toolbar = QWidget()
+        layout = QHBoxLayout(toolbar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # 筛选输入框
+        self.filter_edit = LineEdit()
+        self.filter_edit.setPlaceholderText("筛选结果...")
+        self.filter_edit.setFixedWidth(200)
+        self.filter_edit.textChanged.connect(self._on_filter_changed)
+        layout.addWidget(self.filter_edit)
+
+        # 字段筛选下拉框
+        self.filter_field_combo = ComboBox()
+        self.filter_field_combo.addItem("全部字段")
+        self.filter_field_combo.currentIndexChanged.connect(self._on_filter_changed)
+        layout.addWidget(self.filter_field_combo)
+
+        layout.addStretch()
+
+        # 重置按钮
+        btn_reset = PushButton("重置所有修改")
+        btn_reset.setToolTip("将所有数据恢复为识别结果")
+        btn_reset.clicked.connect(self._on_reset_all_results)
+        layout.addWidget(btn_reset)
+
+        # 低置信度筛选按钮
+        btn_low_conf = PushButton("显示低置信度")
+        btn_low_conf.setToolTip("仅显示置信度低于70%的单元格")
+        btn_low_conf.clicked.connect(self._on_show_low_confidence)
+        layout.addWidget(btn_low_conf)
+
+        return toolbar
+
+    def _on_result_data_changed(self):
+        """结果数据变更处理"""
+        modified = self.result_table.get_modified_count()
+        if modified > 0:
+            self.status_label.setText(f"已修改 {modified} 个单元格")
+
+    def _on_filter_changed(self):
+        """[修复] 筛选条件变更 - 支持全部字段筛选"""
+        keyword = self.filter_edit.text()
+        field_idx = self.filter_field_combo.currentIndex()
+
+        if field_idx == 0:
+            # 全部字段
+            self.result_table.filter_by_field("全部字段", keyword)
+        else:
+            field_name = self.filter_field_combo.currentText()
+            self.result_table.filter_by_field(field_name, keyword)
+
+    def _on_reset_all_results(self):
+        """重置所有结果"""
+        self.result_table.reset_all()
+        self.status_label.setText("已重置所有数据为识别结果")
+
+    def _on_show_low_confidence(self):
+        """显示低置信度项"""
+        # 实现低置信度筛选
+        pass
 
     def _create_stats_widget(self) -> QWidget:
         """创建统计信息卡片"""
@@ -282,7 +439,7 @@ class MainWindow(FluentWindow):
         layout.addStretch()
 
         # 快捷键提示
-        shortcut_label = BodyLabel("Ctrl+O 上传 | Ctrl+S 保存模板 | Ctrl+T 试识别 | Ctrl+Enter 批量识别 | Delete 删除字段")
+        shortcut_label = BodyLabel("Ctrl+O 上传 | Ctrl+S 保存模板 | Ctrl+T 试识别 | Ctrl+Enter 批量识别 | Delete 删除字段 | Ctrl+Z 撤销 | Ctrl+Y 重做")
         shortcut_label.setStyleSheet("color: #666; font-size: 11px;")
         layout.addWidget(shortcut_label)
 
@@ -343,12 +500,112 @@ class MainWindow(FluentWindow):
 
     def _connect_signals(self):
         self.file_panel.file_selected.connect(self.on_file_selected)
-        self.pdf_canvas.region_drawn.connect(self.field_panel.add_region)
+        self.pdf_canvas.region_drawn.connect(self._on_region_drawn)
+        self.pdf_canvas.region_updated.connect(self._on_region_updated_with_history)
+        self.pdf_canvas.region_selected.connect(self._on_region_selected)
         self.field_panel.region_changed.connect(self.pdf_canvas.update_regions)
-        self.field_panel.region_deleted.connect(self.pdf_canvas.remove_region)
+        self.field_panel.region_deleted.connect(self._on_region_deleted)
         self.field_panel.current_cleared.connect(self.on_clear_current_pdf_fields)
         self.field_panel.all_cleared.connect(self.on_clear_all_pdf_fields)
         self.field_panel.field_name_changed.connect(self.on_field_name_changed)
+        self.field_panel.set_as_default_template.connect(self._on_set_as_default_template)
+
+    def _on_region_drawn(self, region: Region):
+        """区域绘制完成 - 添加到命令历史"""
+        def add_region(r):
+            self.field_panel.add_region(r)
+            self.pdf_canvas.regions_data[r.id] = r
+
+        def remove_region(rid):
+            self.field_panel._delete(rid)
+            if rid in self.pdf_canvas.regions_data:
+                del self.pdf_canvas.regions_data[rid]
+
+        command = AddRegionCommand(region, add_region, remove_region)
+        self.command_history.execute(command)
+        self._save_current_pdf_config()
+
+    def _on_region_updated_with_history(self, region_id: str, new_region: Region):
+        """区域更新 - 记录到命令历史"""
+        if region_id not in self.field_panel.regions:
+            return
+
+        old_region = self.field_panel.regions[region_id]
+
+        def update_region(r):
+            self.field_panel.regions[r.id] = r
+            self.pdf_canvas.regions_data[r.id] = r
+            self.pdf_canvas.update_regions(list(self.field_panel.regions.values()))
+
+        command = UpdateRegionCommand(region_id, old_region, new_region, update_region)
+        self.command_history.execute(command)
+        self._save_current_pdf_config()
+        self.status_label.setText(f"区域已更新: {new_region.field_name}")
+
+    def _on_region_deleted(self, region_id: str):
+        """区域删除 - 添加到命令历史"""
+        if region_id not in self.field_panel.regions:
+            return
+
+        region = self.field_panel.regions[region_id]
+
+        def remove_region(rid):
+            self.field_panel._delete(rid)
+            if rid in self.pdf_canvas.regions_data:
+                del self.pdf_canvas.regions_data[rid]
+            self.pdf_canvas.remove_region(rid)
+
+        def add_region(r):
+            self.field_panel.add_region(r)
+            self.pdf_canvas.regions_data[r.id] = r
+            self.pdf_canvas.update_regions(list(self.field_panel.regions.values()))
+
+        command = RemoveRegionCommand(region, remove_region, add_region)
+        self.command_history.execute(command)
+        self._save_current_pdf_config()
+
+    def _on_region_selected(self, region_id: str):
+        """区域被选中 - 同步选中表格行"""
+        # 在字段面板中选中对应的行
+        for row in range(self.field_panel.table.rowCount()):
+            item = self.field_panel.table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == region_id:
+                self.field_panel.table.selectRow(row)
+                break
+
+    def on_region_updated(self, region_id: str, region: Region):
+        """区域更新处理（拖拽移动或调整大小后）"""
+        # 更新字段面板中的区域数据
+        if region_id in self.field_panel.regions:
+            old_region = self.field_panel.regions[region_id]
+            self.field_panel.regions[region_id] = region
+            # 更新当前PDF的模板配置
+            self._save_current_pdf_config()
+            self.status_label.setText(f"区域已更新: {region.field_name}")
+
+    def _undo(self):
+        """撤销操作"""
+        if self.command_history.undo():
+            self._refresh_canvas_and_panel()
+            self.status_label.setText("已撤销 (Ctrl+Y 重做)")
+        else:
+            self.status_label.setText("没有可撤销的操作")
+
+    def _redo(self):
+        """重做操作"""
+        if self.command_history.redo():
+            self._refresh_canvas_and_panel()
+            self.status_label.setText("已重做 (Ctrl+Z 撤销)")
+        else:
+            self.status_label.setText("没有可重做的操作")
+
+    def _refresh_canvas_and_panel(self):
+        """刷新画布和面板显示"""
+        regions = list(self.field_panel.regions.values())
+        self.pdf_canvas.update_regions(regions)
+        template = self.field_panel.build_template()
+        self.field_panel.load_template(template)
+        self._save_current_pdf_config()
 
     def switchTo(self, page: QWidget):
         """切换到指定页面"""
@@ -385,14 +642,61 @@ class MainWindow(FluentWindow):
             if self._default_template is None:
                 # 第一个有配置的PDF作为默认模板
                 self._default_template = template
+                self.field_panel.set_template_name("默认模板", is_default=True)
             elif self._is_template_different(template, self._default_template):
                 # 与默认模板不同，保存为特殊配置
                 self._pdf_overrides[self._current_pdf] = template
-            # 如果与默认模板相同，不保存为特殊配置（使用默认）
+                self.field_panel.set_template_name("自定义配置", is_default=False)
+            else:
+                # 与默认模板相同
+                self.field_panel.set_template_name("默认模板", is_default=True)
         else:
             # 当前没有字段配置
-            # 如果之前有特殊配置，保留它（用户可能想保持空配置）
-            pass
+            self.field_panel.set_template_name("未配置", is_default=False)
+
+        # 更新文件列表中的配置状态显示
+        self._update_file_list_status()
+
+    def _update_file_list_status(self):
+        """更新文件列表中各PDF的配置状态"""
+        for pdf_path in self.file_panel.files:
+            if pdf_path in self._pdf_overrides:
+                self.file_panel.set_pdf_config_status(pdf_path, "custom")
+            elif self._default_template is not None:
+                self.file_panel.set_pdf_config_status(pdf_path, "default")
+            else:
+                self.file_panel.set_pdf_config_status(pdf_path, "empty")
+
+    def _on_set_as_default_template(self):
+        """将当前配置设为默认模板"""
+        template = self.field_panel.build_template()
+        if not template.regions:
+            InfoBar.warning(
+                title="提示",
+                content="当前没有字段配置，无法设为默认模板",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+            return
+
+        self._default_template = template
+        # 清除所有特殊配置（因为现在都使用新的默认模板）
+        self._pdf_overrides.clear()
+        self.field_panel.set_template_name("默认模板", is_default=True)
+        self._update_file_list_status()
+
+        InfoBar.success(
+            title="成功",
+            content="已将当前配置设为默认模板",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2000,
+            parent=self
+        )
 
     def _is_template_different(self, t1, t2):
         """比较两个模板是否不同"""
@@ -416,16 +720,33 @@ class MainWindow(FluentWindow):
 
         # 加载新 PDF 预览（自动保留已有的框选区域）
         image = self.pdf_loader.render_page(pdf_path)
-        self.pdf_canvas.load_image(image)
+
+        # 初始化或恢复图像预处理器
+        from app.utils.image_preprocessor import ImagePreprocessor
+        if pdf_path in self._pdf_preprocessors:
+            params = self._pdf_preprocessors[pdf_path]
+            self._current_preprocessor = ImagePreprocessor(image)
+            self._current_preprocessor.set_params(params)
+        else:
+            self._current_preprocessor = ImagePreprocessor(image)
+
+        self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+        self.preprocess_toolbar.setEnabled(True)
 
         # 加载该PDF的字段配置（默认或特殊配置）
         template = self._get_effective_template(pdf_path)
         if template and template.regions:
             self.field_panel.load_template(template)
             self.pdf_canvas.update_regions(template.regions)
+            # 更新模板名称显示
+            if pdf_path in self._pdf_overrides:
+                self.field_panel.set_template_name("自定义配置", is_default=False)
+            else:
+                self.field_panel.set_template_name("默认模板", is_default=True)
         else:
             # 没有配置时清空字段面板
             self.field_panel.clear_all()
+            self.field_panel.set_template_name("未配置", is_default=False)
 
         # 恢复该PDF的试识别结果（如果有）
         if pdf_path in self._pdf_preview_results:
@@ -438,6 +759,48 @@ class MainWindow(FluentWindow):
 
         from pathlib import Path
         self.status_label.setText(f"当前: {Path(pdf_path).name} - 在画布上拖拽框选区域")
+
+    def _on_preprocess_changed(self):
+        """图像预处理参数改变"""
+        if self._current_preprocessor:
+            params = self.preprocess_toolbar.get_params()
+            self._current_preprocessor.set_params(params)
+            self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+
+    def _on_preprocess_apply_to_all(self):
+        """将当前预处理应用到所有文件"""
+        if self._current_preprocessor and self._current_pdf:
+            params = self._current_preprocessor.get_params()
+            # 应用到所有已加载的PDF文件
+            for pdf_path in self.file_panel.files:
+                self._pdf_preprocessors[pdf_path] = params.copy()
+            InfoBar.success(
+                title="成功",
+                content=f"已将当前图像处理设置应用到 {len(self.file_panel.files)} 个文件",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+
+    def _on_preprocess_reset(self):
+        """重置图像预处理"""
+        if self._current_preprocessor:
+            self._current_preprocessor.reset()
+            self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+
+    def _on_preprocess_auto_contrast(self):
+        """[修复] 应用自动对比度"""
+        if self._current_preprocessor:
+            self._current_preprocessor.auto_contrast()
+            self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+
+    def _on_preprocess_sharpen(self):
+        """[修复] 应用锐化"""
+        if self._current_preprocessor:
+            self._current_preprocessor.sharpen()
+            self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
 
     def on_try_ocr(self):
         template = self.field_panel.build_template()
@@ -568,6 +931,9 @@ class MainWindow(FluentWindow):
         self.results = results
         self.result_table.load_results(results)
 
+        # 保存到历史记录
+        self.history_manager.add_record(results)
+
         # 更新统计信息
         total = len(results)
         success = sum(1 for r in results if r.success)
@@ -575,6 +941,17 @@ class MainWindow(FluentWindow):
         self.stat_total.setText(f"共 {total} 个文件")
         self.stat_success.setText(f"成功: {success}")
         self.stat_fail.setText(f"失败: {fail}")
+
+        # 更新筛选下拉框
+        self.filter_field_combo.clear()
+        self.filter_field_combo.addItem("全部字段")
+        if results:
+            field_names = []
+            for r in results:
+                for fn in r.fields:
+                    if fn not in field_names:
+                        field_names.append(fn)
+            self.filter_field_combo.addItems(field_names)
 
         # 切换到结果页面并更新导航选中状态
         self.switchTo(self.result_page)
@@ -668,12 +1045,23 @@ class MainWindow(FluentWindow):
             )
             return
 
-        # 清空当前字段面板和画布
-        self.field_panel.clear_all()
-        self.pdf_canvas.update_regions([])
+        # 记录清空操作到历史
+        regions = list(self.field_panel.regions.values())
+
+        def clear_regions():
+            self.field_panel.clear_all()
+            self.pdf_canvas.update_regions([])
+
+        def restore_regions(saved_regions):
+            self.field_panel.clear_all()
+            for r in saved_regions:
+                self.field_panel.add_region(r)
+            self.pdf_canvas.update_regions(saved_regions)
+
+        command = ClearAllCommand(regions, clear_regions, restore_regions)
+        self.command_history.execute(command)
 
         # 将该PDF标记为需要特殊配置（空配置作为占位）
-        # 当用户手动添加字段时，会保存为特殊配置
         from app.models.template import Template
         self._pdf_overrides[self._current_pdf] = Template(name="empty", regions=[])
 
@@ -689,17 +1077,31 @@ class MainWindow(FluentWindow):
 
     def on_clear_all_pdf_fields(self):
         """清空所有PDF的字段配置"""
-        # 清空默认配置
-        self._default_template = None
-        # 清空所有特殊配置
-        self._pdf_overrides.clear()
-        # 清空所有试识别结果
-        self._pdf_preview_results.clear()
-        # 清空当前显示
-        self.field_panel.clear_all()
-        self.pdf_canvas.update_regions([])
-        # 清空试识别结果
-        self._current_preview_result = None
+        # 记录清空操作到历史
+        regions = list(self.field_panel.regions.values())
+
+        def clear_all():
+            # 清空默认配置
+            self._default_template = None
+            # 清空所有特殊配置
+            self._pdf_overrides.clear()
+            # 清空所有试识别结果
+            self._pdf_preview_results.clear()
+            # 清空当前显示
+            self.field_panel.clear_all()
+            self.pdf_canvas.update_regions([])
+            # 清空试识别结果
+            self._current_preview_result = None
+            # 清空历史
+            self.command_history.clear()
+
+        def restore_all(saved_regions):
+            for r in saved_regions:
+                self.field_panel.add_region(r)
+            self.pdf_canvas.update_regions(saved_regions)
+
+        command = ClearAllCommand(regions, clear_all, restore_all)
+        self.command_history.execute(command)
 
         InfoBar.success(
             title="成功",
@@ -712,27 +1114,49 @@ class MainWindow(FluentWindow):
         )
 
     def on_field_name_changed(self, old_name: str, new_name: str):
-        """字段名变更处理 - 同步更新模板配置"""
+        """字段名变更处理 - [修复] 使用命令模式记录到历史"""
         if self._current_pdf is None:
             return
+
+        # 查找对应的 region_id
+        region_id = None
+        for rid, region in self.field_panel.regions.items():
+            if region.field_name == new_name:
+                region_id = rid
+                break
+
+        if region_id is None:
+            return
+
+        # [修复] 创建 UpdateFieldNameCommand 记录到历史
+        from app.utils.command_history import UpdateFieldNameCommand
+
+        def update_field_name(rid, name):
+            if rid in self.field_panel.regions:
+                self.field_panel.regions[rid].field_name = name
+                # 更新表格显示
+                for row in range(self.field_panel.table.rowCount()):
+                    item = self.field_panel.table.item(row, 0)
+                    if item and item.data(Qt.ItemDataRole.UserRole) == rid:
+                        item.setText(name)
+                        break
+                self.pdf_canvas.regions_data[rid].field_name = name
+
+        command = UpdateFieldNameCommand(region_id, old_name, new_name, update_field_name)
+        self.command_history.execute(command)
 
         # 更新当前PDF的模板配置
         template = self.field_panel.build_template()
 
         # 判断是更新默认模板还是特殊配置
         if self._current_pdf in self._pdf_overrides:
-            # 更新特殊配置
             self._pdf_overrides[self._current_pdf] = template
         elif self._default_template is not None:
-            # 检查是否与默认模板相同
             if self._is_template_different(template, self._default_template):
-                # 与默认模板不同，保存为特殊配置
                 self._pdf_overrides[self._current_pdf] = template
             else:
-                # 与默认模板相同，更新默认模板
                 self._default_template = template
         else:
-            # 没有默认模板，设为默认
             self._default_template = template
 
         # 更新试识别结果中的字段名

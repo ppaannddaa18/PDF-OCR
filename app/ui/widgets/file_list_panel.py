@@ -38,6 +38,7 @@ class FileListPanel(QWidget):
         layout.addWidget(self.btn_clear)
 
         self.files = []
+        self._pdf_configs = {}  # pdf_path -> 配置状态 ("default", "custom", "empty")
         self._update_empty_state()
 
     def _update_empty_state(self):
@@ -51,9 +52,35 @@ class FileListPanel(QWidget):
         for p in paths:
             if p not in self.files:
                 self.files.append(p)
-                self.list_widget.addItem(Path(p).name)
+                item_text = Path(p).name
+                self.list_widget.addItem(item_text)
                 self.list_widget.item(self.list_widget.count()-1).setData(256, p)
         self._update_empty_state()
+
+    def set_pdf_config_status(self, pdf_path: str, status: str):
+        """[修复] 设置PDF的配置状态 - 使用图标而不是文本前缀"""
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtCore import Qt
+
+        self._pdf_configs[pdf_path] = status
+        # 更新列表项显示
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.data(256) == pdf_path:
+                name = Path(pdf_path).name
+                item.setText(name)  # [修复] 保持原始文件名
+
+                # [修复] 使用背景色和前景色表示状态，而不是文本前缀
+                if status == "custom":
+                    item.setBackground(QColor("#E5F3FF"))  # 浅蓝色
+                    item.setToolTip(f"{name}\n使用自定义字段配置")
+                elif status == "default":
+                    item.setBackground(QColor("#E5F9E5"))  # 浅绿色
+                    item.setToolTip(f"{name}\n使用默认模板")
+                elif status == "empty":
+                    item.setBackground(QColor("#F5F5F5"))  # 浅灰色
+                    item.setToolTip(f"{name}\n无字段配置")
+                break
 
     def remove_selected(self):
         item = self.list_widget.currentItem()
@@ -61,6 +88,8 @@ class FileListPanel(QWidget):
             path = item.data(256)
             if path in self.files:
                 self.files.remove(path)
+            if path in self._pdf_configs:
+                del self._pdf_configs[path]
             self.list_widget.takeItem(self.list_widget.row(item))
             self._update_empty_state()
 
@@ -85,6 +114,7 @@ class FileListPanel(QWidget):
 
     def clear_files(self):
         self.files.clear()
+        self._pdf_configs.clear()
         self.list_widget.clear()
         self._update_empty_state()
 
