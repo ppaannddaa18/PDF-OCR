@@ -17,7 +17,8 @@
       "Bash(tasklist)",
       "Bash(python -c \"from app.ui.main_window import MainWindow; print\\('Import OK'\\)\")",
       "Bash(python -c \"from qfluentwidgets import *; print\\([x for x in dir\\(\\) if 'progress' in x.lower\\(\\) or 'Progress' in x]\\)\")",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(cat C:\\\\\\\\Users\\\\\\\\30726\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-30726-OneDrive-panda-tools-PDFOCR\\\\\\\\3945a662-dbd9-4484-9f46-67dd5dd9af9f\\\\\\\\tasks\\\\\\\\be8b5kw8g.output)"
     ]
   }
 }

@@ -3,6 +3,7 @@
 """
 from abc import ABC, abstractmethod
 from typing import List, Callable, Optional
+from copy import deepcopy
 from app.models.region import Region
 
 
@@ -24,7 +25,7 @@ class Command(ABC):
 class AddRegionCommand(Command):
     """添加区域命令"""
     def __init__(self, region: Region, add_callback: Callable, remove_callback: Callable):
-        self.region = region
+        self.region = deepcopy(region)  # 深拷贝
         self.add_callback = add_callback
         self.remove_callback = remove_callback
 
@@ -41,7 +42,7 @@ class AddRegionCommand(Command):
 class RemoveRegionCommand(Command):
     """删除区域命令"""
     def __init__(self, region: Region, remove_callback: Callable, add_callback: Callable):
-        self.region = region
+        self.region = deepcopy(region)  # 深拷贝
         self.remove_callback = remove_callback
         self.add_callback = add_callback
 
@@ -60,8 +61,8 @@ class UpdateRegionCommand(Command):
     def __init__(self, region_id: str, old_region: Region, new_region: Region,
                  update_callback: Callable):
         self.region_id = region_id
-        self.old_region = old_region
-        self.new_region = new_region
+        self.old_region = deepcopy(old_region)  # 深拷贝
+        self.new_region = deepcopy(new_region)  # 深拷贝
         self.update_callback = update_callback
 
     def execute(self):
@@ -97,7 +98,7 @@ class ClearAllCommand(Command):
     """清空所有区域命令"""
     def __init__(self, regions: List[Region], clear_callback: Callable,
                  restore_callback: Callable):
-        self.regions = list(regions)  # 复制一份
+        self.regions = [deepcopy(r) for r in regions]  # 深拷贝所有区域
         self.clear_callback = clear_callback
         self.restore_callback = restore_callback
 

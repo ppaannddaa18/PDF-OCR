@@ -471,19 +471,41 @@ class PdfCanvas(QGraphicsView):
         self.regions_data[region.id] = region
 
     def update_regions(self, regions: list):
-        """更新所有区域显示"""
-        # 清理所有已有框
-        for item in self.region_items.values():
-            self.scene_.removeItem(item)
-        self.region_items.clear()
-        self.regions_data.clear()
-        self.selected_region_id = None
-
+        """更新所有区域显示（增量更新）"""
         if self.img_w <= 0 or self.img_h <= 0:
             return
 
+        # 计算差异
+        current_ids = set(self.region_items.keys())
+        new_ids = {r.id for r in regions}
+
+        # 删除不再存在的区域
+        for rid in current_ids - new_ids:
+            self.remove_region(rid)
+
+        # 更新或添加区域
         for r in regions:
-            self._add_region_item(r)
+            if r.id in self.region_items:
+                # 更新现有区域
+                self.update_region(r.id, r)
+            else:
+                # 添加新区域
+                self._add_region_item(r)
+
+    def update_region(self, region_id: str, region: Region):
+        """增量更新单个区域"""
+        if region_id in self.region_items:
+            item = self.region_items[region_id]
+            rect = QRectF(region.x * self.img_w, region.y * self.img_h,
+                         region.w * self.img_w, region.h * self.img_h)
+            item.setRect(rect)
+            # 更新手柄位置
+            item._create_handles()
+            item._update_handles_visibility(item.isSelected())
+            self.regions_data[region_id] = region
+        else:
+            # 新增区域
+            self._add_region_item(region)
 
     def remove_region(self, region_id: str):
         """删除指定区域"""

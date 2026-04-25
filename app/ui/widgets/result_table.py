@@ -61,50 +61,91 @@ class ResultTable(QTableWidget):
         self.setRowCount(len(self._results))
 
         for row, r in enumerate(self._results):
-            # 源文件名列
-            self.setItem(row, 0, QTableWidgetItem(Path(r.source_file).name))
-
-            # 字段值列
-            for col, fn in enumerate(self._field_names, start=1):
-                fr = r.fields.get(fn)
-                if fr:
-                    item = QTableWidgetItem(fr.text)
-                    # 根据置信度设置背景色
-                    if fr.confidence < 0.5:
-                        item.setBackground(QColor("#FFE5E5"))  # 红色 - 低置信度
-                        item.setToolTip(f"置信度: {fr.confidence:.1%} (较低，建议核对)")
-                    elif fr.confidence < 0.7:
-                        item.setBackground(QColor("#FFF4E5"))  # 黄色 - 中等置信度
-                        item.setToolTip(f"置信度: {fr.confidence:.1%} (一般)")
-                    else:
-                        item.setToolTip(f"置信度: {fr.confidence:.1%}")
-
-                    # 标记手动编辑的单元格
-                    if fr.manually_edited:
-                        item.setBackground(QColor("#E5F3FF"))  # 蓝色 - 已编辑
-                        item.setToolTip(f"{item.toolTip()}\n[已手动编辑]")
-
-                    self.setItem(row, col, item)
-                else:
-                    self.setItem(row, col, QTableWidgetItem(""))
-
-            # 状态列
-            status_item = QTableWidgetItem("成功" if r.success else f"失败: {r.error_msg}")
-            if not r.success:
-                status_item.setBackground(QColor("#FFE5E5"))
-            self.setItem(row, len(headers)-2, status_item)
-
-            # 操作列 - 重置按钮
-            reset_btn = QPushButton("重置")
-            reset_btn.setFixedWidth(60)
-            reset_btn.clicked.connect(lambda checked, r=row: self._reset_row(r))
-            self.setCellWidget(row, len(headers)-1, reset_btn)
+            self._populate_row(row, r)
 
         # 调整列宽
         self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(len(headers)-2, QHeaderView.ResizeMode.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(len(headers)-1, QHeaderView.ResizeMode.Fixed)
         self.setColumnWidth(len(headers)-1, 70)
+
+    def _populate_row(self, row: int, r: FileResult):
+        """填充单行数据"""
+        headers_count = len(self._field_names) + 3  # 源文件 + 字段 + 状态 + 操作
+
+        # 源文件名列
+        self.setItem(row, 0, QTableWidgetItem(Path(r.source_file).name))
+
+        # 字段值列
+        for col, fn in enumerate(self._field_names, start=1):
+            fr = r.fields.get(fn)
+            if fr:
+                item = QTableWidgetItem(fr.text)
+                # 根据置信度设置背景色
+                if fr.confidence < 0.5:
+                    item.setBackground(QColor("#FFE5E5"))  # 红色 - 低置信度
+                    item.setToolTip(f"置信度: {fr.confidence:.1%} (较低，建议核对)")
+                elif fr.confidence < 0.7:
+                    item.setBackground(QColor("#FFF4E5"))  # 黄色 - 中等置信度
+                    item.setToolTip(f"置信度: {fr.confidence:.1%} (一般)")
+                else:
+                    item.setToolTip(f"置信度: {fr.confidence:.1%}")
+
+                # 标记手动编辑的单元格
+                if fr.manually_edited:
+                    item.setBackground(QColor("#E5F3FF"))  # 蓝色 - 已编辑
+                    item.setToolTip(f"{item.toolTip()}\n[已手动编辑]")
+
+                self.setItem(row, col, item)
+            else:
+                self.setItem(row, col, QTableWidgetItem(""))
+
+        # 状态列
+        status_item = QTableWidgetItem("成功" if r.success else f"失败: {r.error_msg}")
+        if not r.success:
+            status_item.setBackground(QColor("#FFE5E5"))
+        self.setItem(row, headers_count - 2, status_item)
+
+        # 操作列 - 重置按钮
+        reset_btn = QPushButton("重置")
+        reset_btn.setFixedWidth(60)
+        reset_btn.clicked.connect(lambda checked, r=row: self._reset_row(r))
+        self.setCellWidget(row, headers_count - 1, reset_btn)
+
+    def update_row(self, row: int, result: FileResult):
+        """增量更新单行数据"""
+        if row < 0 or row >= len(self._results):
+            return
+
+        self._results[row] = result
+        self._populate_row(row, result)
+
+    def update_cell(self, row: int, field_name: str, value: str, confidence: float = 1.0):
+        """增量更新单个单元格"""
+        if row < 0 or row >= len(self._results):
+            return
+
+        if field_name not in self._field_names:
+            # 新字段，需要刷新整个表格
+            self._refresh_table()
+            return
+
+        result = self._results[row]
+        if field_name in result.fields:
+            result.fields[field_name].text = value
+            result.fields[field_name].confidence = confidence
+
+        col = self._field_names.index(field_name) + 1
+        item = self.item(row, col)
+        if item:
+            item.setText(value)
+            # 更新置信度颜色
+            if confidence < 0.5:
+                item.setBackground(QColor("#FFE5E5"))
+            elif confidence < 0.7:
+                item.setBackground(QColor("#FFF4E5"))
+            else:
+                item.setBackground(QBrush())  # 恢复默认背景
 
     def _on_item_changed(self, item: QTableWidgetItem):
         """单元格内容变更处理"""

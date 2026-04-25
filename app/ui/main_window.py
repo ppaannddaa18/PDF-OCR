@@ -23,6 +23,7 @@ from app.core.exporter import Exporter
 from app.workers.batch_worker import BatchWorker
 from app.utils.command_history import CommandHistory, AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
 from app.utils.history_manager import HistoryManager
+from app.utils.lru_cache import LRUCache
 from app.ui.widgets.preprocess_toolbar import ImagePreprocessToolbar
 from app.models.region import Region
 
@@ -43,7 +44,12 @@ class MainWindow(FluentWindow):
             lang=config["ocr"]["lang"],
             use_gpu=config["ocr"]["use_gpu"],
         )
-        self.processor = BatchProcessor(self.pdf_loader, self.ocr_engine)
+        # 异步初始化OCR引擎
+        self.ocr_engine.initialize_async(callback=self._on_ocr_ready)
+        self.processor = BatchProcessor(
+            self.pdf_loader, self.ocr_engine,
+            max_workers=config["batch"]["max_workers"]
+        )
         self.template_mgr = TemplateManager()
         self.exporter = Exporter()
 
@@ -56,14 +62,14 @@ class MainWindow(FluentWindow):
         self._pdf_overrides = {}       # pdf_path -> Template，仅存储有特殊配置的PDF
         self._current_pdf = None       # 当前选中的PDF
         self._current_preview_result = None  # 当前PDF的试识别结果
-        self._pdf_preview_results = {}  # pdf_path -> FileResult，存储每个PDF的试识别结果
+        self._pdf_preview_results = LRUCache(max_size=50)  # pdf_path -> FileResult，使用LRU缓存
 
         # 命令历史管理器
         self.command_history = CommandHistory(max_size=20)
 
         # 图像预处理
         self._current_preprocessor = None
-        self._pdf_preprocessors = {}  # pdf_path -> ImagePreprocessor
+        self._pdf_preprocessors = LRUCache(max_size=20)  # pdf_path -> ImagePreprocessor，使用LRU缓存
 
         # 历史记录管理器
         self.history_manager = HistoryManager()
@@ -128,6 +134,11 @@ class MainWindow(FluentWindow):
             if item:
                 region_id = item.data(Qt.ItemDataRole.UserRole)
                 self._on_region_deleted(region_id)
+
+    def _on_ocr_ready(self):
+        """OCR引擎初始化完成回调"""
+        # OCR引擎已准备就绪，可以在这里更新UI状态
+        pass
 
     def _init_navigation(self):
         """初始化侧边导航栏"""
@@ -803,6 +814,19 @@ class MainWindow(FluentWindow):
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
 
     def on_try_ocr(self):
+        # 检查OCR引擎是否已初始化
+        if not self.ocr_engine.is_ready:
+            InfoBar.warning(
+                title="提示",
+                content="OCR引擎正在加载中，请稍后再试",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+            return
+
         template = self.field_panel.build_template()
         current_pdf = self.file_panel.current_file()
         if not current_pdf or not template.regions:
@@ -825,6 +849,19 @@ class MainWindow(FluentWindow):
         self.status_label.setText(f"试识别完成 - 共 {len(template.regions)} 个字段")
 
     def on_batch_run(self):
+        # 检查OCR引擎是否已初始化
+        if not self.ocr_engine.is_ready:
+            InfoBar.warning(
+                title="提示",
+                content="OCR引擎正在加载中，请稍后再试",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+            return
+
         template = self.field_panel.build_template()
         files = self.file_panel.all_files()
         if not files or not template.regions:
