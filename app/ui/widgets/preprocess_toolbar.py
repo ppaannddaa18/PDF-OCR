@@ -11,7 +11,18 @@ from qfluentwidgets import (
     TransparentToolButton, BodyLabel, PushButton, ComboBox,
     InfoBar, InfoBarPosition
 )
-import qtawesome as qta
+
+# 延迟导入qtawesome，避免字体警告
+_qta = None
+
+
+def _get_qta():
+    """获取qtawesome实例（延迟加载）"""
+    global _qta
+    if _qta is None:
+        import qtawesome as qta
+        _qta = qta
+    return _qta
 
 
 class ImagePreprocessToolbar(QWidget):
@@ -97,7 +108,7 @@ class ImagePreprocessToolbar(QWidget):
         layout.addSpacing(8)
 
         # 操作按钮
-        self.btn_reset = TransparentToolButton(qta.icon('fa5s.undo', color='#666'))
+        self.btn_reset = TransparentToolButton(_get_qta().icon('fa5s.undo', color='#666'))
         self.btn_reset.setToolTip("重置所有调整")
         self.btn_reset.clicked.connect(self._on_reset)
         layout.addWidget(self.btn_reset)
@@ -116,8 +127,8 @@ class ImagePreprocessToolbar(QWidget):
             'brightness': 1.0,
             'contrast': 1.0,
             'threshold': None,
-            'auto_contrast': False,  # [修复] 添加自动对比度标记
-            'sharpen': False,  # [修复] 添加锐化标记
+            'auto_contrast_applied': False,  # [修复] 添加自动对比度标记
+            'sharpen_applied': False,  # [修复] 添加锐化标记
         }
 
     def _on_rotation_changed(self, index):
@@ -142,15 +153,15 @@ class ImagePreprocessToolbar(QWidget):
 
     def _on_auto_contrast(self):
         """[修复] 触发自动对比度处理"""
-        self._current_params['auto_contrast'] = True
+        self._current_params['auto_contrast_applied'] = True
         self.apply_auto_contrast.emit()  # [修复] 发送专门信号触发处理
-        self._current_params['auto_contrast'] = False  # 重置标记
+        self._current_params['auto_contrast_applied'] = False  # 重置标记
 
     def _on_sharpen(self):
         """[修复] 触发锐化处理"""
-        self._current_params['sharpen'] = True
+        self._current_params['sharpen_applied'] = True
         self.apply_sharpen.emit()  # [修复] 发送专门信号触发处理
-        self._current_params['sharpen'] = False  # 重置标记
+        self._current_params['sharpen_applied'] = False  # 重置标记
 
     def _on_reset(self):
         self.rotation_combo.setCurrentIndex(0)

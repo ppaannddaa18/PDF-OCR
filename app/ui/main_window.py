@@ -1,3 +1,9 @@
+"""
+主窗口 - 性能优化版
+- 延迟导入重型UI组件
+- 异步初始化核心组件
+"""
+# 核心导入（必须同步加载）
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QStackedWidget, QSplitter
 )
@@ -8,23 +14,66 @@ from qfluentwidgets import (
     StrongBodyLabel, BodyLabel, InfoBar, InfoBarPosition,
     setTheme, Theme, ProgressBar, PushButton
 )
-import qtawesome as qta
 
-from app.ui.widgets.pdf_canvas import PdfCanvas
-from app.ui.widgets.file_list_panel import FileListPanel
-from app.ui.widgets.field_panel import FieldPanel
-from app.ui.widgets.result_table import ResultTable
-from app.ui.widgets.history_panel import HistoryPanel
+# 延迟导入标记（实际导入在函数内部）
+qta = None  # qtawesome 延迟加载
+
+# UI组件延迟导入缓存
+_UiComponents = None
+
+
+def _get_ui_components():
+    """获取UI组件（延迟加载）"""
+    global _UiComponents
+    if _UiComponents is None:
+        from app.ui.widgets.pdf_canvas import PdfCanvas
+        from app.ui.widgets.file_list_panel import FileListPanel
+        from app.ui.widgets.field_panel import FieldPanel
+        from app.ui.widgets.result_table import ResultTable
+        from app.ui.widgets.history_panel import HistoryPanel
+        from app.ui.widgets.preprocess_toolbar import ImagePreprocessToolbar
+        from app.workers.batch_worker import BatchWorker
+        from app.utils.command_history import AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
+
+        _UiComponents = type('UiComponents', (), {
+            'PdfCanvas': PdfCanvas,
+            'FileListPanel': FileListPanel,
+            'FieldPanel': FieldPanel,
+            'ResultTable': ResultTable,
+            'HistoryPanel': HistoryPanel,
+            'ImagePreprocessToolbar': ImagePreprocessToolbar,
+            'BatchWorker': BatchWorker,
+            'AddRegionCommand': AddRegionCommand,
+            'RemoveRegionCommand': RemoveRegionCommand,
+            'UpdateRegionCommand': UpdateRegionCommand,
+            'ClearAllCommand': ClearAllCommand,
+        })()
+    return _UiComponents
+
+
+def _ensure_qta():
+    """确保 qtawesome 已加载"""
+    global qta
+    if qta is None:
+        import qtawesome
+        qta = qtawesome
+    return qta
+
+
+def _icon(name: str, color: str = '#0078d4'):
+    """获取图标（延迟加载qtawesome）"""
+    return _ensure_qta().icon(name, color=color)
+
+
+# 核心组件导入（轻量级）
 from app.core.pdf_loader import PdfLoader
 from app.core.ocr_engine import OCREngine
 from app.core.batch_processor import BatchProcessor
 from app.core.template_manager import TemplateManager
 from app.core.exporter import Exporter
-from app.workers.batch_worker import BatchWorker
-from app.utils.command_history import CommandHistory, AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
-from app.utils.history_manager import HistoryManager
 from app.utils.lru_cache import LRUCache
-from app.ui.widgets.preprocess_toolbar import ImagePreprocessToolbar
+from app.utils.command_history import CommandHistory
+from app.utils.history_manager import HistoryManager
 from app.models.region import Region
 
 
@@ -34,6 +83,9 @@ class MainWindow(FluentWindow):
         self.config = config
         self.setWindowTitle(config["app"]["name"])
         self.resize(*config["app"]["window_size"])
+
+        # 确保重型模块已加载
+        _ensure_qta()
 
         # 设置主题（跟随系统）
         setTheme(Theme.AUTO)
@@ -144,21 +196,21 @@ class MainWindow(FluentWindow):
         """初始化侧边导航栏"""
         self.navigationInterface.addItem(
             routeKey='workspace',
-            icon=qta.icon('fa5s.edit', color='#0078d4'),
+            icon=_icon('fa5s.edit'),
             text='工作区',
             onClick=lambda: self.switchTo(self.template_page)
         )
 
         self.navigationInterface.addItem(
             routeKey='result',
-            icon=qta.icon('fa5s.table', color='#0078d4'),
+            icon=_icon('fa5s.table'),
             text='识别结果',
             onClick=lambda: self.switchTo(self.result_page)
         )
 
         self.navigationInterface.addItem(
             routeKey='history',
-            icon=qta.icon('fa5s.history', color='#0078d4'),
+            icon=_icon('fa5s.history'),
             text='历史记录',
             onClick=lambda: self.switchTo(self.history_page)
         )
@@ -205,10 +257,11 @@ class MainWindow(FluentWindow):
         left_layout.setSpacing(4)
 
         from qfluentwidgets import SubtitleLabel
+        ui = _get_ui_components()
         file_title = SubtitleLabel("文件列表")
         left_layout.addWidget(file_title)
 
-        self.file_panel = FileListPanel()
+        self.file_panel = ui.FileListPanel()
         self.file_panel.setMinimumWidth(180)
         self.file_panel.setMaximumWidth(400)
         left_layout.addWidget(self.file_panel, 1)
@@ -223,7 +276,7 @@ class MainWindow(FluentWindow):
         canvas_layout.addWidget(canvas_title)
 
         # 图像预处理工具栏
-        self.preprocess_toolbar = ImagePreprocessToolbar()
+        self.preprocess_toolbar = ui.ImagePreprocessToolbar()
         self.preprocess_toolbar.setEnabled(False)
         self.preprocess_toolbar.image_changed.connect(self._on_preprocess_changed)
         self.preprocess_toolbar.apply_to_all.connect(self._on_preprocess_apply_to_all)
@@ -232,7 +285,7 @@ class MainWindow(FluentWindow):
         self.preprocess_toolbar.apply_sharpen.connect(self._on_preprocess_sharpen)  # [修复]
         canvas_layout.addWidget(self.preprocess_toolbar)
 
-        self.pdf_canvas = PdfCanvas()
+        self.pdf_canvas = ui.PdfCanvas()
         canvas_layout.addWidget(self.pdf_canvas, 1)
 
         # 右栏：字段配置（包含标题）
@@ -271,7 +324,7 @@ class MainWindow(FluentWindow):
 
         right_layout.addWidget(template_info_widget)
 
-        self.field_panel = FieldPanel()
+        self.field_panel = ui.FieldPanel()
         self.field_panel.setMinimumWidth(260)
         self.field_panel.setMaximumWidth(450)
         right_layout.addWidget(self.field_panel, 1)
@@ -318,7 +371,8 @@ class MainWindow(FluentWindow):
         layout.addWidget(toolbar)
 
         # 结果表格
-        self.result_table = ResultTable()
+        ui = _get_ui_components()
+        self.result_table = ui.ResultTable()
         self.result_table.data_changed.connect(self._on_result_data_changed)
         layout.addWidget(self.result_table, 1)
 
@@ -332,7 +386,8 @@ class MainWindow(FluentWindow):
         layout.setSpacing(8)
 
         # 历史记录面板
-        self.history_panel = HistoryPanel(self.history_manager)
+        ui = _get_ui_components()
+        self.history_panel = ui.HistoryPanel(self.history_manager)
         self.history_panel.record_restored.connect(self._on_history_record_restored)
         layout.addWidget(self.history_panel)
 
@@ -465,7 +520,7 @@ class MainWindow(FluentWindow):
 
         # 导出按钮
         btn_export = TransparentPushButton("导出 Excel", self)
-        btn_export.setIcon(qta.icon('fa5s.file-excel', color='#0078d4'))
+        btn_export.setIcon(_icon('fa5s.file-excel'))
         btn_export.setMinimumWidth(90)
         btn_export.clicked.connect(self.on_export)
         layout.addWidget(btn_export)
@@ -499,7 +554,7 @@ class MainWindow(FluentWindow):
 
         # 上传按钮（带文字）
         btn_upload = TransparentPushButton("上传 PDF", self)
-        btn_upload.setIcon(qta.icon('fa5s.file-upload', color='#0078d4'))
+        btn_upload.setIcon(_icon('fa5s.file-upload'))
         btn_upload.setMinimumWidth(90)
         btn_upload.clicked.connect(self.on_upload)
         toolbar_layout.addWidget(btn_upload)
@@ -508,14 +563,14 @@ class MainWindow(FluentWindow):
 
         # 试识别按钮
         btn_try = TransparentPushButton("试识别", self)
-        btn_try.setIcon(qta.icon('fa5s.search', color='#0078d4'))
+        btn_try.setIcon(_icon('fa5s.search'))
         btn_try.setMinimumWidth(70)
         btn_try.clicked.connect(self.on_try_ocr)
         toolbar_layout.addWidget(btn_try)
 
         # 批量识别按钮
         btn_batch = TransparentPushButton("批量识别", self)
-        btn_batch.setIcon(qta.icon('fa5s.play', color='#107c10'))
+        btn_batch.setIcon(_icon('fa5s.play', color='#107c10'))
         btn_batch.setMinimumWidth(80)
         btn_batch.clicked.connect(self.on_batch_run)
         toolbar_layout.addWidget(btn_batch)
@@ -533,14 +588,14 @@ class MainWindow(FluentWindow):
 
         # 保存模板按钮
         btn_save = TransparentPushButton("保存模板", self)
-        btn_save.setIcon(qta.icon('fa5s.save', color='#0078d4'))
+        btn_save.setIcon(_icon('fa5s.save'))
         btn_save.setMinimumWidth(80)
         btn_save.clicked.connect(self.on_save_template)
         toolbar_layout.addWidget(btn_save)
 
         # 加载模板按钮
         btn_load = TransparentPushButton("加载模板", self)
-        btn_load.setIcon(qta.icon('fa5s.folder-open', color='#0078d4'))
+        btn_load.setIcon(_icon('fa5s.folder-open'))
         btn_load.setMinimumWidth(80)
         btn_load.clicked.connect(self.on_load_template)
         toolbar_layout.addWidget(btn_load)
@@ -616,7 +671,8 @@ class MainWindow(FluentWindow):
             if rid in self.pdf_canvas.regions_data:
                 del self.pdf_canvas.regions_data[rid]
 
-        command = AddRegionCommand(region, add_region, remove_region)
+        ui = _get_ui_components()
+        command = ui.AddRegionCommand(region, add_region, remove_region)
         self.command_history.execute(command)
         self._save_current_pdf_config()
 
@@ -632,7 +688,8 @@ class MainWindow(FluentWindow):
             self.pdf_canvas.regions_data[r.id] = r
             self.pdf_canvas.update_regions(list(self.field_panel.regions.values()))
 
-        command = UpdateRegionCommand(region_id, old_region, new_region, update_region)
+        ui = _get_ui_components()
+        command = ui.UpdateRegionCommand(region_id, old_region, new_region, update_region)
         self.command_history.execute(command)
         self._save_current_pdf_config()
         self.status_label.setText(f"区域已更新: {new_region.field_name}")
@@ -646,7 +703,7 @@ class MainWindow(FluentWindow):
 
         # 保存区域副本用于撤销
         from copy import deepcopy
-        from app.utils.command_history import RemoveRegionCommand
+        ui = _get_ui_components()
         region_copy = deepcopy(region)
 
         def remove_region(rid):
@@ -666,7 +723,7 @@ class MainWindow(FluentWindow):
             self._save_current_pdf_config()
 
         # 使用命令模式支持撤销
-        command = RemoveRegionCommand(region_copy, remove_region, add_region_back)
+        command = ui.RemoveRegionCommand(region_copy, remove_region, add_region_back)
         self.command_history.execute(command)
 
     def _on_region_selected(self, region_id: str):
@@ -857,8 +914,8 @@ class MainWindow(FluentWindow):
                 'brightness': 1.0,
                 'contrast': 1.0,
                 'threshold': None,
-                'auto_contrast': False,
-                'sharpen': False,
+                'auto_contrast_applied': False,
+                'sharpen_applied': False,
             })
 
         self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
@@ -1032,7 +1089,8 @@ class MainWindow(FluentWindow):
         # 创建并显示进度对话框
         self._create_progress_dialog(files)
 
-        self.worker = BatchWorker(self.processor, files, templates)
+        ui = _get_ui_components()
+        self.worker = ui.BatchWorker(self.processor, files, templates)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_all.connect(self._on_batch_done)
         self.worker.cancelled.connect(self._on_batch_cancelled)
@@ -1243,7 +1301,8 @@ class MainWindow(FluentWindow):
                 self.field_panel.add_region(r)
             self.pdf_canvas.update_regions(saved_regions)
 
-        command = ClearAllCommand(regions, clear_regions, restore_regions)
+        ui = _get_ui_components()
+        command = ui.ClearAllCommand(regions, clear_regions, restore_regions)
         self.command_history.execute(command)
 
         # 将该PDF标记为需要特殊配置（空配置作为占位）
