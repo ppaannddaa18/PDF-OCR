@@ -1,13 +1,13 @@
 # PDF OCR Tool
 
-基于 PaddleOCR 的 PDF 文档批量 OCR 识别桌面应用程序。
+基于 RapidOCR (PP-OCRv4) 的 PDF 文档批量 OCR 识别桌面应用程序。
 
 ## 功能特性
 
 - **PDF 文档管理** - 支持多 PDF 文件批量上传、页面渲染预览
 - **可视化框选** - 在 PDF 预览上拖拽绘制识别区域，支持调整、移动、删除
 - **模板系统** - 保存/加载框选配置，支持默认模板
-- **OCR 识别** - 基于 PaddleOCR 中文识别，支持试识别和批量识别
+- **OCR 识别** - 基于 RapidOCR (PP-OCRv4) 中文识别，支持试识别和批量识别
 - **图像预处理** - 旋转、亮度、对比度、锐化等预处理功能
 - **结果导出** - 支持 Excel/CSV 格式导出
 - **撤销/重做** - 完整的命令模式实现
@@ -100,7 +100,7 @@ PDFOCR/
 
 - PyQt6 - GUI 框架
 - PyQt6-Fluent-Widgets - Fluent Design UI 组件库
-- PaddleOCR - OCR 引擎
+- RapidOCR - OCR 引擎 (PP-OCRv4)
 - PyMuPDF - PDF 处理
 - pandas - 数据处理
 

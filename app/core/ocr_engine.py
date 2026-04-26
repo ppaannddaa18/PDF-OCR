@@ -1,4 +1,4 @@
-from paddleocr import PaddleOCR
+from rapidocr_onnxruntime import RapidOCR
 from PIL import Image
 import numpy as np
 import threading
@@ -9,7 +9,7 @@ class OCREngine:
     _instance = None
 
     def __new__(cls, *args, **kwargs):
-        # 单例：避免 PaddleOCR 模型被重复加载
+        # 单例：避免 RapidOCR 模型被重复加载
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -37,12 +37,8 @@ class OCREngine:
 
         def _load():
             try:
-                self._ocr = PaddleOCR(
-                    use_angle_cls=self._use_angle_cls,
-                    lang=self._lang,
-                    use_gpu=self._use_gpu,
-                    show_log=False,
-                )
+                # RapidOCR 默认使用 PP-OCRv4 模型
+                self._ocr = RapidOCR()
                 self._initialized = True
             finally:
                 self._loading = False
@@ -59,12 +55,7 @@ class OCREngine:
         with self._lock:
             if self._initialized:
                 return
-            self._ocr = PaddleOCR(
-                use_angle_cls=self._use_angle_cls,
-                lang=self._lang,
-                use_gpu=self._use_gpu,
-                show_log=False,
-            )
+            self._ocr = RapidOCR()
             self._initialized = True
 
     @property
@@ -88,15 +79,18 @@ class OCREngine:
         arr = np.array(img)
 
         with self._lock:
-            result = self._ocr.ocr(arr, cls=True)
+            # RapidOCR 返回 (result, elapse)
+            # result: [[bbox, text, confidence], ...]
+            result, elapse = self._ocr(arr)
 
-        if not result or not result[0]:
+        if result is None or len(result) == 0:
             return "", 0.0
 
         lines = []
         confidences = []
-        for line in result[0]:
-            text, conf = line[1][0], line[1][1]
+        for line in result:
+            # RapidOCR: [bbox, text, confidence]
+            text, conf = line[1], line[2]
             lines.append(text)
             confidences.append(conf)
 
