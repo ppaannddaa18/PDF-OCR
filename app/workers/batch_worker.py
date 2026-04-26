@@ -5,6 +5,7 @@ import time
 class BatchWorker(QThread):
     progress = Signal(int, int, str)       # done, total, current_file
     finished_all = Signal(list)            # List[FileResult]
+    cancelled = Signal()                   # 取消信号
 
     # 进度信号节流参数
     PROGRESS_THROTTLE_MS = 100  # 最小更新间隔（毫秒）
@@ -16,6 +17,7 @@ class BatchWorker(QThread):
         self.templates = templates
         self._is_cancelled = False
         self._last_progress_time = 0
+        self._completed_results = []  # 存储已完成的结果
 
     def cancel(self):
         """请求取消批量处理"""
@@ -34,7 +36,11 @@ class BatchWorker(QThread):
                 self._last_progress_time = now
 
         try:
-            results = self.processor.process_batch_with_templates(self.pdf_files, self.templates, throttled_cb)
+            results = self.processor.process_batch_with_templates(
+                self.pdf_files, self.templates, throttled_cb, self._completed_results
+            )
             self.finished_all.emit(results)
         except InterruptedError:
-            self.finished_all.emit([])
+            # 取消时发送已完成的结果
+            self.cancelled.emit()
+            self.finished_all.emit(self._completed_results)

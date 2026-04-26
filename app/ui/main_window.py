@@ -435,8 +435,10 @@ class MainWindow(FluentWindow):
 
     def _on_show_low_confidence(self):
         """显示低置信度项"""
-        # 实现低置信度筛选
-        pass
+        self.result_table.filter_low_confidence(threshold=0.7)
+        visible_count = sum(1 for row in range(self.result_table.rowCount())
+                           if not self.result_table.isRowHidden(row))
+        self.status_label.setText(f"显示 {visible_count} 个低置信度项（置信度<70%）")
 
     def _create_stats_widget(self) -> QWidget:
         """创建统计信息卡片"""
@@ -637,24 +639,35 @@ class MainWindow(FluentWindow):
 
     def _on_region_deleted(self, region_id: str):
         """区域删除 - 同步删除画布上的框线并支持撤销"""
-        # 从画布数据中获取区域（field_panel中的区域已被删除）
+        # 从画布数据中获取区域
         region = self.pdf_canvas.regions_data.get(region_id)
         if region is None:
-            # 如果画布上也没有，直接返回
             return
 
         # 保存区域副本用于撤销
         from copy import deepcopy
+        from app.utils.command_history import RemoveRegionCommand
         region_copy = deepcopy(region)
 
-        # 删除画布上的区域
-        if region_id in self.pdf_canvas.regions_data:
-            del self.pdf_canvas.regions_data[region_id]
-        self.pdf_canvas.remove_region(region_id)
-        self._save_current_pdf_config()
+        def remove_region(rid):
+            # 删除画布上的区域
+            if rid in self.pdf_canvas.regions_data:
+                del self.pdf_canvas.regions_data[rid]
+            self.pdf_canvas.remove_region(rid)
+            # 从字段面板删除
+            self.field_panel._delete(rid)
+            self._save_current_pdf_config()
 
-        # 添加到命令历史（简化版本，不支持撤销删除）
-        # 注意：如果需要完整的撤销支持，需要在field_panel删除前保存数据
+        def add_region_back(r):
+            # 恢复区域
+            self.field_panel.add_region(r)
+            self.pdf_canvas.regions_data[r.id] = r
+            self.pdf_canvas.update_regions([r])
+            self._save_current_pdf_config()
+
+        # 使用命令模式支持撤销
+        command = RemoveRegionCommand(region_copy, remove_region, add_region_back)
+        self.command_history.execute(command)
 
     def _on_region_selected(self, region_id: str):
         """区域被选中 - 同步选中表格行"""
@@ -923,15 +936,27 @@ class MainWindow(FluentWindow):
     def on_try_ocr(self):
         # 检查OCR引擎是否已初始化
         if not self.ocr_engine.is_ready:
-            InfoBar.warning(
-                title="提示",
-                content="OCR引擎正在加载中，请稍后再试",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=2000,
-                parent=self
-            )
+            error_msg = self.ocr_engine.init_error
+            if error_msg:
+                InfoBar.error(
+                    title="错误",
+                    content=f"OCR引擎初始化失败: {error_msg}",
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=5000,
+                    parent=self
+                )
+            else:
+                InfoBar.warning(
+                    title="提示",
+                    content="OCR引擎正在加载中，请稍后再试",
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=2000,
+                    parent=self
+                )
             return
 
         template = self.field_panel.build_template()
@@ -958,15 +983,27 @@ class MainWindow(FluentWindow):
     def on_batch_run(self):
         # 检查OCR引擎是否已初始化
         if not self.ocr_engine.is_ready:
-            InfoBar.warning(
-                title="提示",
-                content="OCR引擎正在加载中，请稍后再试",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=2000,
-                parent=self
-            )
+            error_msg = self.ocr_engine.init_error
+            if error_msg:
+                InfoBar.error(
+                    title="错误",
+                    content=f"OCR引擎初始化失败: {error_msg}",
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=5000,
+                    parent=self
+                )
+            else:
+                InfoBar.warning(
+                    title="提示",
+                    content="OCR引擎正在加载中，请稍后再试",
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=2000,
+                    parent=self
+                )
             return
 
         template = self.field_panel.build_template()
@@ -998,6 +1035,7 @@ class MainWindow(FluentWindow):
         self.worker = BatchWorker(self.processor, files, templates)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_all.connect(self._on_batch_done)
+        self.worker.cancelled.connect(self._on_batch_cancelled)
         self.worker.start()
         self.status_label.setText("批量识别进行中...")
 
@@ -1046,9 +1084,12 @@ class MainWindow(FluentWindow):
         """取消批量识别"""
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
-            self.status_label.setText("批量识别已取消")
-            if hasattr(self, 'progress_dialog') and self.progress_dialog:
-                self.progress_dialog.close()
+            self.status_label.setText("正在取消批量识别...")
+            # 不在这里关闭进度对话框，等待 _on_batch_done 处理
+
+    def _on_batch_cancelled(self):
+        """批量识别被取消时的处理"""
+        self.status_label.setText("批量识别已取消")
 
     def _on_progress(self, done, total, current_file):
         # 更新进度条

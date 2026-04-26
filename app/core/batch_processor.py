@@ -12,16 +12,15 @@ class BatchProcessor:
         self.pdf_loader = pdf_loader
         self.ocr = ocr_engine
         self.max_workers = max_workers
-        self._ocr_lock = threading.Lock()
+        # 移除 _ocr_lock，依赖 OCREngine 内部的锁
 
     def process_one(self, pdf_path: str, template: Template) -> FileResult:
         try:
             fields = {}
             for region in template.regions:
                 crop = self.pdf_loader.crop_region(pdf_path, region)
-                # OCR调用需要加锁保护
-                with self._ocr_lock:
-                    text, conf = self.ocr.recognize(crop, region.ocr_mode)
+                # OCR调用由 OCREngine 内部的锁保护
+                text, conf = self.ocr.recognize(crop, region.ocr_mode)
                 fields[region.field_name] = FieldResult(
                     field_name=region.field_name,
                     text=text,
@@ -67,6 +66,7 @@ class BatchProcessor:
         pdf_paths: List[str],
         templates: List[Template],
         progress_cb: Callable[[int, int, str], None] = None,
+        completed_results: List = None,  # 用于收集已完成结果（支持取消）
     ) -> List[FileResult]:
         """为每个PDF使用对应的模板进行并行批量处理"""
         results = [None] * len(pdf_paths)
@@ -92,6 +92,9 @@ class BatchProcessor:
                 with lock:
                     results[idx] = result
                     completed_count += 1
+                    # 收集已完成结果（用于取消时返回）
+                    if completed_results is not None:
+                        completed_results.append(result)
                 if progress_cb:
                     progress_cb(completed_count, total, pdf_paths[idx])
 

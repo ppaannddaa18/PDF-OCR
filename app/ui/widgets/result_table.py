@@ -267,6 +267,25 @@ class ResultTable(QTableWidget):
         for row in range(self.rowCount()):
             self.showRow(row)
 
+    def filter_low_confidence(self, threshold: float = 0.7):
+        """筛选低置信度行（置信度低于阈值）"""
+        for row in range(self.rowCount()):
+            has_low_conf = False
+            # 检查所有字段列
+            for col in range(1, len(self._field_names) + 1):
+                if row < len(self._results):
+                    result = self._results[row]
+                    field_name = self._field_names[col - 1]
+                    fr = result.fields.get(field_name)
+                    if fr and fr.confidence < threshold:
+                        has_low_conf = True
+                        break
+
+            if has_low_conf:
+                self.showRow(row)
+            else:
+                self.hideRow(row)
+
     def export_to_dict(self) -> list:
         """导出为字典列表"""
         data = []

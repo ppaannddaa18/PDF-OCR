@@ -21,6 +21,7 @@ class OCREngine:
         self._ocr = None
         self._initialized = False
         self._loading = False
+        self._init_error = None  # 存储初始化错误信息
         self._lock = threading.Lock()
         self._lang = lang
         self._use_gpu = use_gpu
@@ -40,6 +41,9 @@ class OCREngine:
                 # RapidOCR 默认使用 PP-OCRv4 模型
                 self._ocr = RapidOCR()
                 self._initialized = True
+                self._init_error = None
+            except Exception as e:
+                self._init_error = str(e)
             finally:
                 self._loading = False
                 if callback:
@@ -68,11 +72,18 @@ class OCREngine:
         """检查OCR引擎是否正在加载"""
         return self._loading
 
+    @property
+    def init_error(self) -> str:
+        """获取初始化错误信息"""
+        return self._init_error or ""
+
     def recognize(self, image: Image.Image, mode: str = "general") -> tuple:
         """
         返回 (合并文本, 平均置信度)
         """
         if not self._initialized:
+            if self._init_error:
+                raise RuntimeError(f"OCR引擎初始化失败: {self._init_error}")
             raise RuntimeError("OCR引擎未初始化，请先调用 initialize_async() 或 initialize_sync()")
 
         img = preprocess_for_ocr(image, mode)
