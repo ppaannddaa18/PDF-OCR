@@ -16,6 +16,8 @@ class ResultTable(QTableWidget):
     def __init__(self):
         super().__init__()
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.horizontalHeader().setMinimumSectionSize(60)  # 防止列被压缩过小
+        self.verticalHeader().setDefaultSectionSize(28)  # 设置行高
         self._results = []
         self._original_results = []  # 保存原始结果用于重置
         self._modified_cells = set()  # (row, col) 已修改的单元格
@@ -63,11 +65,24 @@ class ResultTable(QTableWidget):
         for row, r in enumerate(self._results):
             self._populate_row(row, r)
 
-        # 调整列宽
-        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.horizontalHeader().setSectionResizeMode(len(headers)-2, QHeaderView.ResizeMode.ResizeToContents)
-        self.horizontalHeader().setSectionResizeMode(len(headers)-1, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(len(headers)-1, 70)
+        # 调整列宽 - 自适应布局
+        header = self.horizontalHeader()
+        total_cols = len(headers)
+
+        # 源文件列: 固定宽度
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.setColumnWidth(0, 150)
+
+        # 字段数据列: 自动拉伸分配剩余空间
+        for col in range(1, total_cols - 2):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+
+        # 状态列: 按内容自适应
+        header.setSectionResizeMode(total_cols - 2, QHeaderView.ResizeMode.ResizeToContents)
+
+        # 操作列: 固定宽度
+        header.setSectionResizeMode(total_cols - 1, QHeaderView.ResizeMode.Fixed)
+        self.setColumnWidth(total_cols - 1, 70)
 
     def _populate_row(self, row: int, r: FileResult):
         """填充单行数据"""

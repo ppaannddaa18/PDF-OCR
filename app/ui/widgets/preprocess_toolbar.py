@@ -28,71 +28,73 @@ class ImagePreprocessToolbar(QWidget):
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(6, 2, 6, 2)
+        layout.setSpacing(6)
 
         # 旋转控制
         self.rotation_combo = ComboBox()
         self.rotation_combo.addItems(["0°", "90°", "180°", "270°"])
         self.rotation_combo.setCurrentIndex(0)
-        self.rotation_combo.setFixedWidth(70)
+        self.rotation_combo.setMinimumWidth(60)
         self.rotation_combo.currentIndexChanged.connect(self._on_rotation_changed)
         layout.addWidget(BodyLabel("旋转:"))
         layout.addWidget(self.rotation_combo)
 
-        layout.addSpacing(12)
+        layout.addSpacing(8)
 
         # 亮度控制
         layout.addWidget(BodyLabel("亮度:"))
         self.brightness_slider = QSlider(Qt.Orientation.Horizontal)
         self.brightness_slider.setRange(10, 200)
         self.brightness_slider.setValue(100)
-        self.brightness_slider.setFixedWidth(80)
+        self.brightness_slider.setMinimumWidth(60)
+        self.brightness_slider.setMaximumWidth(120)
         self.brightness_slider.valueChanged.connect(self._on_brightness_changed)
         layout.addWidget(self.brightness_slider)
         self.brightness_label = BodyLabel("100%")
-        self.brightness_label.setFixedWidth(40)
+        self.brightness_label.setFixedWidth(36)
         layout.addWidget(self.brightness_label)
 
-        layout.addSpacing(12)
+        layout.addSpacing(8)
 
         # 对比度控制
         layout.addWidget(BodyLabel("对比度:"))
         self.contrast_slider = QSlider(Qt.Orientation.Horizontal)
         self.contrast_slider.setRange(10, 200)
         self.contrast_slider.setValue(100)
-        self.contrast_slider.setFixedWidth(80)
+        self.contrast_slider.setMinimumWidth(60)
+        self.contrast_slider.setMaximumWidth(120)
         self.contrast_slider.valueChanged.connect(self._on_contrast_changed)
         layout.addWidget(self.contrast_slider)
         self.contrast_label = BodyLabel("100%")
-        self.contrast_label.setFixedWidth(40)
+        self.contrast_label.setFixedWidth(36)
         layout.addWidget(self.contrast_label)
 
-        layout.addSpacing(12)
+        layout.addSpacing(8)
 
         # 二值化阈值
         layout.addWidget(BodyLabel("二值化:"))
         self.threshold_combo = ComboBox()
         self.threshold_combo.addItems(["关闭", "128", "150", "180", "自动"])
         self.threshold_combo.setCurrentIndex(0)
-        self.threshold_combo.setFixedWidth(70)
+        self.threshold_combo.setMinimumWidth(60)
         self.threshold_combo.currentIndexChanged.connect(self._on_threshold_changed)
         layout.addWidget(self.threshold_combo)
 
-        layout.addSpacing(12)
+        layout.addSpacing(8)
 
         # 快捷按钮
         self.btn_auto = PushButton("自动对比度")
-        self.btn_auto.setFixedWidth(80)
+        self.btn_auto.setMinimumWidth(70)
         self.btn_auto.clicked.connect(self._on_auto_contrast)
         layout.addWidget(self.btn_auto)
 
         self.btn_sharpen = PushButton("锐化")
-        self.btn_sharpen.setFixedWidth(60)
+        self.btn_sharpen.setMinimumWidth(50)
         self.btn_sharpen.clicked.connect(self._on_sharpen)
         layout.addWidget(self.btn_sharpen)
 
-        layout.addSpacing(12)
+        layout.addSpacing(8)
 
         # 操作按钮
         self.btn_reset = TransparentToolButton(qta.icon('fa5s.undo', color='#666'))
@@ -102,6 +104,7 @@ class ImagePreprocessToolbar(QWidget):
 
         self.btn_apply_all = PushButton("应用到全部")
         self.btn_apply_all.setToolTip("将当前调整应用到所有PDF文件")
+        self.btn_apply_all.setMinimumWidth(80)
         self.btn_apply_all.clicked.connect(self._on_apply_to_all)
         layout.addWidget(self.btn_apply_all)
 

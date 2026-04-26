@@ -374,18 +374,20 @@ class MainWindow(FluentWindow):
 
         toolbar = QWidget()
         layout = QHBoxLayout(toolbar)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(6)
 
         # 筛选输入框
         self.filter_edit = LineEdit()
         self.filter_edit.setPlaceholderText("筛选结果...")
-        self.filter_edit.setFixedWidth(200)
+        self.filter_edit.setMinimumWidth(150)
+        self.filter_edit.setMaximumWidth(250)
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         layout.addWidget(self.filter_edit)
 
         # 字段筛选下拉框
         self.filter_field_combo = ComboBox()
+        self.filter_field_combo.setMinimumWidth(80)
         self.filter_field_combo.addItem("全部字段")
         self.filter_field_combo.currentIndexChanged.connect(self._on_filter_changed)
         layout.addWidget(self.filter_field_combo)
@@ -395,12 +397,14 @@ class MainWindow(FluentWindow):
         # 重置按钮
         btn_reset = PushButton("重置所有修改")
         btn_reset.setToolTip("将所有数据恢复为识别结果")
+        btn_reset.setMinimumWidth(100)
         btn_reset.clicked.connect(self._on_reset_all_results)
         layout.addWidget(btn_reset)
 
         # 低置信度筛选按钮
         btn_low_conf = PushButton("显示低置信度")
         btn_low_conf.setToolTip("仅显示置信度低于70%的单元格")
+        btn_low_conf.setMinimumWidth(90)
         btn_low_conf.clicked.connect(self._on_show_low_confidence)
         layout.addWidget(btn_low_conf)
 
@@ -438,8 +442,8 @@ class MainWindow(FluentWindow):
         """创建统计信息卡片"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(20)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(12)
 
         # 总数
         self.stat_total = StrongBodyLabel("共 0 个文件")
@@ -460,6 +464,7 @@ class MainWindow(FluentWindow):
         # 导出按钮
         btn_export = TransparentPushButton("导出 Excel", self)
         btn_export.setIcon(qta.icon('fa5s.file-excel', color='#0078d4'))
+        btn_export.setMinimumWidth(90)
         btn_export.clicked.connect(self.on_export)
         layout.addWidget(btn_export)
 
@@ -487,49 +492,54 @@ class MainWindow(FluentWindow):
         """创建 Fluent 风格工具栏"""
         toolbar = QWidget()
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(5, 5, 5, 5)
-        toolbar_layout.setSpacing(4)
+        toolbar_layout.setContentsMargins(4, 3, 4, 3)
+        toolbar_layout.setSpacing(6)
 
         # 上传按钮（带文字）
         btn_upload = TransparentPushButton("上传 PDF", self)
         btn_upload.setIcon(qta.icon('fa5s.file-upload', color='#0078d4'))
+        btn_upload.setMinimumWidth(90)
         btn_upload.clicked.connect(self.on_upload)
         toolbar_layout.addWidget(btn_upload)
 
-        toolbar_layout.addSpacing(8)
+        toolbar_layout.addSpacing(4)
 
         # 试识别按钮
         btn_try = TransparentPushButton("试识别", self)
         btn_try.setIcon(qta.icon('fa5s.search', color='#0078d4'))
+        btn_try.setMinimumWidth(70)
         btn_try.clicked.connect(self.on_try_ocr)
         toolbar_layout.addWidget(btn_try)
 
         # 批量识别按钮
         btn_batch = TransparentPushButton("批量识别", self)
         btn_batch.setIcon(qta.icon('fa5s.play', color='#107c10'))
+        btn_batch.setMinimumWidth(80)
         btn_batch.clicked.connect(self.on_batch_run)
         toolbar_layout.addWidget(btn_batch)
 
-        toolbar_layout.addSpacing(12)
+        toolbar_layout.addSpacing(8)
 
         # 分隔线
         sep = QWidget()
         sep.setFixedWidth(1)
-        sep.setFixedHeight(24)
+        sep.setFixedHeight(20)
         sep.setStyleSheet("background: #e0e0e0;")
         toolbar_layout.addWidget(sep)
 
-        toolbar_layout.addSpacing(12)
+        toolbar_layout.addSpacing(8)
 
         # 保存模板按钮
         btn_save = TransparentPushButton("保存模板", self)
         btn_save.setIcon(qta.icon('fa5s.save', color='#0078d4'))
+        btn_save.setMinimumWidth(80)
         btn_save.clicked.connect(self.on_save_template)
         toolbar_layout.addWidget(btn_save)
 
         # 加载模板按钮
         btn_load = TransparentPushButton("加载模板", self)
         btn_load.setIcon(qta.icon('fa5s.folder-open', color='#0078d4'))
+        btn_load.setMinimumWidth(80)
         btn_load.clicked.connect(self.on_load_template)
         toolbar_layout.addWidget(btn_load)
 
