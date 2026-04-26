@@ -2,7 +2,6 @@
 程序入口 - 优化启动速度
 """
 import sys
-from pathlib import Path
 
 
 def main():
@@ -43,9 +42,8 @@ def main():
     # 异步初始化日志（不阻塞启动）
     setup_logger()
 
-    # 加载配置
-    config_path = Path(__file__).parent / "config.yaml"
-    config = load_config(str(config_path))
+    # 加载配置（自动查找，支持PyInstaller打包）
+    config = load_config()
 
     # 设置 Fluent 主题强调色
     setThemeColor('#4a90d9')
