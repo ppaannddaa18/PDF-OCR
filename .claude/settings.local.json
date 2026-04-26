@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main.py)",
+      "Bash(python -c \"import paddle; print\\('PaddlePaddle version:', paddle.__version__\\)\")",
+      "WebFetch(domain:github.com)",
+      "Bash(python -c \"from qfluentwidgets import FluentWindow; print\\('OK'\\)\")",
+      "Bash(python -c \"import qtawesome as qta; icon = qta.icon\\('fa5s.home'\\); print\\('OK'\\)\")",
+      "Bash(where python *)",
+      "Bash(\"C:/Users/30726/OneDrive/panda/tools/PDFOCR/venv/Scripts/python.exe\" main.py)",
+      "Bash(./venv/Scripts/python.exe *)",
+      "Bash(venv/Scripts/python.exe *)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(venv/Scripts/pip.exe show *)",
+      "Bash(venv/Scripts/pip.exe uninstall *)",
+      "Bash(venv/Scripts/pip.exe install *)",
+      "Bash(tasklist)",
+      "Bash(python -c \"from app.ui.main_window import MainWindow; print\\('Import OK'\\)\")",
+      "Bash(python -c \"from qfluentwidgets import *; print\\([x for x in dir\\(\\) if 'progress' in x.lower\\(\\) or 'Progress' in x]\\)\")",
+      "Bash(python *)",
+      "Bash(cat C:\\\\\\\\Users\\\\\\\\30726\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-30726-OneDrive-panda-tools-PDFOCR\\\\\\\\3945a662-dbd9-4484-9f46-67dd5dd9af9f\\\\\\\\tasks\\\\\\\\be8b5kw8g.output)"
+    ]
+  }
+}
