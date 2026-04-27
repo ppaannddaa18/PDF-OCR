@@ -51,7 +51,7 @@ def get_default_config() -> dict:
         "app": {
             "name": "PDF OCR Tool",
             "version": "1.0.0",
-            "window_size": [1200, 800]
+            "window_size": [1600, 1000]
         },
         "pdf": {
             "render_dpi": 200

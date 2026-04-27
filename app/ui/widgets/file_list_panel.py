@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import pyqtSignal as Signal, Qt
 from qfluentwidgets import SubtitleLabel, ListWidget, PushButton, BodyLabel
 from pathlib import Path
@@ -23,12 +23,39 @@ class FileListPanel(QWidget):
         self.list_widget.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self.list_widget, 1)
 
-        # 空状态提示
-        self.empty_label = BodyLabel("暂无文件\n点击上方「上传」按钮添加\n或拖拽 PDF 文件到此处")
-        self.empty_label.setStyleSheet("color: #888; text-align: center;")
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(self.empty_label)
-        self.empty_label.setVisible(True)
+        # 增强的空状态提示
+        self.empty_widget = QWidget()
+        empty_layout = QVBoxLayout(self.empty_widget)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.setSpacing(12)
+
+        # 图标
+        from PyQt6.QtGui import QFont
+        icon_label = QLabel("📄")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("font-size: 48px;")
+        empty_layout.addWidget(icon_label)
+
+        # 主标题
+        title_label = BodyLabel("暂无PDF文件")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("font-size: 14px; color: #333; font-weight: bold;")
+        empty_layout.addWidget(title_label)
+
+        # 操作提示
+        action_label = BodyLabel("点击上方「上传」按钮\n或拖拽PDF文件到此处")
+        action_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        action_label.setStyleSheet("font-size: 12px; color: #666;")
+        empty_layout.addWidget(action_label)
+
+        # 格式提示
+        format_label = BodyLabel("支持的格式: .pdf\n建议: 单次最多上传50个文件")
+        format_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        format_label.setStyleSheet("font-size: 11px; color: #999;")
+        empty_layout.addWidget(format_label)
+
+        layout.addWidget(self.empty_widget)
+        self.empty_widget.setVisible(True)
 
         # 操作按钮
         self.btn_remove = PushButton("移除选中")
@@ -45,7 +72,7 @@ class FileListPanel(QWidget):
 
     def _update_empty_state(self):
         has_files = len(self.files) > 0
-        self.empty_label.setVisible(not has_files)
+        self.empty_widget.setVisible(not has_files)
         self.list_widget.setVisible(has_files)
         self.btn_remove.setEnabled(has_files)
         self.btn_clear.setEnabled(has_files)

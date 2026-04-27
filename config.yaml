@@ -1,7 +1,7 @@
 app:
   name: "PDF OCR Tool"
   version: "1.0.0"
-  window_size: [1400, 900]
+  window_size: [1600, 1000]
 
 pdf:
   render_dpi: 200

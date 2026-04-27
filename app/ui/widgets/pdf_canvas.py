@@ -145,6 +145,8 @@ class PdfCanvas(QGraphicsView):
         self.resize_start_rect = None
         self.move_start_pos = None
         self.move_start_rect = None
+        self.moved_item = None      # [修复] 初始化移动中的区域项
+        self.resized_item = None    # [修复] 初始化调整大小中的区域项
 
         # 右键拖动相关
         self.right_dragging = False
@@ -155,13 +157,24 @@ class PdfCanvas(QGraphicsView):
         self._show_empty_state()
 
     def _show_empty_state(self):
-        """显示空状态提示 - [修复] 使用视图中心坐标"""
+        """显示空状态提示 - [增强] 更详细的操作引导"""
         if self.empty_text:
             return
+        # 创建增强的空状态提示
+        empty_text = """📷 PDF预览区域
+
+上传PDF后在此显示
+
+─────────────────────────
+框选操作提示:
+• 鼠标左键拖拽 = 框选区域
+• 右键拖动 = 平移画布
+• 滚轮 = 缩放"""
         self.empty_text = QGraphicsTextItem()
-        self.empty_text.setPlainText("上传 PDF 后在此显示\n\n拖拽鼠标框选识别区域")
+        self.empty_text.setPlainText(empty_text)
         self.empty_text.setDefaultTextColor(QColor("#888"))
-        self.empty_text.setFont(QFont("Microsoft YaHei", 14))
+        self.empty_text.setFont(QFont("Microsoft YaHei", 12))
+        self.empty_text.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         self.scene_.addItem(self.empty_text)
         # [修复] 使用视图中心坐标，而不是固定坐标
         self._center_empty_text()
@@ -409,7 +422,7 @@ class PdfCanvas(QGraphicsView):
             if self.moved_item:
                 # 更新 Region 数据
                 region_id = self.moved_item.region_id
-                if region_id in self.regions_data:
+                if region_id in self.regions_data and self.img_w > 0 and self.img_h > 0:
                     rect = self.moved_item.rect()
                     region = self.regions_data[region_id]
                     region.x = rect.x() / self.img_w
@@ -430,7 +443,7 @@ class PdfCanvas(QGraphicsView):
             if self.resized_item:
                 # 更新 Region 数据
                 region_id = self.resized_item.region_id
-                if region_id in self.regions_data:
+                if region_id in self.regions_data and self.img_w > 0 and self.img_h > 0:
                     rect = self.resized_item.rect()
                     region = self.regions_data[region_id]
                     region.x = rect.x() / self.img_w

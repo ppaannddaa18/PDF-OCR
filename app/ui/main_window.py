@@ -32,6 +32,7 @@ def _get_ui_components():
         from app.ui.widgets.result_table import ResultTable
         from app.ui.widgets.history_panel import HistoryPanel
         from app.ui.widgets.preprocess_toolbar import ImagePreprocessToolbar
+        from app.ui.widgets.loading_overlay import LoadingOverlay
         from app.workers.batch_worker import BatchWorker
         from app.utils.command_history import AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
 
@@ -42,6 +43,7 @@ def _get_ui_components():
             'ResultTable': ResultTable,
             'HistoryPanel': HistoryPanel,
             'ImagePreprocessToolbar': ImagePreprocessToolbar,
+            'LoadingOverlay': LoadingOverlay,
             'BatchWorker': BatchWorker,
             'AddRegionCommand': AddRegionCommand,
             'RemoveRegionCommand': RemoveRegionCommand,
@@ -89,6 +91,9 @@ class MainWindow(FluentWindow):
 
         # 设置主题（跟随系统）
         setTheme(Theme.AUTO)
+
+        # 创建加载遮罩层（在创建其他组件之前）
+        self._create_loading_overlay()
 
         # 核心组件
         self.pdf_loader = PdfLoader(dpi=config["pdf"]["render_dpi"])
@@ -187,10 +192,34 @@ class MainWindow(FluentWindow):
                 region_id = item.data(Qt.ItemDataRole.UserRole)
                 self._on_region_deleted(region_id)
 
+    def _create_loading_overlay(self):
+        """创建加载遮罩层"""
+        ui = _get_ui_components()
+        self.loading_overlay = ui.LoadingOverlay(self)
+        self.loading_overlay.setGeometry(0, 0, self.width(), self.height())
+        self.loading_overlay.show_loading()
+        self.loading_overlay.raise_()
+        self.loading_overlay.retry_requested.connect(self._on_ocr_retry)
+
+    def resizeEvent(self, event):
+        """窗口大小改变时调整遮罩层大小"""
+        super().resizeEvent(event)
+        if hasattr(self, 'loading_overlay'):
+            self.loading_overlay.setGeometry(0, 0, self.width(), self.height())
+
     def _on_ocr_ready(self):
         """OCR引擎初始化完成回调"""
-        # OCR引擎已准备就绪，可以在这里更新UI状态
-        pass
+        if self.ocr_engine.is_ready:
+            # 初始化成功，隐藏遮罩层
+            self.loading_overlay.hide_overlay()
+        else:
+            # 初始化失败，显示错误面板
+            error_msg = self.ocr_engine.init_error or "未知错误"
+            self.loading_overlay.show_error(error_msg)
+
+    def _on_ocr_retry(self):
+        """OCR引擎重试初始化"""
+        self.ocr_engine.initialize_async(callback=self._on_ocr_ready)
 
     def _init_navigation(self):
         """初始化侧边导航栏"""
@@ -262,7 +291,7 @@ class MainWindow(FluentWindow):
         left_layout.addWidget(file_title)
 
         self.file_panel = ui.FileListPanel()
-        self.file_panel.setMinimumWidth(180)
+        self.file_panel.setMinimumWidth(220)
         self.file_panel.setMaximumWidth(400)
         left_layout.addWidget(self.file_panel, 1)
 
@@ -325,7 +354,7 @@ class MainWindow(FluentWindow):
         right_layout.addWidget(template_info_widget)
 
         self.field_panel = ui.FieldPanel()
-        self.field_panel.setMinimumWidth(260)
+        self.field_panel.setMinimumWidth(320)
         self.field_panel.setMaximumWidth(450)
         right_layout.addWidget(self.field_panel, 1)
 
@@ -435,14 +464,14 @@ class MainWindow(FluentWindow):
         # 筛选输入框
         self.filter_edit = LineEdit()
         self.filter_edit.setPlaceholderText("筛选结果...")
-        self.filter_edit.setMinimumWidth(150)
-        self.filter_edit.setMaximumWidth(250)
+        self.filter_edit.setMinimumWidth(180)
+        self.filter_edit.setMaximumWidth(300)
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         layout.addWidget(self.filter_edit)
 
         # 字段筛选下拉框
         self.filter_field_combo = ComboBox()
-        self.filter_field_combo.setMinimumWidth(80)
+        self.filter_field_combo.setMinimumWidth(100)
         self.filter_field_combo.addItem("全部字段")
         self.filter_field_combo.currentIndexChanged.connect(self._on_filter_changed)
         layout.addWidget(self.filter_field_combo)
@@ -452,14 +481,14 @@ class MainWindow(FluentWindow):
         # 重置按钮
         btn_reset = PushButton("重置所有修改")
         btn_reset.setToolTip("将所有数据恢复为识别结果")
-        btn_reset.setMinimumWidth(100)
+        btn_reset.setMinimumWidth(115)
         btn_reset.clicked.connect(self._on_reset_all_results)
         layout.addWidget(btn_reset)
 
         # 低置信度筛选按钮
         btn_low_conf = PushButton("显示低置信度")
         btn_low_conf.setToolTip("仅显示置信度低于70%的单元格")
-        btn_low_conf.setMinimumWidth(90)
+        btn_low_conf.setMinimumWidth(110)
         btn_low_conf.clicked.connect(self._on_show_low_confidence)
         layout.addWidget(btn_low_conf)
 
@@ -521,7 +550,7 @@ class MainWindow(FluentWindow):
         # 导出按钮
         btn_export = TransparentPushButton("导出 Excel", self)
         btn_export.setIcon(_icon('fa5s.file-excel'))
-        btn_export.setMinimumWidth(90)
+        btn_export.setMinimumWidth(105)
         btn_export.clicked.connect(self.on_export)
         layout.addWidget(btn_export)
 
@@ -555,7 +584,8 @@ class MainWindow(FluentWindow):
         # 上传按钮（带文字）
         btn_upload = TransparentPushButton("上传 PDF", self)
         btn_upload.setIcon(_icon('fa5s.file-upload'))
-        btn_upload.setMinimumWidth(90)
+        btn_upload.setMinimumWidth(105)
+        btn_upload.setToolTip("上传PDF文件 (Ctrl+O)")
         btn_upload.clicked.connect(self.on_upload)
         toolbar_layout.addWidget(btn_upload)
 
@@ -564,14 +594,16 @@ class MainWindow(FluentWindow):
         # 试识别按钮
         btn_try = TransparentPushButton("试识别", self)
         btn_try.setIcon(_icon('fa5s.search'))
-        btn_try.setMinimumWidth(70)
+        btn_try.setMinimumWidth(85)
+        btn_try.setToolTip("试识别当前文件 (Ctrl+T)")
         btn_try.clicked.connect(self.on_try_ocr)
         toolbar_layout.addWidget(btn_try)
 
         # 批量识别按钮
         btn_batch = TransparentPushButton("批量识别", self)
         btn_batch.setIcon(_icon('fa5s.play', color='#107c10'))
-        btn_batch.setMinimumWidth(80)
+        btn_batch.setMinimumWidth(95)
+        btn_batch.setToolTip("批量识别所有文件 (Ctrl+Enter)")
         btn_batch.clicked.connect(self.on_batch_run)
         toolbar_layout.addWidget(btn_batch)
 
@@ -589,14 +621,16 @@ class MainWindow(FluentWindow):
         # 保存模板按钮
         btn_save = TransparentPushButton("保存模板", self)
         btn_save.setIcon(_icon('fa5s.save'))
-        btn_save.setMinimumWidth(80)
+        btn_save.setMinimumWidth(95)
+        btn_save.setToolTip("保存当前字段配置 (Ctrl+S)")
         btn_save.clicked.connect(self.on_save_template)
         toolbar_layout.addWidget(btn_save)
 
         # 加载模板按钮
         btn_load = TransparentPushButton("加载模板", self)
         btn_load.setIcon(_icon('fa5s.folder-open'))
-        btn_load.setMinimumWidth(80)
+        btn_load.setMinimumWidth(95)
+        btn_load.setToolTip("加载已保存的模板")
         btn_load.clicked.connect(self.on_load_template)
         toolbar_layout.addWidget(btn_load)
 
@@ -937,8 +971,9 @@ class MainWindow(FluentWindow):
             self._set_template_name("未配置", is_default=False)
 
         # 恢复该PDF的试识别结果（如果有）
-        if pdf_path in self._pdf_preview_results:
-            self._current_preview_result = self._pdf_preview_results[pdf_path]
+        preview_result = self._pdf_preview_results.get(pdf_path)
+        if preview_result:
+            self._current_preview_result = preview_result
             self.field_panel.show_preview_result(self._current_preview_result)
         else:
             # 清空试识别结果
@@ -1149,6 +1184,46 @@ class MainWindow(FluentWindow):
         """批量识别被取消时的处理"""
         self.status_label.setText("批量识别已取消")
 
+        # 关闭进度对话框
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+        # 隐藏进度条
+        self.progress_widget.setVisible(False)
+
+        # 显示取消结果对话框
+        if self.results:
+            completed = len(self.results)
+            success = sum(1 for r in self.results if r.success)
+            failed = completed - success
+            total = len(self.file_panel.all_files())
+
+            from app.ui.widgets.cancel_result_dialog import CancelResultDialog
+            dialog = CancelResultDialog(completed, success, failed, total, self)
+            result = dialog.exec()
+
+            if result == CancelResultDialog.VIEW_RESULTS:
+                # 切换到结果页面
+                self.result_table.load_results(self.results)
+                self.switchTo(self.result_page)
+            elif result == CancelResultDialog.EXPORT:
+                # 导出已完成的结果
+                self.result_table.load_results(self.results)
+                self.on_export()
+            elif result == CancelResultDialog.CONTINUE:
+                # 继续识别剩余文件
+                remaining_files = self.file_panel.all_files()[completed:]
+                if remaining_files:
+                    self.on_batch_run()
+        else:
+            InfoBar.warning(
+                title="提示",
+                content="批量识别已取消，尚未完成任何文件的识别",
+                duration=3000,
+                parent=self
+            )
+
     def _on_progress(self, done, total, current_file):
         # 更新进度条
         self.progress_bar.setValue(done)
@@ -1344,7 +1419,8 @@ class MainWindow(FluentWindow):
                 self.field_panel.add_region(r)
             self.pdf_canvas.update_regions(saved_regions)
 
-        command = ClearAllCommand(regions, clear_all, restore_all)
+        ui = _get_ui_components()
+        command = ui.ClearAllCommand(regions, clear_all, restore_all)
         self.command_history.execute(command)
 
         InfoBar.success(

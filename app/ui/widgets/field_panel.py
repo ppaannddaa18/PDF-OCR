@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QHBoxLayout
+    QHeaderView, QAbstractItemView, QHBoxLayout, QLabel
 )
 from PyQt6.QtCore import pyqtSignal as Signal, Qt
 from PyQt6.QtGui import QColor, QBrush
@@ -39,12 +39,38 @@ class FieldPanel(QWidget):
         layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # 空状态提示
-        self.empty_label = BodyLabel("暂无字段\n在 PDF 画布上拖拽框选区域")
-        self.empty_label.setStyleSheet("color: #888; text-align: center;")
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-        self.empty_label.setMinimumHeight(100)
-        layout.addWidget(self.empty_label)
+        # 增强的空状态提示
+        self.empty_widget = QWidget()
+        empty_layout = QVBoxLayout(self.empty_widget)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.setSpacing(12)
+
+        # 图标
+        icon_label = QLabel("✏️")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("font-size: 48px;")
+        empty_layout.addWidget(icon_label)
+
+        # 主标题
+        title_label = BodyLabel("暂无识别字段")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("font-size: 14px; color: #333; font-weight: bold;")
+        empty_layout.addWidget(title_label)
+
+        # 操作提示
+        action_label = BodyLabel("在PDF预览上拖拽框选区域\n来定义要识别的文字区域")
+        action_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        action_label.setStyleSheet("font-size: 12px; color: #666;")
+        empty_layout.addWidget(action_label)
+
+        # 提示信息
+        tip_label = BodyLabel("💡 提示: 设置字段类型可以\n自动验证识别结果格式")
+        tip_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tip_label.setStyleSheet("font-size: 11px; color: #999;")
+        empty_layout.addWidget(tip_label)
+
+        self.empty_widget.setMinimumHeight(150)
+        layout.addWidget(self.empty_widget)
 
         # 字段表格
         self.table = QTableWidget(0, 4)
@@ -91,13 +117,13 @@ class FieldPanel(QWidget):
 
         # 清空当前字段按钮
         btn_clear_current = PushButton("清空当前字段")
-        btn_clear_current.setToolTip("仅清空当前选中PDF的字段配置，其他PDF不受影响\n快捷键: 无")
+        btn_clear_current.setToolTip("仅清空当前选中PDF的字段配置，其他PDF不受影响")
         btn_clear_current.clicked.connect(self.clear_current)
         btn_layout.addWidget(btn_clear_current)
 
         # 清空所有字段按钮
         btn_clear_all = PushButton("清空所有字段")
-        btn_clear_all.setToolTip("清空所有PDF的字段配置\n快捷键: 无")
+        btn_clear_all.setToolTip("清空所有PDF的字段配置")
         btn_clear_all.clicked.connect(self._on_clear_all_clicked)
         btn_layout.addWidget(btn_clear_all)
 
@@ -121,7 +147,7 @@ class FieldPanel(QWidget):
 
     def _update_empty_state(self):
         has_fields = len(self.regions) > 0
-        self.empty_label.setVisible(not has_fields)
+        self.empty_widget.setVisible(not has_fields)
         self.table.setVisible(has_fields)
 
     def _on_field_name_changed(self, item: QTableWidgetItem):
@@ -201,6 +227,10 @@ class FieldPanel(QWidget):
 
     def add_region(self, region: Region):
         self.regions[region.id] = region
+
+        # [修复] 临时阻塞信号，避免setItem触发itemChanged
+        self.table.blockSignals(True)
+
         row = self.table.rowCount()
         self.table.insertRow(row)
 
@@ -214,10 +244,15 @@ class FieldPanel(QWidget):
         type_combo = ComboBox()
         type_combo.addItems(["text", "number", "date", "email", "phone"])
         type_combo.setCurrentText(region.field_type)
+        # [修复] 连接类型变更信号，同步更新region
+        type_combo.currentTextChanged.connect(lambda text, rid=region.id: self._on_field_type_changed(rid, text))
         self.table.setCellWidget(row, 1, type_combo)
 
         # 识别结果（初始为空）
         self.table.setItem(row, 2, QTableWidgetItem(""))
+
+        # [修复] 恢复信号
+        self.table.blockSignals(False)
 
         # Fluent 删除按钮
         btn = PushButton("删除")
@@ -225,6 +260,11 @@ class FieldPanel(QWidget):
         self.table.setCellWidget(row, 3, btn)
 
         self._update_empty_state()
+
+    def _on_field_type_changed(self, region_id: str, new_type: str):
+        """[修复] 字段类型变更事件 - 同步更新region"""
+        if region_id in self.regions:
+            self.regions[region_id].field_type = new_type
 
     def _delete(self, region_id):
         if region_id in self.regions:

@@ -46,8 +46,12 @@ class ResultTable(QTableWidget):
 
     def _refresh_table(self):
         """刷新表格显示"""
+        # [修复] 临时阻塞信号，避免批量操作触发itemChanged
+        self.blockSignals(True)
+
         self.clear()
         if not self._results:
+            self.blockSignals(False)
             return
 
         # 收集所有字段名
@@ -64,6 +68,9 @@ class ResultTable(QTableWidget):
 
         for row, r in enumerate(self._results):
             self._populate_row(row, r)
+
+        # [修复] 恢复信号
+        self.blockSignals(False)
 
         # 调整列宽 - 自适应布局
         header = self.horizontalHeader()
