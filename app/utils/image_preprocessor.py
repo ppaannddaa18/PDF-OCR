@@ -3,6 +3,7 @@
 - 内存优化：避免双倍内存占用
 - 按需复制图像
 - 支持原地操作
+- 智能判断是否需要复制
 """
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import numpy as np
@@ -17,6 +18,7 @@ class ImagePreprocessor:
     1. 不再双倍存储原图，仅在需要时复制
     2. 支持原地操作减少内存分配
     3. 延迟处理，仅在获取图像时应用变换
+    4. 智能判断：无变换时直接返回原图引用
     """
 
     def __init__(self, image: Image.Image):
@@ -35,8 +37,24 @@ class ImagePreprocessor:
         self.auto_contrast_applied = False
         self.sharpen_applied = False
 
+    def _has_transforms(self) -> bool:
+        """检查是否有任何变换需要应用"""
+        return (
+            self.rotation != 0 or
+            self.brightness != 1.0 or
+            self.contrast != 1.0 or
+            self.crop_box is not None or
+            self.threshold is not None or
+            self.auto_contrast_applied or
+            self.sharpen_applied
+        )
+
     def _ensure_current_image(self) -> Image.Image:
         """确保当前图像已计算（延迟处理）"""
+        # 性能优化：无变换时直接返回原图引用
+        if not self._has_transforms():
+            return self._original_image
+
         if self._current_image is None or self._dirty:
             self._apply_transforms()
             self._dirty = False
@@ -179,6 +197,16 @@ class ImagePreprocessor:
     def get_original_image(self) -> Image.Image:
         """获取原始图像"""
         return self._original_image
+
+    def get_image_for_ocr(self) -> Image.Image:
+        """
+        获取用于OCR的图像
+        性能优化：如果无变换，返回原图引用；否则返回处理后的图像副本
+        """
+        if not self._has_transforms():
+            # 无变换，直接返回原图引用
+            return self._original_image
+        return self._ensure_current_image()
 
     def get_params(self) -> dict:
         """获取当前处理参数"""

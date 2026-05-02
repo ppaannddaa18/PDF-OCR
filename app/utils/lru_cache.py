@@ -3,11 +3,16 @@ LRU缓存实现 - 性能优化版
 - 线程安全
 - 内存占用感知
 - 支持过期时间
+- 异常日志记录
 """
 from collections import OrderedDict
 import threading
 import time
+import logging
 from typing import Optional, Any, Callable
+
+# 模块级日志记录器
+_logger = logging.getLogger(__name__)
 
 
 class LRUCache:
@@ -81,8 +86,9 @@ class LRUCache:
         if self._on_evict:
             try:
                 self._on_evict(key, value)
-            except Exception:
-                pass
+            except Exception as e:
+                # 记录淘汰回调异常，便于排查资源泄漏问题
+                _logger.warning(f"LRU缓存淘汰回调异常: key={key}, error={e}", exc_info=True)
 
     def _remove_internal(self, key):
         """内部删除方法（调用前需持有锁）"""
@@ -92,8 +98,9 @@ class LRUCache:
             if self._on_evict:
                 try:
                     self._on_evict(key, value)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 记录淘汰回调异常
+                    _logger.warning(f"LRU缓存删除回调异常: key={key}, error={e}", exc_info=True)
 
     def delete(self, key):
         """删除缓存值"""
@@ -105,11 +112,12 @@ class LRUCache:
         with self._lock:
             # 触发所有淘汰回调
             if self._on_evict:
-                for key, value in self._cache.items():
+                for key, value in list(self._cache.items()):
                     try:
                         self._on_evict(key, value)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # 记录清空时的回调异常
+                        _logger.warning(f"LRU缓存清空回调异常: key={key}, error={e}", exc_info=True)
             self._cache.clear()
             self._timestamps.clear()
 

@@ -5,9 +5,9 @@
 """
 # 核心导入（必须同步加载）
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QStackedWidget, QSplitter
+    QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QStackedWidget, QSplitter, QDialog
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition,
     TransparentToolButton, TransparentPushButton, SubtitleLabel,
@@ -150,6 +150,9 @@ class MainWindow(FluentWindow):
         # 设置快捷键
         self._setup_shortcuts()
 
+        # 检查是否有待恢复的任务
+        QTimer.singleShot(500, self._check_pending_task)
+
     def _setup_shortcuts(self):
         """设置快捷键"""
         from PyQt6.QtGui import QShortcut, QKeySequence
@@ -200,6 +203,7 @@ class MainWindow(FluentWindow):
         self.loading_overlay.show_loading()
         self.loading_overlay.raise_()
         self.loading_overlay.retry_requested.connect(self._on_ocr_retry)
+        self.loading_overlay.use_cpu_mode_requested.connect(self._on_use_cpu_mode)
 
     def resizeEvent(self, event):
         """窗口大小改变时调整遮罩层大小"""
@@ -220,6 +224,85 @@ class MainWindow(FluentWindow):
     def _on_ocr_retry(self):
         """OCR引擎重试初始化"""
         self.ocr_engine.initialize_async(callback=self._on_ocr_ready)
+
+    def _on_use_cpu_mode(self):
+        """切换到CPU模式并重试"""
+        try:
+            # 更新配置
+            self.config["ocr"]["use_gpu"] = False
+            # 重新创建OCR引擎
+            self.ocr_engine = OCREngine(
+                lang=self.config["ocr"]["lang"],
+                use_gpu=False,
+            )
+            self.ocr_engine.initialize_async(callback=self._on_ocr_ready)
+            # 更新批量处理器
+            self.processor = BatchProcessor(
+                self.pdf_loader, self.ocr_engine,
+                max_workers=self.config["batch"]["max_workers"]
+            )
+            InfoBar.success(
+                title="已切换到CPU模式",
+                content="OCR引擎将以CPU模式运行，速度较慢但更稳定",
+                duration=3000,
+                parent=self
+            )
+        except Exception as e:
+            InfoBar.error(
+                title="切换失败",
+                content=str(e),
+                duration=3000,
+                parent=self
+            )
+
+    def _check_pending_task(self):
+        """检查是否有待恢复的批量任务"""
+        from app.ui.widgets.cancel_result_dialog import CancelResultDialog
+
+        if CancelResultDialog.has_pending_task():
+            task_data = CancelResultDialog.load_pending_task()
+            if task_data:
+                # 显示恢复提示
+                from qfluentwidgets import MessageBox
+                pending_count = len(task_data.get('pending_files', []))
+                completed_count = task_data.get('completed', 0)
+
+                msg = MessageBox(
+                    "恢复待处理任务",
+                    f"发现上次未完成的批量任务:\n"
+                    f"已完成 {completed_count} 个文件\n"
+                    f"剩余 {pending_count} 个文件待处理\n\n"
+                    f"是否恢复该任务？",
+                    self
+                )
+                msg.yesButton.setText("恢复任务")
+                msg.cancelButton.setText("放弃任务")
+
+                if msg.exec():
+                    # 恢复任务
+                    self._restore_pending_task(task_data)
+                else:
+                    # 放弃任务，清除文件
+                    CancelResultDialog.clear_pending_task()
+
+    def _restore_pending_task(self, task_data: dict):
+        """恢复待处理的批量任务"""
+        from app.ui.widgets.cancel_result_dialog import CancelResultDialog
+
+        pending_files = task_data.get('pending_files', [])
+        if pending_files:
+            # 添加待处理文件到列表
+            self.file_panel.add_files(pending_files)
+
+            InfoBar.success(
+                title="任务已恢复",
+                content=f"已加载 {len(pending_files)} 个待处理文件",
+                duration=3000,
+                parent=self
+            )
+
+            # 清除待恢复任务文件
+            CancelResultDialog.clear_pending_task()
 
     def _init_navigation(self):
         """初始化侧边导航栏"""
@@ -486,11 +569,12 @@ class MainWindow(FluentWindow):
         layout.addWidget(btn_reset)
 
         # 低置信度筛选按钮
-        btn_low_conf = PushButton("显示低置信度")
-        btn_low_conf.setToolTip("仅显示置信度低于70%的单元格")
-        btn_low_conf.setMinimumWidth(110)
-        btn_low_conf.clicked.connect(self._on_show_low_confidence)
-        layout.addWidget(btn_low_conf)
+        self.btn_low_conf = PushButton("显示低置信度")
+        self.btn_low_conf.setToolTip("仅显示置信度低于70%的单元格")
+        self.btn_low_conf.setMinimumWidth(110)
+        self.btn_low_conf.clicked.connect(self._on_toggle_low_confidence)
+        self._low_confidence_mode = False  # 低置信度筛选模式状态
+        layout.addWidget(self.btn_low_conf)
 
         return toolbar
 
@@ -517,12 +601,23 @@ class MainWindow(FluentWindow):
         self.result_table.reset_all()
         self.status_label.setText("已重置所有数据为识别结果")
 
-    def _on_show_low_confidence(self):
-        """显示低置信度项"""
-        self.result_table.filter_low_confidence(threshold=0.7)
-        visible_count = sum(1 for row in range(self.result_table.rowCount())
-                           if not self.result_table.isRowHidden(row))
-        self.status_label.setText(f"显示 {visible_count} 个低置信度项（置信度<70%）")
+    def _on_toggle_low_confidence(self):
+        """切换低置信度筛选模式"""
+        if self._low_confidence_mode:
+            # 当前是低置信度模式，切换回显示全部
+            self.result_table.show_all_rows()
+            self._low_confidence_mode = False
+            self.btn_low_conf.setText("显示低置信度")
+            total_count = self.result_table.rowCount()
+            self.status_label.setText(f"显示全部 {total_count} 个结果")
+        else:
+            # 当前是显示全部模式，切换到低置信度筛选
+            self.result_table.filter_low_confidence(threshold=0.7)
+            self._low_confidence_mode = True
+            self.btn_low_conf.setText("显示全部")
+            visible_count = sum(1 for row in range(self.result_table.rowCount())
+                               if not self.result_table.isRowHidden(row))
+            self.status_label.setText(f"显示 {visible_count} 个低置信度项（置信度<70%）")
 
     def _create_stats_widget(self) -> QWidget:
         """创建统计信息卡片"""
@@ -1181,7 +1276,7 @@ class MainWindow(FluentWindow):
             # 不在这里关闭进度对话框，等待 _on_batch_done 处理
 
     def _on_batch_cancelled(self):
-        """批量识别被取消时的处理"""
+        """批量识别被取消时的处理 - 增强版，支持保存进度"""
         self.status_label.setText("批量识别已取消")
 
         # 关闭进度对话框
@@ -1199,8 +1294,17 @@ class MainWindow(FluentWindow):
             failed = completed - success
             total = len(self.file_panel.all_files())
 
+            # 计算剩余文件
+            all_files = self.file_panel.all_files()
+            remaining_files = all_files[completed:]
+
             from app.ui.widgets.cancel_result_dialog import CancelResultDialog
-            dialog = CancelResultDialog(completed, success, failed, total, self)
+            dialog = CancelResultDialog(
+                completed, success, failed, total,
+                pending_files=remaining_files,
+                results=self.results,
+                parent=self
+            )
             result = dialog.exec()
 
             if result == CancelResultDialog.VIEW_RESULTS:
@@ -1213,9 +1317,18 @@ class MainWindow(FluentWindow):
                 self.on_export()
             elif result == CancelResultDialog.CONTINUE:
                 # 继续识别剩余文件
-                remaining_files = self.file_panel.all_files()[completed:]
                 if remaining_files:
                     self.on_batch_run()
+            elif result == CancelResultDialog.SAVE_AND_EXIT:
+                # 保存进度并退出 - 进度已在对话框中保存
+                InfoBar.success(
+                    title="进度已保存",
+                    content="下次启动时可恢复未完成的任务",
+                    duration=3000,
+                    parent=self
+                )
+                self.result_table.load_results(self.results)
+                self.switchTo(self.result_page)
         else:
             InfoBar.warning(
                 title="提示",
@@ -1334,20 +1447,46 @@ class MainWindow(FluentWindow):
             )
 
     def on_load_template(self):
+        """加载模板 - 增强版，支持预览"""
         path, _ = QFileDialog.getOpenFileName(self, "加载模板", "", "JSON (*.json)")
         if path:
-            template = self.template_mgr.load(path)
-            self.field_panel.load_template(template)
-            self.pdf_canvas.update_regions(template.regions)
-            InfoBar.success(
-                title="成功",
-                content="模板已加载",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=2000,
-                parent=self
-            )
+            try:
+                template = self.template_mgr.load(path)
+
+                # 显示预览对话框
+                from app.ui.widgets.template_preview_dialog import TemplatePreviewDialog
+                from pathlib import Path
+                template_name = Path(path).stem
+
+                preview_dialog = TemplatePreviewDialog(
+                    template_name,
+                    template.to_dict(),
+                    self
+                )
+
+                if preview_dialog.exec() == QDialog.DialogCode.Accepted:
+                    # 用户确认加载
+                    self.field_panel.load_template(template)
+                    self.pdf_canvas.update_regions(template.regions)
+                    InfoBar.success(
+                        title="成功",
+                        content=f"模板 '{template_name}' 已加载",
+                        orient=Qt.Orientation.Horizontal,
+                        isClosable=True,
+                        position=InfoBarPosition.TOP,
+                        duration=2000,
+                        parent=self
+                    )
+            except Exception as e:
+                InfoBar.error(
+                    title="加载失败",
+                    content=str(e),
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=3000,
+                    parent=self
+                )
 
     def on_clear_current_pdf_fields(self):
         """清空当前PDF的字段配置，用户手动添加的配置将作为特殊配置"""
