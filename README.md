@@ -21,8 +21,8 @@
 
 1. 克隆仓库
    ```bash
-   git clone https://github.com/your-username/pdf-ocr-tool.git
-   cd pdf-ocr-tool
+   git clone https://github.com/ppaannddaa18/PDF-OCR.git
+   cd PDF-OCR
    ```
 
 2. 安装依赖
