@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from PIL import Image
 from app.core.pdf_loader import PdfLoader
-from app.core.ocr_engine import OCREngine
+from app.core.ocr_engine_base import OCREngineBase
 from app.models.template import Template
 from app.models.ocr_result import FileResult, FieldResult
 
@@ -20,11 +20,11 @@ class BatchProcessor:
 
     优化点：
     1. 页面级渲染缓存，同一PDF的多个区域只渲染一次
-    2. 移除冗余的OCR锁（由OCREngine内部处理）
+    2. 移除冗余的OCR锁（由OCREngineBase子类内部处理）
     3. 动态调整线程数
     """
 
-    def __init__(self, pdf_loader: PdfLoader, ocr_engine: OCREngine, config: dict, max_workers: int = 4):
+    def __init__(self, pdf_loader: PdfLoader, ocr_engine: OCREngineBase, config: dict, max_workers: int = 4):
         self.pdf_loader = pdf_loader
         self.ocr = ocr_engine
         self.max_workers = max_workers

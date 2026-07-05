@@ -98,17 +98,21 @@ class MainWindow(FluentWindow):
         # 核心组件
         self.pdf_loader = PdfLoader(dpi=config["pdf"]["render_dpi"])
         self.ocr_engine = get_ocr_engine(self.config)
+        self.processor = None  # 将在OCR引擎就绪后创建
+        self._init_gen = 0  # 初始化世代计数器，防止竞态条件
+
         # 在后台线程中同步初始化（不阻塞UI）
         import threading
+        self._init_gen += 1
+        gen = self._init_gen
+        ocr = self.ocr_engine  # 捕获引用，防止引擎切换后初始化错误对象
         def _init_ocr():
-            self.ocr_engine.initialize()
-            # 用 QTimer 在主线程回调
-            QTimer.singleShot(0, self._on_ocr_ready)
+            if self._init_gen != gen:
+                return  # stale，引擎已被切换
+            ocr.initialize()
+            if self._init_gen == gen:
+                QTimer.singleShot(0, self._on_ocr_ready)
         threading.Thread(target=_init_ocr, daemon=True, name="OCR-Init").start()
-        self.processor = BatchProcessor(
-            self.pdf_loader, self.ocr_engine, self.config,
-            max_workers=config["batch"]["max_workers"]
-        )
         self.template_mgr = TemplateManager()
         self.exporter = Exporter()
 
@@ -219,6 +223,11 @@ class MainWindow(FluentWindow):
             # 初始化成功，隐藏遮罩层
             self.loading_overlay.hide_overlay()
             self.gpu_status.set_engine(self.ocr_engine)
+            # 引擎就绪后才创建 BatchProcessor（避免引擎未就绪就被使用）
+            self.processor = BatchProcessor(
+                self.pdf_loader, self.ocr_engine, self.config,
+                max_workers=self.config["batch"]["max_workers"]
+            )
         else:
             # 初始化失败，显示错误面板
             error_msg = self.ocr_engine.init_error or "未知错误"
@@ -227,26 +236,37 @@ class MainWindow(FluentWindow):
     def _on_ocr_retry(self):
         """OCR引擎重试初始化"""
         import threading
+        if hasattr(self.ocr_engine, 'unload'):
+            self.ocr_engine.unload()
+        self._init_gen += 1
+        gen = self._init_gen
+        ocr = self.ocr_engine
         def _reinit():
-            self.ocr_engine.initialize()
-            QTimer.singleShot(0, self._on_ocr_ready)
+            if self._init_gen != gen:
+                return
+            ocr.initialize()
+            if self._init_gen == gen:
+                QTimer.singleShot(0, self._on_ocr_ready)
         threading.Thread(target=_reinit, daemon=True, name="OCR-Retry").start()
 
     def _on_use_cpu_mode(self):
         """切换到CPU模式并重试"""
         try:
             self.config["ocr"]["engine"] = "rapidocr"
+            if hasattr(self.ocr_engine, 'unload'):
+                self.ocr_engine.unload()
             self.ocr_engine = get_ocr_engine(self.config)
             import threading
+            self._init_gen += 1
+            gen = self._init_gen
+            ocr = self.ocr_engine
             def _reinit():
-                self.ocr_engine.initialize()
-                QTimer.singleShot(0, self._on_ocr_ready)
+                if self._init_gen != gen:
+                    return
+                ocr.initialize()
+                if self._init_gen == gen:
+                    QTimer.singleShot(0, self._on_ocr_ready)
             threading.Thread(target=_reinit, daemon=True, name="OCR-CPU").start()
-            self.processor = BatchProcessor(
-                self.pdf_loader, self.ocr_engine, self.config,
-                max_workers=self.config["batch"]["max_workers"]
-            )
-            self.gpu_status.set_engine(self.ocr_engine)
             InfoBar.success(
                 title="已切换到CPU模式",
                 content="OCR引擎将以CPU模式运行，速度较慢但更稳定",
@@ -1696,23 +1716,20 @@ class MainWindow(FluentWindow):
             self.ocr_engine.unload()
         self.ocr_engine = get_ocr_engine(self.config)
 
-        # 异步初始化新引擎
+        # 异步初始化新引擎（带世代计数器防竞态）
         import threading
+        self._init_gen += 1
+        gen = self._init_gen
+        ocr = self.ocr_engine
         def _reinit():
-            self.ocr_engine.initialize()
-            QTimer.singleShot(0, self._on_ocr_ready)
+            if self._init_gen != gen:
+                return  # stale，引擎已被再次切换
+            ocr.initialize()
+            if self._init_gen == gen:
+                QTimer.singleShot(0, self._on_ocr_ready)
         threading.Thread(target=_reinit, daemon=True, name="OCR-Reinit").start()
 
-        # 更新 BatchProcessor
-        self.processor = BatchProcessor(
-            self.pdf_loader, self.ocr_engine, self.config,
-            max_workers=self.config["batch"]["max_workers"]
-        )
-
-        # 更新GPU状态绑定
-        self.gpu_status.set_engine(self.ocr_engine)
-
-        # 清空旧结果
+        # 清空旧结果（BatchProcessor 和 GpuStatus 由 _on_ocr_ready 统一更新）
         self._current_preview_result = None
         self._pdf_preview_results.clear()
 
