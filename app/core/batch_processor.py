@@ -24,10 +24,11 @@ class BatchProcessor:
     3. 动态调整线程数
     """
 
-    def __init__(self, pdf_loader: PdfLoader, ocr_engine: OCREngine, max_workers: int = 4):
+    def __init__(self, pdf_loader: PdfLoader, ocr_engine: OCREngine, config: dict, max_workers: int = 4):
         self.pdf_loader = pdf_loader
         self.ocr = ocr_engine
         self.max_workers = max_workers
+        self.config = config  # 用于获取page_dpi等配置
         # 页面渲染缓存：pdf_path -> rendered_image
         self._page_cache: Dict[str, Image.Image] = {}
         self._page_cache_lock = threading.Lock()
@@ -59,16 +60,13 @@ class BatchProcessor:
 
     def process_one(self, pdf_path: str, template: Template) -> FileResult:
         """
-        处理单个PDF文件
+        处理单个PDF文件 — 根据引擎类型自动选择处理路径
 
-        性能优化：
-        - 页面只渲染一次，多个区域共享
-        - OCR调用由OCREngine内部锁保护
+        PaddleOCR-VL: 整页识别 + FieldMatcher匹配
+        RapidOCR:     逐区域裁剪识别（原有逻辑）
         """
         try:
             fields = {}
-
-            # 按页面分组区域，减少渲染次数
             regions_by_page: Dict[int, list] = {}
             for region in template.regions:
                 page_num = getattr(region, 'page_num', 0)
@@ -76,31 +74,47 @@ class BatchProcessor:
                     regions_by_page[page_num] = []
                 regions_by_page[page_num].append(region)
 
-            # 处理每个页面的区域
+            use_vl = self.ocr.engine_name == "paddleocr_vl"
+
             for page_num, regions in regions_by_page.items():
-                # 每个页面只渲染一次
                 rendered_image = self._get_rendered_page(pdf_path, page_num)
-                W, H = rendered_image.size
 
-                for region in regions:
-                    # 裁剪区域
-                    left = max(0, int(region.x * W))
-                    top = max(0, int(region.y * H))
-                    right = min(W, int((region.x + region.w) * W))
-                    bottom = min(H, int((region.y + region.h) * H))
-
-                    if right <= left or bottom <= top:
-                        crop = Image.new("RGB", (1, 1), (255, 255, 255))
-                    else:
-                        crop = rendered_image.crop((left, top, right, bottom))
-
-                    # OCR识别（锁由OCREngine内部管理）
-                    text, conf = self.ocr.recognize(crop, region.ocr_mode)
-                    fields[region.field_name] = FieldResult(
-                        field_name=region.field_name,
-                        text=text,
-                        confidence=conf,
+                if use_vl:
+                    # PaddleOCR-VL: 整页一次推理
+                    page_results = self.ocr.recognize_page(
+                        rendered_image, regions,
+                        page_dpi=self.config.get("ocr", {}).get("paddleocr_vl", {}).get("page_dpi", 200)
                     )
+                    for region in regions:
+                        text, conf, match_level, _ = page_results.get(
+                            region.id, ("", 0.0, 0, None)
+                        )
+                        fields[region.field_name] = FieldResult(
+                            field_name=region.field_name,
+                            text=text,
+                            confidence=conf,
+                            match_level=match_level,
+                            engine="paddleocr_vl",
+                        )
+                else:
+                    # RapidOCR: 逐区域裁剪识别
+                    W, H = rendered_image.size
+                    for region in regions:
+                        left = max(0, int(region.x * W))
+                        top = max(0, int(region.y * H))
+                        right = min(W, int((region.x + region.w) * W))
+                        bottom = min(H, int((region.y + region.h) * H))
+                        if right <= left or bottom <= top:
+                            crop = Image.new("RGB", (1, 1), (255, 255, 255))
+                        else:
+                            crop = rendered_image.crop((left, top, right, bottom))
+                        text, conf = self.ocr.recognize(crop, region.ocr_mode)
+                        fields[region.field_name] = FieldResult(
+                            field_name=region.field_name,
+                            text=text,
+                            confidence=conf,
+                            engine="rapidocr",
+                        )
 
             return FileResult(source_file=pdf_path, fields=fields, success=True)
 
