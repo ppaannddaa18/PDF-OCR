@@ -103,17 +103,25 @@ class ResultTable(QTableWidget):
             fr = r.fields.get(fn)
             if fr:
                 item = QTableWidgetItem(fr.text)
-                # 根据置信度设置背景色
-                if fr.confidence < 0.5:
+                # PaddleOCR-VL 匹配级别颜色（优先级高于置信度）
+                if fr.match_level == 1:
+                    item.setBackground(QColor("#E5F5E5"))  # 绿色 - IoU精确
+                    item.setToolTip(f"匹配: IoU精确 | 置信度: {fr.confidence:.1%} | 引擎: {fr.engine}")
+                elif fr.match_level == 2:
+                    item.setBackground(QColor("#FFFBE5"))  # 黄色 - 就近匹配
+                    item.setToolTip(f"匹配: 就近搜索 | 置信度: {fr.confidence:.1%} | 引擎: {fr.engine}")
+                elif fr.match_level == 3:
+                    item.setBackground(QColor("#FFF0E5"))  # 橙色 - 关键词
+                    item.setToolTip(f"匹配: 关键词兜底 | 置信度: {fr.confidence:.1%} | 引擎: {fr.engine}")
+                elif fr.confidence < 0.5:
                     item.setBackground(QColor("#FFE5E5"))  # 红色 - 低置信度
-                    item.setToolTip(f"置信度: {fr.confidence:.1%} (较低，建议核对)")
+                    item.setToolTip(f"置信度: {fr.confidence:.1%} (较低，建议核对) | 引擎: {fr.engine}")
                 elif fr.confidence < 0.7:
                     item.setBackground(QColor("#FFF4E5"))  # 黄色 - 中等置信度
-                    item.setToolTip(f"置信度: {fr.confidence:.1%} (一般)")
+                    item.setToolTip(f"置信度: {fr.confidence:.1%} (一般) | 引擎: {fr.engine}")
                 else:
-                    item.setToolTip(f"置信度: {fr.confidence:.1%}")
+                    item.setToolTip(f"置信度: {fr.confidence:.1%} | 引擎: {fr.engine}")
 
-                # 标记手动编辑的单元格
                 if fr.manually_edited:
                     item.setBackground(QColor("#E5F3FF"))  # 蓝色 - 已编辑
                     item.setToolTip(f"{item.toolTip()}\n[已手动编辑]")
@@ -213,11 +221,17 @@ class ResultTable(QTableWidget):
             fr = current.fields.get(fn)
             if fr:
                 item = QTableWidgetItem(fr.text)
-                # 恢复置信度颜色
-                if fr.confidence < 0.5:
-                    item.setBackground(QColor("#FFE5E5"))
+                # 恢复匹配级别/置信度颜色
+                if fr.match_level == 1:
+                    item.setBackground(QColor("#E5F5E5"))  # 绿色 - IoU精确
+                elif fr.match_level == 2:
+                    item.setBackground(QColor("#FFFBE5"))  # 黄色 - 就近匹配
+                elif fr.match_level == 3:
+                    item.setBackground(QColor("#FFF0E5"))  # 橙色 - 关键词
+                elif fr.confidence < 0.5:
+                    item.setBackground(QColor("#FFE5E5"))  # 红色 - 低置信度
                 elif fr.confidence < 0.7:
-                    item.setBackground(QColor("#FFF4E5"))
+                    item.setBackground(QColor("#FFF4E5"))  # 黄色 - 中等置信度
                 self.setItem(row, col, item)
                 self._modified_cells.discard((row, col))
 
