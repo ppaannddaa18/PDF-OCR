@@ -169,13 +169,23 @@ class ResultTable(QTableWidget):
         item = self.item(row, col)
         if item:
             item.setText(value)
-            # 更新置信度颜色
-            if confidence < 0.5:
+            # 更新颜色 - 优先使用 match_level（与 _populate_row 逻辑一致）
+            field_name_key = self._field_names[col - 1] if col - 1 < len(self._field_names) else ""
+            fr = result.fields.get(field_name_key) if row < len(self._results) else None
+            match_level = fr.match_level if fr else 0
+
+            if match_level == 1:
+                item.setBackground(QColor("#E5F5E5"))  # 绿色
+            elif match_level == 2:
+                item.setBackground(QColor("#FFFBE5"))  # 黄色
+            elif match_level == 3:
+                item.setBackground(QColor("#FFF0E5"))  # 橙色
+            elif confidence < 0.5:
                 item.setBackground(QColor("#FFE5E5"))
             elif confidence < 0.7:
                 item.setBackground(QColor("#FFF4E5"))
             else:
-                item.setBackground(QBrush())  # 恢复默认背景
+                item.setBackground(QBrush())
 
     def _on_item_changed(self, item: QTableWidgetItem):
         """单元格内容变更处理"""

@@ -18,7 +18,21 @@
       "Bash(python -c \"from app.ui.main_window import MainWindow; print\\('Import OK'\\)\")",
       "Bash(python -c \"from qfluentwidgets import *; print\\([x for x in dir\\(\\) if 'progress' in x.lower\\(\\) or 'Progress' in x]\\)\")",
       "Bash(python *)",
-      "Bash(cat C:\\\\\\\\Users\\\\\\\\30726\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-30726-OneDrive-panda-tools-PDFOCR\\\\\\\\3945a662-dbd9-4484-9f46-67dd5dd9af9f\\\\\\\\tasks\\\\\\\\be8b5kw8g.output)"
+      "Bash(cat C:\\\\\\\\Users\\\\\\\\30726\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-30726-OneDrive-panda-tools-PDFOCR\\\\\\\\3945a662-dbd9-4484-9f46-67dd5dd9af9f\\\\\\\\tasks\\\\\\\\be8b5kw8g.output)",
+      "Bash(nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader)",
+      "Bash(bash c:/Users/Panda/.claude/plugins/cache/claude-plugins-official/superpowers/6.0.3/skills/subagent-driven-development/scripts/review-package e2abf2b HEAD)",
+      "Bash(ls -la venv/bin/activate)",
+      "Bash(ls -la venv/Scripts/activate)",
+      "Bash(/c/Users/Panda/OneDrive/panda/tools/PDFOCR/venv/Scripts/python.exe -c \"print\\('hello'\\)\")",
+      "Bash(/c/Users/Panda/OneDrive/panda/tools/PDFOCR/venv/Scripts/python.exe -c ' *)",
+      "Bash(/c/Users/Panda/OneDrive/panda/tools/PDFOCR/venv/Scripts/python.exe -c \"import sys; sys.path.insert\\(0, '/c/Users/Panda/OneDrive/panda/tools/PDFOCR'\\); from app.ui.widgets.result_table import ResultTable; print\\('OK'\\); rt = ResultTable\\(\\); assert hasattr\\(rt, 'update_cell'\\); print\\('update_cell exists'\\)\")",
+      "Bash(/c/Users/Panda/OneDrive/panda/tools/PDFOCR/venv/Scripts/python.exe c:/Users/Panda/OneDrive/panda/tools/PDFOCR/test_update_cell.py)",
+      "Bash(C:/Users/Panda/OneDrive/panda/tools/PDFOCR/venv/Scripts/python.exe C:/Users/Panda/OneDrive/panda/tools/PDFOCR/test_update_cell.py)",
+      "Bash(PYTHONPATH=c:/Users/Panda/OneDrive/panda/tools/PDFOCR python -c \"import sys; print\\(sys.path[:2]\\)\")",
+      "Bash(PYTHONPATH=. python -c \"import sys; from app.ui.widgets.result_table import ResultTable; rt = ResultTable\\(\\); assert hasattr\\(rt, 'update_cell'\\); print\\('OK'\\)\")",
+      "Bash(PYTHONPATH=/c/Users/Panda/OneDrive/panda/tools/PDFOCR python t_done.py)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'fix: update_cell\\(\\) missing match_level color logic *)"
     ]
   }
 }
