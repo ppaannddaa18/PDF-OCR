@@ -69,7 +69,7 @@ def _icon(name: str, color: str = '#0078d4'):
 
 # 核心组件导入（轻量级）
 from app.core.pdf_loader import PdfLoader
-from app.core.ocr_engine import OCREngine
+from app.core.ocr_engine import get_ocr_engine
 from app.core.batch_processor import BatchProcessor
 from app.core.template_manager import TemplateManager
 from app.core.exporter import Exporter
@@ -97,14 +97,16 @@ class MainWindow(FluentWindow):
 
         # 核心组件
         self.pdf_loader = PdfLoader(dpi=config["pdf"]["render_dpi"])
-        self.ocr_engine = OCREngine(
-            lang=config["ocr"]["lang"],
-            use_gpu=config["ocr"]["use_gpu"],
-        )
-        # 异步初始化OCR引擎
-        self.ocr_engine.initialize_async(callback=self._on_ocr_ready)
+        self.ocr_engine = get_ocr_engine(self.config)
+        # 在后台线程中同步初始化（不阻塞UI）
+        import threading
+        def _init_ocr():
+            self.ocr_engine.initialize()
+            # 用 QTimer 在主线程回调
+            QTimer.singleShot(0, self._on_ocr_ready)
+        threading.Thread(target=_init_ocr, daemon=True, name="OCR-Init").start()
         self.processor = BatchProcessor(
-            self.pdf_loader, self.ocr_engine,
+            self.pdf_loader, self.ocr_engine, self.config,
             max_workers=config["batch"]["max_workers"]
         )
         self.template_mgr = TemplateManager()
@@ -216,6 +218,7 @@ class MainWindow(FluentWindow):
         if self.ocr_engine.is_ready:
             # 初始化成功，隐藏遮罩层
             self.loading_overlay.hide_overlay()
+            self.gpu_status.set_engine(self.ocr_engine)
         else:
             # 初始化失败，显示错误面板
             error_msg = self.ocr_engine.init_error or "未知错误"
@@ -223,24 +226,27 @@ class MainWindow(FluentWindow):
 
     def _on_ocr_retry(self):
         """OCR引擎重试初始化"""
-        self.ocr_engine.initialize_async(callback=self._on_ocr_ready)
+        import threading
+        def _reinit():
+            self.ocr_engine.initialize()
+            QTimer.singleShot(0, self._on_ocr_ready)
+        threading.Thread(target=_reinit, daemon=True, name="OCR-Retry").start()
 
     def _on_use_cpu_mode(self):
         """切换到CPU模式并重试"""
         try:
-            # 更新配置
-            self.config["ocr"]["use_gpu"] = False
-            # 重新创建OCR引擎
-            self.ocr_engine = OCREngine(
-                lang=self.config["ocr"]["lang"],
-                use_gpu=False,
-            )
-            self.ocr_engine.initialize_async(callback=self._on_ocr_ready)
-            # 更新批量处理器
+            self.config["ocr"]["engine"] = "rapidocr"
+            self.ocr_engine = get_ocr_engine(self.config)
+            import threading
+            def _reinit():
+                self.ocr_engine.initialize()
+                QTimer.singleShot(0, self._on_ocr_ready)
+            threading.Thread(target=_reinit, daemon=True, name="OCR-CPU").start()
             self.processor = BatchProcessor(
-                self.pdf_loader, self.ocr_engine,
+                self.pdf_loader, self.ocr_engine, self.config,
                 max_workers=self.config["batch"]["max_workers"]
             )
+            self.gpu_status.set_engine(self.ocr_engine)
             InfoBar.success(
                 title="已切换到CPU模式",
                 content="OCR引擎将以CPU模式运行，速度较慢但更稳定",
@@ -728,6 +734,38 @@ class MainWindow(FluentWindow):
         btn_load.setToolTip("加载已保存的模板")
         btn_load.clicked.connect(self.on_load_template)
         toolbar_layout.addWidget(btn_load)
+
+        toolbar_layout.addSpacing(8)
+
+        # 分隔线
+        sep2 = QWidget()
+        sep2.setFixedWidth(1)
+        sep2.setFixedHeight(20)
+        sep2.setStyleSheet("background: #e0e0e0;")
+        toolbar_layout.addWidget(sep2)
+
+        toolbar_layout.addSpacing(8)
+
+        # 引擎切换
+        from qfluentwidgets import ComboBox
+        self.engine_combo = ComboBox()
+        self.engine_combo.addItems([
+            "PaddleOCR-VL (GPU)",
+            "RapidOCR (CPU)",
+        ])
+        # 根据当前引擎设置默认选项
+        current_engine = self.config.get("ocr", {}).get("engine", "paddleocr_vl")
+        self.engine_combo.setCurrentIndex(0 if current_engine == "paddleocr_vl" else 1)
+        self.engine_combo.currentIndexChanged.connect(self._on_engine_switched)
+        self.engine_combo.setMinimumWidth(160)
+        toolbar_layout.addWidget(self.engine_combo)
+
+        toolbar_layout.addSpacing(4)
+
+        # GPU 状态指示器
+        from app.ui.widgets.gpu_status import GpuStatusWidget
+        self.gpu_status = GpuStatusWidget()
+        toolbar_layout.addWidget(self.gpu_status)
 
         toolbar_layout.addStretch()
         return toolbar
@@ -1625,6 +1663,65 @@ class MainWindow(FluentWindow):
             self._current_preview_result.fields[new_name] = field_result
 
         self.status_label.setText(f"字段名已更新: {old_name} -> {new_name}")
+
+    def _on_engine_switched(self, index: int):
+        """引擎切换处理"""
+        new_engine_type = "paddleocr_vl" if index == 0 else "rapidocr"
+        current_engine = self.config.get("ocr", {}).get("engine", "paddleocr_vl")
+        if new_engine_type == current_engine:
+            return
+
+        # 确认提示
+        from qfluentwidgets import MessageBox
+        msg = MessageBox(
+            "切换OCR引擎",
+            f"切换到 {'PaddleOCR-VL (GPU)' if index == 0 else 'RapidOCR (CPU)'}？\n\n"
+            "注意：切换引擎后需要重新识别，当前未保存的识别结果将丢失。",
+            self
+        )
+        msg.yesButton.setText("确认切换")
+        msg.cancelButton.setText("取消")
+        if not msg.exec():
+            # 恢复原选项
+            self.engine_combo.blockSignals(True)
+            self.engine_combo.setCurrentIndex(0 if current_engine == "paddleocr_vl" else 1)
+            self.engine_combo.blockSignals(False)
+            return
+
+        # 更新配置
+        self.config["ocr"]["engine"] = new_engine_type
+
+        # 重新创建引擎
+        if hasattr(self.ocr_engine, 'unload'):
+            self.ocr_engine.unload()
+        self.ocr_engine = get_ocr_engine(self.config)
+
+        # 异步初始化新引擎
+        import threading
+        def _reinit():
+            self.ocr_engine.initialize()
+            QTimer.singleShot(0, self._on_ocr_ready)
+        threading.Thread(target=_reinit, daemon=True, name="OCR-Reinit").start()
+
+        # 更新 BatchProcessor
+        self.processor = BatchProcessor(
+            self.pdf_loader, self.ocr_engine, self.config,
+            max_workers=self.config["batch"]["max_workers"]
+        )
+
+        # 更新GPU状态绑定
+        self.gpu_status.set_engine(self.ocr_engine)
+
+        # 清空旧结果
+        self._current_preview_result = None
+        self._pdf_preview_results.clear()
+
+        InfoBar.success(
+            title="引擎已切换",
+            content=f"当前引擎: {'PaddleOCR-VL (GPU)' if index == 0 else 'RapidOCR (CPU)'}",
+            duration=3000,
+            parent=self
+        )
 
     def closeEvent(self, event):
         """窗口关闭时确保 worker 线程安全终止"""
