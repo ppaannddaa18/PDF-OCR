@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, List
 
 
 @dataclass
@@ -14,6 +14,9 @@ class Region:
     field_type: Literal["text", "number", "date", "email", "phone"] = "text"
     ocr_mode: Literal["general", "single_line", "number"] = "general"
     color: str = "#FF5733"             # 框的显示颜色
+    # PaddleOCR-VL 专属（可选，向后兼容）
+    match_keywords: List[str] = field(default_factory=list)
+    match_mode: str = "value"  # "exact" | "label_value"
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
