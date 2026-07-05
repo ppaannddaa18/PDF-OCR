@@ -41,7 +41,7 @@ class PaddleOCREngine(OCREngineBase):
             self._pipeline = None
             self._initialized = False
             self._init_error: Optional[str] = None
-            self._lock = threading.RLock()
+            self._pipeline_lock = threading.RLock()
             self._model_name = vl_cfg.get("model_name", "PaddleOCR-VL-1.6-0.9B")
             self._device = vl_cfg.get("device", "gpu")
             self._warmup_on_startup = vl_cfg.get("warmup_on_startup", True)
@@ -55,7 +55,7 @@ class PaddleOCREngine(OCREngineBase):
         """同步初始化（在后台线程中调用，不阻塞GUI）"""
         if self._initialized:
             return
-        with self._lock:
+        with self._pipeline_lock:
             if self._initialized:
                 return
             try:
@@ -95,7 +95,7 @@ class PaddleOCREngine(OCREngineBase):
 
     def unload(self) -> None:
         """卸载GPU模型释放显存"""
-        with self._lock:
+        with self._pipeline_lock:
             if self._pipeline is not None:
                 del self._pipeline
                 self._pipeline = None
@@ -113,14 +113,22 @@ class PaddleOCREngine(OCREngineBase):
         """单图识别 — 降级为整页识别后只取第一个匹配"""
         # 创建虚拟region覆盖全图
         class _DummyRegion:
-            id = "__single__"
-            field_name = "text"
-            _pixel_bbox = [0, 0, image.width, image.height]
-            match_keywords = []
-            match_mode = "value"
-            ocr_mode = mode
+            __slots__ = ('id', 'field_name', 'x', 'y', 'w', 'h',
+                         '_pixel_bbox', 'match_keywords', 'match_mode', 'ocr_mode')
 
-        results = self.recognize_page(image, [_DummyRegion])
+            def __init__(self, width, height, mode="general"):
+                self.id = "__single__"
+                self.field_name = "text"
+                self.x = 0.0
+                self.y = 0.0
+                self.w = 1.0
+                self.h = 1.0
+                self._pixel_bbox = [0, 0, width, height]
+                self.match_keywords = []
+                self.match_mode = "value"
+                self.ocr_mode = mode
+
+        results = self.recognize_page(image, [_DummyRegion(image.width, image.height, mode)])
         result = results.get("__single__", ("", 0.0, 0, None))
         return result[0], result[1]
 
@@ -142,7 +150,7 @@ class PaddleOCREngine(OCREngineBase):
             region._pixel_bbox = [left, top, right, bottom]
 
         try:
-            with self._lock:
+            with self._pipeline_lock:
                 outputs = list(self._pipeline.predict(image))
         except Exception as e:
             # 推理失败，返回空结果
