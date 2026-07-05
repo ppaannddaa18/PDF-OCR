@@ -54,7 +54,9 @@ class FieldMatcher:
             best = self._neighbor_match(region, remaining)
             if best is not None:
                 remaining.remove(best)
-                text = self._merge_adjacent(best, region, remaining)
+                text, consumed = self._merge_adjacent(best, remaining)
+                for elem in consumed:
+                    remaining.remove(elem)
                 results[region.id] = MatchResult(
                     text=text,
                     confidence=best.get("confidence", 0.0),
@@ -137,11 +139,12 @@ class FieldMatcher:
                 best_elem = elem
         return best_elem
 
-    def _merge_adjacent(self, best: dict, region, remaining: List[dict]) -> str:
-        """合并与best相邻的同一行elements"""
+    def _merge_adjacent(self, best: dict, remaining: List[dict]) -> Tuple[str, List[dict]]:
+        """合并与best相邻的同一行elements，返回(merged_text, consumed_elements)"""
         texts = [best.get("text", "")]
         best_bbox = best.get("bbox", [0, 0, 0, 0])
         by_mid = (best_bbox[1] + best_bbox[3]) / 2
+        consumed = []
 
         for elem in list(remaining):
             bbox = elem.get("bbox")
@@ -153,7 +156,8 @@ class FieldMatcher:
                 h_dist = bbox[0] - best_bbox[2]
                 if 0 < h_dist < self.neighbor_radius * 2:
                     texts.append(elem.get("text", ""))
-        return " ".join(texts)
+                    consumed.append(elem)
+        return " ".join(texts), consumed
 
     def _keyword_match(self, region, markdown_text: str) -> Tuple[str, float]:
         """Level 3: 在markdown中用关键词正则搜索"""
