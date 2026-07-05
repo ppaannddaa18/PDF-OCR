@@ -233,6 +233,27 @@ class LoadingOverlay(QWidget):
         # 错误类型映射表：关键字 -> (友好描述, 解决步骤, 下载链接)
         # 注意：更具体的错误应该放在前面，避免被通用错误匹配
         error_solutions = {
+            # PaddlePaddle/CUDA 相关错误（添加在现有映射之前）
+            "paddle": (
+                "PaddlePaddle环境异常",
+                "1. 检查PaddlePaddle GPU是否正确安装\n2. 运行: pip install paddlepaddle-gpu==3.2.1\n3. 或勾选下方「使用CPU模式运行」切换回RapidOCR",
+                None
+            ),
+            "no module named 'paddleocr'": (
+                "未安装PaddleOCR-VL",
+                "1. 运行: pip install 'paddleocr[doc-parser]>=3.6.0'\n2. 或勾选下方「使用CPU模式运行」使用RapidOCR",
+                None
+            ),
+            "no module named 'paddle'": (
+                "未安装PaddlePaddle GPU",
+                "1. 运行: pip install paddlepaddle-gpu==3.2.1\n2. 或勾选下方「使用CPU模式运行」使用RapidOCR",
+                None
+            ),
+            "cuda driver version is insufficient": (
+                "CUDA驱动版本不兼容",
+                "1. 更新NVIDIA显卡驱动\n2. 或勾选下方「使用CPU模式运行」使用RapidOCR",
+                None
+            ),
             # GPU/CUDA 相关错误（优先匹配）
             "cuda out of memory": (
                 "GPU显存不足",
