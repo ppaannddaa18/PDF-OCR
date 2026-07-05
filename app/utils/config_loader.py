@@ -3,6 +3,7 @@
 """
 import yaml
 import sys
+import os
 from pathlib import Path
 
 
@@ -45,7 +46,6 @@ def load_config(path: str = None) -> dict:
             config = yaml.safe_load(f)
 
     # 启动器环境变量覆盖（优先级高于配置文件）
-    import os
     env_engine = os.environ.get("PDFOCR_ENGINE", "")
     if env_engine in ("paddleocr_vl", "rapidocr"):
         config.setdefault("ocr", {})["engine"] = env_engine
