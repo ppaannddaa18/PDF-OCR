@@ -1,0 +1,12 @@
+# PDFOCR CPU 环境依赖 (RapidOCR 降级备用)
+rapidocr-onnxruntime>=1.3.0
+PyQt6>=6.5.0
+PyQt6-Fluent-Widgets>=1.4.0
+QtAwesome>=1.2.0
+PyMuPDF>=1.23.0
+Pillow>=10.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+PyYAML>=6.0

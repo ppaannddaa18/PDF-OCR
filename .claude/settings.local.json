@@ -32,7 +32,10 @@
       "Bash(PYTHONPATH=. python -c \"import sys; from app.ui.widgets.result_table import ResultTable; rt = ResultTable\\(\\); assert hasattr\\(rt, 'update_cell'\\); print\\('OK'\\)\")",
       "Bash(PYTHONPATH=/c/Users/Panda/OneDrive/panda/tools/PDFOCR python t_done.py)",
       "Bash(git add *)",
-      "Bash(git commit -m 'fix: update_cell\\(\\) missing match_level color logic *)"
+      "Bash(git commit -m 'fix: update_cell\\(\\) missing match_level color logic *)",
+      "Bash(git commit *)",
+      "Bash(bash c:/Users/Panda/.claude/plugins/cache/claude-plugins-official/superpowers/6.0.3/skills/subagent-driven-development/scripts/review-package bbbff29 HEAD)",
+      "Bash(c:/Users/Panda/.claude/plugins/cache/claude-plugins-official/superpowers/6.0.3/skills/subagent-driven-development/scripts/task-brief \"c:/Users/Panda/OneDrive/panda/tools/PDFOCR/docs/superpowers/plans/2026-07-05-paddleocr-vl-upgrade.md\" 13)"
     ]
   }
 }
