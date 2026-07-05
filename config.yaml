@@ -1,6 +1,6 @@
 app:
   name: "PDF OCR Tool"
-  version: "1.0.0"
+  version: "2.0.0"
   window_size: [1600, 1000]
 
 pdf:
@@ -8,11 +8,29 @@ pdf:
   max_preview_size: 2000
 
 ocr:
+  engine: "paddleocr_vl"
   lang: "ch"
-  use_gpu: false
+  use_gpu: true
   use_angle_cls: true
   det_db_box_thresh: 0.5
   drop_score: 0.5
+  # PaddleOCR-VL 专属
+  paddleocr_vl:
+    model_name: "PaddleOCR-VL-1.6-0.9B"
+    device: "gpu"
+    warmup_on_startup: true
+    idle_unload_seconds: 300
+    backend: "paddle"
+    page_dpi: 200
+    high_quality_dpi: 300
+    match_iou_threshold: 0.5
+    match_neighbor_radius: 50
+  # RapidOCR 专属
+  rapidocr:
+    use_gpu: false
+    lang: "ch"
+    det_db_box_thresh: 0.3
+    drop_score: 0.5
 
 batch:
   max_workers: 4

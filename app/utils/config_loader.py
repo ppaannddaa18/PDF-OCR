@@ -39,10 +39,18 @@ def load_config(path: str = None) -> dict:
 
     # 如果配置文件不存在，返回默认配置
     if not config_path.exists():
-        return get_default_config()
+        config = get_default_config()
+    else:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    # 启动器环境变量覆盖（优先级高于配置文件）
+    import os
+    env_engine = os.environ.get("PDFOCR_ENGINE", "")
+    if env_engine in ("paddleocr_vl", "rapidocr"):
+        config.setdefault("ocr", {})["engine"] = env_engine
+
+    return config
 
 
 def get_default_config() -> dict:
@@ -50,18 +58,38 @@ def get_default_config() -> dict:
     return {
         "app": {
             "name": "PDF OCR Tool",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "window_size": [1600, 1000]
         },
         "pdf": {
             "render_dpi": 200
         },
         "ocr": {
+            "engine": "paddleocr_vl",       # "paddleocr_vl" | "rapidocr"
             "lang": "ch",
-            "use_gpu": False,
+            "use_gpu": True,
             "use_angle_cls": True,
             "det_db_box_thresh": 0.5,
-            "drop_score": 0.5
+            "drop_score": 0.5,
+            # PaddleOCR-VL 专属
+            "paddleocr_vl": {
+                "model_name": "PaddleOCR-VL-1.6-0.9B",
+                "device": "gpu",
+                "warmup_on_startup": True,
+                "idle_unload_seconds": 300,
+                "backend": "paddle",
+                "page_dpi": 200,
+                "high_quality_dpi": 300,
+                "match_iou_threshold": 0.5,
+                "match_neighbor_radius": 50,
+            },
+            # RapidOCR 专属
+            "rapidocr": {
+                "use_gpu": False,
+                "lang": "ch",
+                "det_db_box_thresh": 0.3,
+                "drop_score": 0.5,
+            },
         },
         "batch": {
             "max_workers": 4,
