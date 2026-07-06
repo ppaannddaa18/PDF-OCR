@@ -71,10 +71,12 @@ class FileListPanel(QWidget):
 
         # 操作按钮
         self.btn_remove = PushButton("移除选中")
+        self.btn_remove.setToolTip("移除选中的PDF文件")
         self.btn_remove.clicked.connect(self.remove_selected)
         layout.addWidget(self.btn_remove)
 
         self.btn_clear = PushButton("清空全部")
+        self.btn_clear.setToolTip("清空所有已加载的PDF文件")
         self.btn_clear.clicked.connect(self.clear_files)
         layout.addWidget(self.btn_clear)
 

@@ -43,7 +43,9 @@ def get_random_color(used_colors: set = None) -> str:
 
 
 class ResizeHandle(QGraphicsEllipseItem):
-    """调整大小的手柄"""
+    """调整大小的手柄
+    Handles rely on PdfCanvas.mousePressEvent for interaction detection — no independent event handlers.
+    """
     def __init__(self, x, y, size, handle_type, parent=None):
         super().__init__(-size/2, -size/2, size, size, parent)
         self.setPos(x, y)
@@ -316,7 +318,7 @@ class PdfCanvas(QGraphicsView):
             color = get_random_color(used_colors)
             pen = QPen(QColor(color), 2, Qt.PenStyle.DashLine)
             self.temp_rect.setPen(pen)
-            self.temp_rect.setData(0, color)  # 存储颜色
+            self.temp_rect.setData(Qt.ItemDataRole.UserRole, color)  # 存储颜色
             self.scene_.addItem(self.temp_rect)
 
         super().mousePressEvent(event)
@@ -467,8 +469,24 @@ class PdfCanvas(QGraphicsView):
         # 右键释放
         if event.button() == Qt.MouseButton.RightButton:
             self.right_dragging = False
-            self.last_mouse_pos = None
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            if self.moving and self.moved_item and self.move_start_rect is not None:
+                new_rect = self.moved_item.rect()
+                if (abs(new_rect.x() - self.move_start_rect.x()) > 2 or
+                    abs(new_rect.y() - self.move_start_rect.y()) > 2):
+                    from app.models.region import Region
+                    old_data = self.regions_data.get(self.moved_item.region_id)
+                    if old_data:
+                        new_region = Region(
+                            id=old_data.id, field_name=old_data.field_name,
+                            x=new_rect.x() / self.img_w, y=new_rect.y() / self.img_h,
+                            w=new_rect.width() / self.img_w, h=new_rect.height() / self.img_h,
+                            field_type=old_data.field_type, ocr_mode=old_data.ocr_mode,
+                            color=old_data.color,
+                        )
+                        self.regions_data[self.moved_item.region_id] = new_region
+                        self.region_updated.emit(self.moved_item.region_id, new_region)
+            self.last_mouse_pos = None
             return
 
         # 左键释放 - 完成框选
@@ -476,7 +494,7 @@ class PdfCanvas(QGraphicsView):
             self.drawing = False
             rect = self.temp_rect.rect()
             if rect.width() > 5 and rect.height() > 5 and self.img_w > 0 and self.img_h > 0:
-                color = self.temp_rect.data(0)  # 获取颜色
+                color = self.temp_rect.data(Qt.ItemDataRole.UserRole)
                 # 钳制坐标到 [0, 1]，避免浮点边界值导致崩溃
                 x = max(0.0, min(1.0, rect.x() / self.img_w))
                 y = max(0.0, min(1.0, rect.y() / self.img_h))

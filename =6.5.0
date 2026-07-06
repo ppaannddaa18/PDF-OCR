@@ -1,0 +1,68 @@
+Collecting PyQt6
+  Using cached pyqt6-6.11.0-cp310-abi3-win_amd64.whl.metadata (2.2 kB)
+Collecting PyQt6-Fluent-Widgets
+  Using cached pyqt6_fluent_widgets-1.11.2-py3-none-any.whl.metadata (5.3 kB)
+Collecting QtAwesome
+  Using cached qtawesome-1.4.2-py3-none-any.whl.metadata (11 kB)
+Collecting PyMuPDF
+  Using cached pymupdf-1.28.0-cp310-abi3-win_amd64.whl.metadata (26 kB)
+Requirement already satisfied: Pillow in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (12.1.0)
+Collecting opencv-python
+  Using cached opencv_python-5.0.0.93-cp37-abi3-win_amd64.whl.metadata (20 kB)
+Requirement already satisfied: numpy in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (2.3.5)
+Requirement already satisfied: pandas in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (3.0.3)
+Requirement already satisfied: openpyxl in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (3.1.5)
+Requirement already satisfied: PyYAML in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (6.0.2)
+Collecting rapidocr-onnxruntime
+  Using cached rapidocr_onnxruntime-1.4.4-py3-none-any.whl.metadata (1.3 kB)
+Collecting pynvml
+  Using cached pynvml-13.0.1-py3-none-any.whl.metadata (5.6 kB)
+Collecting PyQt6-sip<14,>=13.8 (from PyQt6)
+  Using cached pyqt6_sip-13.11.1-cp312-cp312-win_amd64.whl.metadata (516 bytes)
+Collecting PyQt6-Qt6<6.12.0,>=6.11.0 (from PyQt6)
+  Using cached pyqt6_qt6-6.11.1-py3-none-win_amd64.whl.metadata (552 bytes)
+Collecting PyQt6-Frameless-Window>=0.8.0 (from PyQt6-Fluent-Widgets)
+  Using cached pyqt6_frameless_window-0.8.1-py3-none-any.whl.metadata (5.7 kB)
+Collecting darkdetect (from PyQt6-Fluent-Widgets)
+  Using cached darkdetect-0.8.0-py3-none-any.whl.metadata (3.6 kB)
+Collecting qtpy (from QtAwesome)
+  Using cached QtPy-2.4.3-py3-none-any.whl.metadata (12 kB)
+Requirement already satisfied: python-dateutil>=2.8.2 in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from pandas) (2.9.0.post0)
+Requirement already satisfied: tzdata in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from pandas) (2026.2)
+Requirement already satisfied: et-xmlfile in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from openpyxl) (2.0.0)
+Requirement already satisfied: pyclipper>=1.2.0 in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from rapidocr-onnxruntime) (1.4.0)
+Requirement already satisfied: six>=1.15.0 in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from rapidocr-onnxruntime) (1.17.0)
+Requirement already satisfied: Shapely!=2.0.4,>=1.7.1 in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from rapidocr-onnxruntime) (2.1.2)
+Collecting onnxruntime>=1.7.0 (from rapidocr-onnxruntime)
+  Using cached onnxruntime-1.27.0-cp312-cp312-win_amd64.whl.metadata (5.6 kB)
+Requirement already satisfied: tqdm in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from rapidocr-onnxruntime) (4.68.3)
+Collecting nvidia-ml-py>=12.0.0 (from pynvml)
+  Using cached nvidia_ml_py-13.610.43-py3-none-any.whl.metadata (9.7 kB)
+Collecting flatbuffers (from onnxruntime>=1.7.0->rapidocr-onnxruntime)
+  Using cached flatbuffers-25.12.19-py2.py3-none-any.whl.metadata (1.0 kB)
+Requirement already satisfied: packaging in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from onnxruntime>=1.7.0->rapidocr-onnxruntime) (26.2)
+Requirement already satisfied: protobuf>=4.25.8 in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from onnxruntime>=1.7.0->rapidocr-onnxruntime) (6.33.4)
+Collecting pywin32 (from PyQt6-Frameless-Window>=0.8.0->PyQt6-Fluent-Widgets)
+  Using cached pywin32-312-cp312-cp312-win_amd64.whl.metadata (11 kB)
+Requirement already satisfied: colorama in c:\users\panda\onedrive\panda\tools\pdfocr\venv\lib\site-packages (from tqdm->rapidocr-onnxruntime) (0.4.6)
+Using cached pyqt6-6.11.0-cp310-abi3-win_amd64.whl (6.8 MB)
+Using cached pyqt6_fluent_widgets-1.11.2-py3-none-any.whl (1.6 MB)
+Using cached qtawesome-1.4.2-py3-none-any.whl (2.6 MB)
+Using cached pymupdf-1.28.0-cp310-abi3-win_amd64.whl (19.8 MB)
+Using cached opencv_python-5.0.0.93-cp37-abi3-win_amd64.whl (44.0 MB)
+Using cached rapidocr_onnxruntime-1.4.4-py3-none-any.whl (14.9 MB)
+Using cached pynvml-13.0.1-py3-none-any.whl (28 kB)
+Using cached nvidia_ml_py-13.610.43-py3-none-any.whl (53 kB)
+Using cached onnxruntime-1.27.0-cp312-cp312-win_amd64.whl (13.4 MB)
+Using cached pyqt6_frameless_window-0.8.1-py3-none-any.whl (40 kB)
+Using cached pyqt6_qt6-6.11.1-py3-none-win_amd64.whl (78.4 MB)
+Using cached pyqt6_sip-13.11.1-cp312-cp312-win_amd64.whl (53 kB)
+Using cached darkdetect-0.8.0-py3-none-any.whl (9.0 kB)
+Using cached QtPy-2.4.3-py3-none-any.whl (95 kB)
+Using cached flatbuffers-25.12.19-py2.py3-none-any.whl (26 kB)
+Using cached pywin32-312-cp312-cp312-win_amd64.whl (6.9 MB)
+Installing collected packages: PyQt6-Qt6, nvidia-ml-py, flatbuffers, qtpy, pywin32, PyQt6-sip, pynvml, PyMuPDF, opencv-python, onnxruntime, darkdetect, rapidocr-onnxruntime, QtAwesome, PyQt6-Frameless-Window, PyQt6, PyQt6-Fluent-Widgets
+Successfully installed PyMuPDF-1.28.0 PyQt6-6.11.0 PyQt6-Fluent-Widgets-1.11.2 PyQt6-Frameless-Window-0.8.1 PyQt6-Qt6-6.11.1 PyQt6-sip-13.11.1 QtAwesome-1.4.2 darkdetect-0.8.0 flatbuffers-25.12.19 nvidia-ml-py-13.610.43 onnxruntime-1.27.0 opencv-python-5.0.0.93 pynvml-13.0.1 pywin32-312 qtpy-2.4.3 rapidocr-onnxruntime-1.4.4
+
+[notice] A new release of pip is available: 24.2 -> 26.1.2
+[notice] To update, run: python.exe -m pip install --upgrade pip

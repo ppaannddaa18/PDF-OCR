@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QComboBox, QVBoxLayout, QLabel
 )
 from PyQt6.QtCore import Qt, pyqtSignal as Signal
-from PyQt6.QtGui import QColor, QBrush, QIcon
+from PyQt6.QtGui import QColor, QBrush
 from app.models.ocr_result import FileResult
 from pathlib import Path
 import qtawesome as qta
@@ -87,9 +87,9 @@ class ResultTable(QTableWidget):
         # 状态列: 按内容自适应
         header.setSectionResizeMode(total_cols - 2, QHeaderView.ResizeMode.ResizeToContents)
 
-        # 操作列: 固定宽度
-        header.setSectionResizeMode(total_cols - 1, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(total_cols - 1, 70)
+        # 操作列: 交互式宽度
+        header.setSectionResizeMode(total_cols - 1, QHeaderView.ResizeMode.Interactive)
+        self.setColumnWidth(total_cols - 1, 80)
 
     def _populate_row(self, row: int, r: FileResult):
         """填充单行数据"""
@@ -97,6 +97,7 @@ class ResultTable(QTableWidget):
 
         # 源文件名列
         self.setItem(row, 0, QTableWidgetItem(Path(r.source_file).name))
+        self.item(row, 0).setToolTip(r.source_file)
 
         # 字段值列
         for col, fn in enumerate(self._field_names, start=1):

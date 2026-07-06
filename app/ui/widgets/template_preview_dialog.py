@@ -20,7 +20,8 @@ class TemplatePreviewDialog(QDialog):
     def _init_ui(self):
         """初始化UI"""
         self.setWindowTitle("模板预览")
-        self.setFixedSize(450, 350)
+        self.setMinimumSize(450, 350)
+        self.resize(500, 400)
         self.setModal(True)
 
         layout = QVBoxLayout(self)

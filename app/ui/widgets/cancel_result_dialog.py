@@ -168,8 +168,16 @@ class CancelResultDialog(QDialog):
                 "results": [
                     {
                         "source_file": r.source_file if hasattr(r, 'source_file') else r.get('source_file', ''),
-                        "fields": {k: {"text": v.text, "confidence": v.confidence}
-                                   for k, v in r.fields.items()} if hasattr(r, 'fields') else r.get('fields', {})
+                        "fields": {
+                            k: (
+                                {"text": v.text, "confidence": v.confidence}
+                                if hasattr(v, 'text') else
+                                {"text": v.get('text', ''), "confidence": v.get('confidence', 0.0)}
+                                if isinstance(v, dict) else
+                                {"text": str(v), "confidence": 0.0}
+                            )
+                            for k, v in (r.fields.items() if hasattr(r, 'fields') else r.get('fields', {}).items())
+                        } if (hasattr(r, 'fields') or isinstance(r, dict)) else {}
                     }
                     for r in self.results
                 ]

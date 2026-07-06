@@ -132,18 +132,8 @@ class FieldPanel(QWidget):
         self._update_empty_state()
 
     def set_template_name(self, name: str, is_default: bool = False):
-        """设置当前模板名称（供主窗口调用）"""
-        self._current_template_name = name
-        # 模板名称和按钮现在由主窗口管理
+        """设置当前模板名称（供主窗口调用——实际显示由main_window管理）"""
         pass
-
-    def get_template_name(self) -> str:
-        """获取当前模板名称"""
-        return self._current_template_name
-
-    def _on_set_as_default(self):
-        """设为默认模板按钮点击事件"""
-        self.set_as_default_template.emit()
 
     def _update_empty_state(self):
         has_fields = len(self.regions) > 0

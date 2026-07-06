@@ -460,11 +460,8 @@ class MainWindow(FluentWindow):
         template_info_layout.addWidget(self.btn_set_default)
 
         # 分隔线
-        from PyQt6.QtWidgets import QFrame
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background: #e0e0e0;")
-        line.setFixedHeight(1)
+        from qfluentwidgets import HorizontalSeparator
+        line = HorizontalSeparator(self)
         template_info_layout.addWidget(line)
 
         right_layout.addWidget(template_info_widget)
@@ -702,6 +699,7 @@ class MainWindow(FluentWindow):
 
         # 快捷键提示
         shortcut_label = BodyLabel("Ctrl+O 上传 | Ctrl+S 保存模板 | Ctrl+T 试识别 | Ctrl+Enter 批量识别 | Delete 删除字段 | Ctrl+Z 撤销 | Ctrl+Y 重做")
+        shortcut_label.setMaximumWidth(650)
         shortcut_label.setStyleSheet("color: #666; font-size: 11px;")
         layout.addWidget(shortcut_label)
 
@@ -953,16 +951,6 @@ class MainWindow(FluentWindow):
             if item and item.data(Qt.ItemDataRole.UserRole) == region_id:
                 self.field_panel.table.selectRow(row)
                 break
-
-    def on_region_updated(self, region_id: str, region: Region):
-        """区域更新处理（拖拽移动或调整大小后）"""
-        # 更新字段面板中的区域数据
-        if region_id in self.field_panel.regions:
-            old_region = self.field_panel.regions[region_id]
-            self.field_panel.regions[region_id] = region
-            # 更新当前PDF的模板配置
-            self._save_current_pdf_config()
-            self.status_label.setText(f"区域已更新: {region.field_name}")
 
     def _undo(self):
         """撤销操作"""
@@ -1388,7 +1376,7 @@ class MainWindow(FluentWindow):
         self.progress_dialog = QDialog(self)
         self.progress_dialog.setWindowTitle("批量识别进度")
         self.progress_dialog.setFixedSize(400, 180)
-        self.progress_dialog.setModal(True)
+        self.progress_dialog.setModal(False)
 
         layout = QVBoxLayout(self.progress_dialog)
         layout.setSpacing(12)

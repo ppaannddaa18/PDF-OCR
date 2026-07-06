@@ -36,6 +36,7 @@ class LoadingOverlay(QWidget):
                 background-color: rgba(255, 255, 255, 240);
             }
         """)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -213,25 +214,6 @@ class LoadingOverlay(QWidget):
         self._dot_count = (self._dot_count + 1) % 5
         dots = "●" * (self._dot_count + 1) + "○" * (4 - self._dot_count)
         self.dots_label.setText(dots)
-
-    def _translate_error(self, error_msg: str) -> str:
-        """将技术错误转换为用户友好提示 - 保留兼容性"""
-        error_map = {
-            "Model file not found": "未找到OCR模型文件",
-            "model not found": "未找到OCR模型文件",
-            "Out of memory": "内存不足",
-            "memory": "内存不足",
-            "ONNX runtime error": "OCR运行环境异常",
-            "onnx": "OCR运行环境异常",
-            "CUDA": "GPU加速初始化失败",
-            "GPU": "GPU加速初始化失败",
-        }
-
-        for key, friendly in error_map.items():
-            if key.lower() in error_msg.lower():
-                return f"错误原因: {friendly}"
-
-        return f"错误原因: {error_msg}"
 
     def _translate_error_enhanced(self, error_msg: str) -> tuple:
         """

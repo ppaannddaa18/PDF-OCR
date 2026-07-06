@@ -20,6 +20,7 @@ class GpuStatusWidget(QWidget):
         layout.addWidget(self.status_icon)
 
         self.status_label = BodyLabel("引擎未初始化")
+        self.status_label.setMaximumWidth(260)
         layout.addWidget(self.status_label)
 
         # 定时刷新（每5秒更新显存）
