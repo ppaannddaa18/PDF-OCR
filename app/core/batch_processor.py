@@ -74,7 +74,7 @@ class BatchProcessor:
                     regions_by_page[page_num] = []
                 regions_by_page[page_num].append(region)
 
-            use_vl = self.ocr.engine_name == "paddleocr_vl"
+            use_vl = self.ocr.engine_name in ("paddleocr_vl", "paddleocr_vl_cpu")
 
             for page_num, regions in regions_by_page.items():
                 rendered_image = self._get_rendered_page(pdf_path, page_num)
@@ -94,7 +94,7 @@ class BatchProcessor:
                             text=text,
                             confidence=conf,
                             match_level=match_level,
-                            engine="paddleocr_vl",
+                            engine=self.ocr.engine_name,
                         )
                 else:
                     # RapidOCR: 逐区域裁剪识别

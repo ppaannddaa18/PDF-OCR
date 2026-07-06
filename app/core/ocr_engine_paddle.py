@@ -87,13 +87,17 @@ class PaddleOCREngine(OCREngineBase):
             if self._initialized:
                 return
             try:
+                logger.info(f"PaddleOCR-VL 开始创建 pipeline (device={self._device}, precision={self._precision})...")
                 from paddleocr import PaddleOCRVL
+                import paddle
+                paddle.set_device(self._device)
                 self._pipeline = PaddleOCRVL(
                     vl_rec_model_name=self._model_name,
                     device=self._device,
                     precision=self._precision,
                     use_layout_detection=self._use_layout_detection,
                 )
+                logger.info("PaddleOCR-VL pipeline 创建完成")
                 self._initialized = True
                 self._last_used_time = time.monotonic()
 
@@ -102,6 +106,7 @@ class PaddleOCREngine(OCREngineBase):
                     self._warmup()
 
             except Exception as e:
+                logger.error(f"PaddleOCR-VL 初始化失败: {e}")
                 self._init_error = str(e)
 
     def _warmup(self) -> None:
@@ -120,7 +125,7 @@ class PaddleOCREngine(OCREngineBase):
 
     @property
     def engine_name(self) -> str:
-        return "paddleocr_vl"
+        return "paddleocr_vl_cpu" if self._device == "cpu" else "paddleocr_vl"
 
     @property
     def init_error(self) -> str:
@@ -133,15 +138,9 @@ class PaddleOCREngine(OCREngineBase):
                 del self._pipeline
                 self._pipeline = None
                 self._initialized = False
-        # I2: shutdown NVML on unload
-        if self._nvml_initialized:
-            try:
-                import pynvml
-                pynvml.nvmlShutdown()
-            except Exception:
-                pass
-            self._nvml_initialized = False
-            self._nvml_handle = None
+        # NVML 保持初始化，进程退出时自动清理
+        # 注意: 不调用 pynvml.nvmlShutdown()，因为它是进程全局操作，
+        # 会破坏 PaddlePaddle 内部依赖的 NVML 状态，导致 Place(undefined:0) 崩溃
 
     def _ensure_loaded(self) -> None:
         """确保模型已加载（支持空闲后重新加载）"""

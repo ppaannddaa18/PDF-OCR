@@ -86,6 +86,14 @@ class MainWindow(FluentWindow):
         self.setWindowTitle(config["app"]["name"])
         self.resize(*config["app"]["window_size"])
 
+        # PaddlePaddle 设备在首次导入时确定，运行时不可变
+        # 用于判断 GPU/CPU VLM 切换是否需要重启
+        engine_type = config.get("ocr", {}).get("engine", "paddleocr_vl")
+        self._paddle_init_device = "cpu" if engine_type == "paddleocr_vl_cpu" else "gpu"
+        # PaddlePaddle 的 C++ 设备注册表在进程内只初始化一次；pipeline创建再销毁后
+        # 内部Place对象损坏，无法重新加载 → 必须重启。此标志追踪是否发生过卸载。
+        self._paddle_was_unloaded = False
+
         # 确保重型模块已加载
         _ensure_qta()
 
@@ -104,13 +112,24 @@ class MainWindow(FluentWindow):
 
         # 在后台线程中同步初始化（不阻塞UI）
         import threading
+        import logging
+        _logger = logging.getLogger("PDFOCR")
         self._init_gen += 1
         gen = self._init_gen
         ocr = self.ocr_engine  # 捕获引用，防止引擎切换后初始化错误对象
         def _init_ocr():
             if self._init_gen != gen:
+                _logger.info(f"[OCR-Init] gen={gen} stale, skipping (current={self._init_gen})")
                 return  # stale，引擎已被切换
-            ocr.initialize()
+            _logger.info(f"[OCR-Init] gen={gen} 开始初始化 {ocr.engine_name}...")
+            try:
+                ocr.initialize()
+                if ocr.is_ready:
+                    _logger.info(f"[OCR-Init] gen={gen} 初始化成功")
+                else:
+                    _logger.error(f"[OCR-Init] gen={gen} 初始化失败: {ocr.init_error}")
+            except Exception as e:
+                _logger.error(f"[OCR-Init] gen={gen} 初始化异常: {e}", exc_info=True)
             if self._init_gen == gen:
                 self._ready_gen = gen
                 QTimer.singleShot(0, self._on_ocr_ready)
@@ -221,9 +240,13 @@ class MainWindow(FluentWindow):
 
     def _on_ocr_ready(self):
         """OCR引擎初始化完成回调"""
+        import logging
+        _logger = logging.getLogger("PDFOCR")
         # 防止过期回调（引擎已被切换）覆盖当前状态
         if hasattr(self, '_ready_gen') and self._ready_gen != self._init_gen:
+            _logger.info(f"[_on_ocr_ready] stale callback (ready_gen={self._ready_gen}, init_gen={self._init_gen}), skipping")
             return
+        _logger.info(f"[_on_ocr_ready] gen={self._ready_gen} is_ready={self.ocr_engine.is_ready} engine={self.ocr_engine.engine_name}")
         if self.ocr_engine.is_ready:
             # 初始化成功，隐藏遮罩层
             self.loading_overlay.hide_overlay()
@@ -1792,7 +1815,7 @@ class MainWindow(FluentWindow):
         )
 
     def _on_engine_switched(self, index: int):
-        """引擎切换处理（三引擎: GPU / CPU-VLM / CPU-Rapid）"""
+        """引擎切换处理: RapidOCR 热切换, GPU↔CPU_VLM 需重启"""
         engine_names = ["paddleocr_vl", "paddleocr_vl_cpu", "rapidocr"]
         engine_labels = ["PaddleOCR-VL (GPU)", "PaddleOCR-VL (CPU)", "RapidOCR (CPU)"]
         new_engine_type = engine_names[index]
@@ -1811,24 +1834,70 @@ class MainWindow(FluentWindow):
             self.engine_combo.blockSignals(False)
             return
 
-        # 确认提示（CPU VLM 模式特别说明）
-        extra = ""
-        if new_engine_type == "paddleocr_vl_cpu":
-            extra = "\n\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，但0显存占用"
-        from qfluentwidgets import MessageBox
-        msg = MessageBox(
-            "切换OCR引擎",
-            f"切换到 {engine_labels[index]}？{extra}\n\n"
-            "注意：切换引擎后需要重新识别，当前未保存的识别结果将丢失。",
-            self
-        )
-        msg.yesButton.setText("确认切换")
-        msg.cancelButton.setText("取消")
-        if not msg.exec():
+        def _revert_combo():
             self.engine_combo.blockSignals(True)
             self.engine_combo.setCurrentIndex(current_idx)
             self.engine_combo.blockSignals(False)
+
+        # PaddlePaddle 设备在首次导入时确定(gpu/cpu)，运行时不可切换
+        # 目标VL引擎与当前PaddlePaddle初始化设备不一致 → 需要重启
+        # PaddlePaddle 一旦被卸载，内部 Place 对象损坏，无法重新加载 → 必须重启
+        needs_restart = (
+            (new_engine_type == "paddleocr_vl_cpu" and self._paddle_init_device == "gpu") or
+            (new_engine_type == "paddleocr_vl" and self._paddle_init_device == "cpu") or
+            (new_engine_type in ("paddleocr_vl", "paddleocr_vl_cpu") and self._paddle_was_unloaded)
+        )
+        if needs_restart:
+            from qfluentwidgets import MessageBox
+            extra_info = ""
+            if new_engine_type == "paddleocr_vl_cpu":
+                extra_info = "\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，0显存占用"
+            elif new_engine_type == "paddleocr_vl":
+                extra_info = "\nGPU模式: 速度快(~0.6s/页)，需约4-7GB显存"
+
+            # 根据具体原因显示不同说明
+            if self._paddle_was_unloaded and self._paddle_init_device == ("cpu" if new_engine_type == "paddleocr_vl_cpu" else "gpu"):
+                reason = "PaddleOCR-VL 引擎在此会话中已被加载并卸载，PaddlePaddle 内部状态无法恢复，需重启进程。"
+            else:
+                reason = "PaddleOCR-VL 的设备模式(GPU/CPU)只能在启动时确定。"
+
+            msg = MessageBox(
+                "重启切换引擎",
+                f"切换到 {engine_labels[index]} 需要重启程序。"
+                f"{extra_info}\n\n"
+                f"原因: {reason}\n\n"
+                "是否立即重启？",
+                self
+            )
+            msg.yesButton.setText("立即重启")
+            msg.cancelButton.setText("取消")
+            if not msg.exec():
+                _revert_combo()
+                return
+
+            # 保存配置并重启
+            self._restart_with_engine(new_engine_type)
             return
+
+        # ── 以下为热切换路径 (RapidOCR ↔ VL 引擎) ──
+
+        # RapidOCR → VL引擎时确认提示
+        if new_engine_type != "rapidocr":
+            from qfluentwidgets import MessageBox
+            extra = ""
+            if new_engine_type == "paddleocr_vl_cpu":
+                extra = "\n\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，但0显存占用"
+            msg = MessageBox(
+                "切换OCR引擎",
+                f"切换到 {engine_labels[index]}？{extra}\n\n"
+                "注意：切换引擎后需要重新识别，当前未保存的识别结果将丢失。",
+                self
+            )
+            msg.yesButton.setText("确认切换")
+            msg.cancelButton.setText("取消")
+            if not msg.exec():
+                _revert_combo()
+                return
 
         # 更新配置
         self.config["ocr"]["engine"] = new_engine_type
@@ -1838,17 +1907,34 @@ class MainWindow(FluentWindow):
             self.ocr_engine.unload()
         if hasattr(type(self.ocr_engine), 'reset_instance'):
             type(self.ocr_engine).reset_instance()
+        # PaddlePaddle 被卸载后无法在同一进程中重新初始化，标记后如需切回则重启
+        if current_engine in ("paddleocr_vl", "paddleocr_vl_cpu"):
+            self._paddle_was_unloaded = True
         self.ocr_engine = get_ocr_engine(self.config)
+
+        # 立即更新GPU状态组件（避免旧引擎僵尸引用导致一直"加载中"）
+        self.gpu_status.set_engine(self.ocr_engine)
 
         # 异步初始化新引擎（带世代计数器防竞态）
         import threading
+        import logging
+        _logger = logging.getLogger("PDFOCR")
         self._init_gen += 1
         gen = self._init_gen
         ocr = self.ocr_engine
         def _reinit():
             if self._init_gen != gen:
+                _logger.info(f"[OCR-Reinit] gen={gen} stale, skipping (current={self._init_gen})")
                 return  # stale，引擎已被再次切换
-            ocr.initialize()
+            _logger.info(f"[OCR-Reinit] gen={gen} 开始初始化 {ocr.engine_name}...")
+            try:
+                ocr.initialize()
+                if ocr.is_ready:
+                    _logger.info(f"[OCR-Reinit] gen={gen} 初始化成功")
+                else:
+                    _logger.error(f"[OCR-Reinit] gen={gen} 初始化失败: {ocr.init_error}")
+            except Exception as e:
+                _logger.error(f"[OCR-Reinit] gen={gen} 初始化异常: {e}", exc_info=True)
             if self._init_gen == gen:
                 self._ready_gen = gen
                 QTimer.singleShot(0, self._on_ocr_ready)
@@ -1864,12 +1950,35 @@ class MainWindow(FluentWindow):
         self.stat_success.setText("成功: 0")
         self.stat_fail.setText("失败: 0")
 
+        engine_labels_short = ["PaddleOCR-VL (GPU)", "PaddleOCR-VL (CPU)", "RapidOCR (CPU)"]
         InfoBar.success(
             title="引擎已切换",
-            content=f"当前引擎: {'PaddleOCR-VL (GPU)' if index == 0 else 'RapidOCR (CPU)'}",
+            content=f"当前引擎: {engine_labels_short[index]}",
             duration=3000,
             parent=self
         )
+
+    def _restart_with_engine(self, engine_type: str):
+        """写入配置并重启程序切换到指定引擎"""
+        import subprocess
+        import yaml
+        from pathlib import Path
+
+        # 写入 config.yaml
+        config_path = Path(__file__).parent.parent / "config.yaml"
+        self.config["ocr"]["engine"] = engine_type
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False)
+        except Exception as e:
+            import logging
+            logging.getLogger("PDFOCR").error(f"保存配置失败: {e}")
+
+        # 启动新进程并退出当前
+        import sys
+        subprocess.Popen([sys.executable, *sys.argv], close_fds=True)
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
 
     def closeEvent(self, event):
         """窗口关闭时确保 worker 线程安全终止"""

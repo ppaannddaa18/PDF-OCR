@@ -51,7 +51,7 @@ def load_config(path: str = None) -> dict:
 
     # 启动器环境变量覆盖（优先级高于配置文件）
     env_engine = os.environ.get("PDFOCR_ENGINE", "")
-    if env_engine in ("paddleocr_vl", "rapidocr"):
+    if env_engine in ("paddleocr_vl", "paddleocr_vl_cpu", "rapidocr"):
         config.setdefault("ocr", {})["engine"] = env_engine
 
     return config
@@ -91,7 +91,7 @@ def get_default_config() -> dict:
             "max_preview_size": 2000,
         },
         "ocr": {
-            "engine": "paddleocr_vl",       # "paddleocr_vl" | "rapidocr"
+            "engine": "paddleocr_vl",       # "paddleocr_vl" | "paddleocr_vl_cpu" | "rapidocr"
             "lang": "ch",
             "use_gpu": True,
             "use_angle_cls": True,

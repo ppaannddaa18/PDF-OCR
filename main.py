@@ -37,13 +37,20 @@ def main():
     from qfluentwidgets import setThemeColor
     from app.utils.logger import setup_logger
     from app.utils.config_loader import load_config
-    from app.ui.main_window import MainWindow
 
     # 异步初始化日志（不阻塞启动）
     setup_logger()
 
     # 加载配置（自动查找，支持PyInstaller打包）
     config = load_config()
+
+    # CPU VLM模式: 必须在导入paddle之前设置，否则PaddlePaddle内部Place(undefined:0)崩溃
+    engine_type = config.get("ocr", {}).get("engine", "rapidocr")
+    if engine_type == "paddleocr_vl_cpu":
+        import os
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+    from app.ui.main_window import MainWindow
 
     # 设置 Fluent 主题强调色
     setThemeColor('#4a90d9')

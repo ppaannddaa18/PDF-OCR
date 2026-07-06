@@ -45,10 +45,18 @@ class GpuStatusWidget(QWidget):
 
         if not self._engine.is_ready:
             self.status_icon.setStyleSheet("font-size: 10px; color: #d83b01;")
-            self.status_label.setText("引擎加载中...")
+            # 显示具体引擎名，避免用户误以为卡死
+            name_map = {
+                "paddleocr_vl": "PaddleOCR-VL (GPU)",
+                "paddleocr_vl_cpu": "PaddleOCR-VL (CPU)",
+                "rapidocr": "RapidOCR",
+            }
+            engine_label = name_map.get(self._engine.engine_name, "引擎")
+            self.status_label.setText(f"{engine_label} 加载中...")
             return
 
-        if self._engine.engine_name == "paddleocr_vl":
+        engine_name = self._engine.engine_name
+        if engine_name == "paddleocr_vl":
             try:
                 used, total = self._engine.get_vram_usage()
                 if used > 0:
@@ -65,8 +73,11 @@ class GpuStatusWidget(QWidget):
             # Wire up idle unload check (called directly, _check_idle_unload acquires lock internally)
             if hasattr(self._engine, '_check_idle_unload'):
                 self._engine._check_idle_unload()
+        elif engine_name == "paddleocr_vl_cpu":
+            self.status_icon.setStyleSheet("font-size: 10px; color: #107c10;")
+            self.status_label.setText("CPU: PaddleOCR-VL (就绪)")
         else:
-            self.status_icon.setStyleSheet("font-size: 10px; color: #666;")
+            self.status_icon.setStyleSheet("font-size: 10px; color: #107c10;")
             self.status_label.setText("CPU: RapidOCR (就绪)")
 
     def cleanup(self):
