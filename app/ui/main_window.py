@@ -1813,6 +1813,7 @@ class MainWindow(FluentWindow):
         extra = ""
         if new_engine_type == "paddleocr_vl_cpu":
             extra = "\n\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，但0显存占用"
+        from qfluentwidgets import MessageBox
         msg = MessageBox(
             "切换OCR引擎",
             f"切换到 {engine_labels[index]}？{extra}\n\n"
