@@ -94,6 +94,13 @@ class MainWindow(FluentWindow):
         # 内部Place对象损坏，无法重新加载 → 必须重启。此标志追踪是否发生过卸载。
         self._paddle_was_unloaded = False
 
+        # 双模式状态
+        self._current_mode = "auto" if self._config.get("ocr", {}).get("engine") in ("paddleocr_vl", "paddleocr_vl_cpu") else "manual"
+        # 中面板（版面可视化）— VLM模式下显示
+        self._layout_view = None  # QGraphicsView，延迟创建
+        # 右面板 StackedWidget — 根据模式切换子面板
+        self._result_stack = None  # QStackedWidget
+
         # 确保重型模块已加载
         _ensure_qta()
 
@@ -153,6 +160,8 @@ class MainWindow(FluentWindow):
 
         # 图像预处理
         self._current_preprocessor = None
+        self._current_page_image = None  # 当前显示的PIL Image
+        self._current_page_result = None  # VLM解析结果（PageResult）
         self._pdf_preprocessors = LRUCache(max_size=20)  # pdf_path -> ImagePreprocessor，使用LRU缓存
 
         # 历史记录管理器
@@ -179,6 +188,9 @@ class MainWindow(FluentWindow):
 
         # 检查是否有待恢复的任务
         QTimer.singleShot(500, self._check_pending_task)
+
+        # 初始模式同步（引擎切换触发 UI 模式调整）
+        QTimer.singleShot(100, lambda: self._switch_ui_mode(self._current_mode))
 
     def _setup_shortcuts(self):
         """设置快捷键"""
@@ -746,20 +758,26 @@ class MainWindow(FluentWindow):
         toolbar_layout.addSpacing(4)
 
         # 试识别按钮
-        btn_try = TransparentPushButton("试识别", self)
-        btn_try.setIcon(_icon('fa5s.search'))
-        btn_try.setMinimumWidth(85)
-        btn_try.setToolTip("试识别当前文件 (Ctrl+T)")
-        btn_try.clicked.connect(self.on_try_ocr)
-        toolbar_layout.addWidget(btn_try)
+        self._btn_try = TransparentPushButton("试识别", self)
+        self._btn_try.setIcon(_icon('fa5s.search'))
+        self._btn_try.setMinimumWidth(85)
+        self._btn_try.setToolTip("试识别当前文件 (Ctrl+T)")
+        self._btn_try.clicked.connect(self.on_try_ocr)
+        toolbar_layout.addWidget(self._btn_try)
 
         # 批量识别按钮
-        btn_batch = TransparentPushButton("批量识别", self)
-        btn_batch.setIcon(_icon('fa5s.play', color='#107c10'))
-        btn_batch.setMinimumWidth(95)
-        btn_batch.setToolTip("批量识别所有文件 (Ctrl+Enter)")
-        btn_batch.clicked.connect(self.on_batch_run)
-        toolbar_layout.addWidget(btn_batch)
+        self._btn_batch = TransparentPushButton("批量识别", self)
+        self._btn_batch.setIcon(_icon('fa5s.play', color='#107c10'))
+        self._btn_batch.setMinimumWidth(95)
+        self._btn_batch.setToolTip("批量识别所有文件 (Ctrl+Enter)")
+        self._btn_batch.clicked.connect(self.on_batch_run)
+        toolbar_layout.addWidget(self._btn_batch)
+
+        # 解析按钮 — 仅VLM模式显示
+        self._btn_parse = PushButton("解析")
+        self._btn_parse.clicked.connect(self._on_parse_current_page)
+        self._btn_parse.hide()  # 默认隐藏，VLM模式显示
+        toolbar_layout.addWidget(self._btn_parse)
 
         toolbar_layout.addSpacing(8)
 
@@ -1183,6 +1201,7 @@ class MainWindow(FluentWindow):
             })
 
         self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+        self._current_page_image = self._current_preprocessor.get_current_image()
         self.preprocess_toolbar.setEnabled(True)
 
         # 加载该PDF的字段配置（默认或特殊配置）
@@ -1219,6 +1238,7 @@ class MainWindow(FluentWindow):
             params = self.preprocess_toolbar.get_params()
             self._current_preprocessor.set_params(params)
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+            self._current_page_image = self._current_preprocessor.get_current_image()
 
     def _on_preprocess_apply_to_all(self):
         """将当前预处理应用到所有文件"""
@@ -1244,18 +1264,21 @@ class MainWindow(FluentWindow):
         if self._current_preprocessor:
             self._current_preprocessor.reset()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+            self._current_page_image = self._current_preprocessor.get_current_image()
 
     def _on_preprocess_auto_contrast(self):
         """[修复] 应用自动对比度"""
         if self._current_preprocessor:
             self._current_preprocessor.auto_contrast()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+            self._current_page_image = self._current_preprocessor.get_current_image()
 
     def _on_preprocess_sharpen(self):
         """[修复] 应用锐化"""
         if self._current_preprocessor:
             self._current_preprocessor.sharpen()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
+            self._current_page_image = self._current_preprocessor.get_current_image()
 
     def on_try_ocr(self):
         # 检查OCR引擎是否已初始化且 BatchProcessor 已创建
@@ -1958,6 +1981,12 @@ class MainWindow(FluentWindow):
             parent=self
         )
 
+        # 判断新模式并切换UI
+        new_mode = "auto" if new_engine_type in ("paddleocr_vl", "paddleocr_vl_cpu") else "manual"
+        if new_mode != self._current_mode:
+            self._current_mode = new_mode
+            self._switch_ui_mode(new_mode)
+
     def _restart_with_engine(self, engine_type: str):
         """写入配置并重启程序切换到指定引擎"""
         import subprocess
@@ -1979,6 +2008,131 @@ class MainWindow(FluentWindow):
         subprocess.Popen([sys.executable, *sys.argv], close_fds=True)
         from PyQt6.QtWidgets import QApplication
         QApplication.quit()
+
+    def _switch_ui_mode(self, mode: str):
+        """切换 UI 模式：auto(VLM) ↔ manual(RapidOCR)"""
+        if mode == "auto":
+            # 隐藏手动框选工具栏
+            if hasattr(self, '_field_panel') and self._field_panel:
+                self._field_panel.hide()
+            # 显示版面可视化面板（Task 9 实现）
+            if self._layout_view is not None:
+                self._layout_view.show()
+            # 禁用 PDF canvas 的框选功能（Task 11 实现 set_drawing_enabled）
+            if hasattr(self, '_pdf_canvas') and self._pdf_canvas:
+                if hasattr(self._pdf_canvas, 'set_drawing_enabled'):
+                    self._pdf_canvas.set_drawing_enabled(False)
+            # 工具栏切换：隐藏手动OCR按钮，显示解析按钮
+            if hasattr(self, '_btn_try'):
+                self._btn_try.hide()
+            if hasattr(self, '_btn_batch'):
+                self._btn_batch.hide()
+            if hasattr(self, '_btn_parse'):
+                self._btn_parse.show()
+        else:
+            # 显示手动框选工具栏
+            if hasattr(self, '_field_panel') and self._field_panel:
+                self._field_panel.show()
+            # 隐藏版面可视化
+            if self._layout_view is not None:
+                self._layout_view.hide()
+            # 启用框选
+            if hasattr(self, '_pdf_canvas') and self._pdf_canvas:
+                if hasattr(self._pdf_canvas, 'set_drawing_enabled'):
+                    self._pdf_canvas.set_drawing_enabled(True)
+            # 工具栏切换：显示手动OCR按钮，隐藏解析按钮
+            if hasattr(self, '_btn_try'):
+                self._btn_try.show()
+            if hasattr(self, '_btn_batch'):
+                self._btn_batch.show()
+            if hasattr(self, '_btn_parse'):
+                self._btn_parse.hide()
+
+    def _on_parse_current_page(self):
+        """点击'解析'按钮 — 触发当前页VLM解析"""
+        engine = self.ocr_engine
+        if not hasattr(engine, 'recognize_page_auto'):
+            InfoBar.error(
+                title="错误",
+                content="当前引擎不支持自动解析",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self
+            )
+            return
+
+        # 获取当前页图片
+        if self._current_page_image is None:
+            InfoBar.warning(
+                title="提示",
+                content="请先加载PDF文件",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+            return
+
+        self._btn_parse.setEnabled(False)
+        self._btn_parse.setText("解析中...")
+        self.status_label.setText("正在解析当前页面...")
+
+        # 在工作线程中执行（避免阻塞UI）
+        import threading
+
+        def _do_parse():
+            try:
+                result = engine.recognize_page_auto(self._current_page_image)
+                self._current_page_result = result
+
+                def _on_done():
+                    self._on_page_parsed(result)
+                QTimer.singleShot(0, _on_done)
+            except Exception as e:
+                def _on_error():
+                    InfoBar.error(
+                        title="解析失败",
+                        content=str(e),
+                        orient=Qt.Orientation.Horizontal,
+                        isClosable=True,
+                        position=InfoBarPosition.TOP,
+                        duration=5000,
+                        parent=self
+                    )
+                    self.status_label.setText("解析失败")
+                QTimer.singleShot(0, _on_error)
+            finally:
+                def _on_finish():
+                    self._btn_parse.setEnabled(True)
+                    self._btn_parse.setText("解析")
+                QTimer.singleShot(0, _on_finish)
+
+        threading.Thread(target=_do_parse, daemon=True, name="ParsePage").start()
+
+    def _on_page_parsed(self, result):
+        """解析完成回调"""
+        # 更新版面可视化（Task 9 实现 layout_view.update_blocks）
+        if self._layout_view is not None:
+            if hasattr(self._layout_view, 'update_blocks'):
+                self._layout_view.update_blocks(result.blocks)
+
+        # 更新结果面板（Task 10 实现详细内容）
+        self.status_label.setText(
+            f"解析完成 — 识别 {len(result.blocks)} 个元素, "
+            f"耗时 {result.inference_time_ms:.0f}ms"
+        )
+        InfoBar.success(
+            title="解析完成",
+            content=f"识别 {len(result.blocks)} 个元素, 耗时 {result.inference_time_ms:.0f}ms",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.BOTTOM_RIGHT,
+            duration=3000,
+            parent=self
+        )
 
     def closeEvent(self, event):
         """窗口关闭时确保 worker 线程安全终止"""
