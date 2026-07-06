@@ -31,7 +31,7 @@ def preprocess_for_ocr(image: Image.Image, mode: str = "general") -> Image.Image
     if min(image.size) < 100:
         # 使用BILINEAR或BICUBIC替代LANCZOS
         image = image.resize(
-            (image.size[0] * 3, image.size[1] * 3),
+            _get_resize_target_size(image.size),
             Image.Resampling.BILINEAR
         )
 

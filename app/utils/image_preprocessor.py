@@ -203,7 +203,7 @@ class ImagePreprocessor:
             'contrast': self.contrast,
             'crop_box': self.crop_box,
             'threshold': self.threshold,
-            'auto_contrast': self.auto_contrast_applied,
+            'auto_contrast_applied': self.auto_contrast_applied,
             'sharpen': self.sharpen_applied,
         }
 

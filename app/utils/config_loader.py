@@ -64,7 +64,8 @@ def get_default_config() -> dict:
             "window_size": [1600, 1000]
         },
         "pdf": {
-            "render_dpi": 200
+            "render_dpi": 200,
+            "max_preview_size": 2000,
         },
         "ocr": {
             "engine": "paddleocr_vl",       # "paddleocr_vl" | "rapidocr"

@@ -49,11 +49,12 @@ def main():
     setThemeColor('#4a90d9')
 
     # 阶段4：创建主窗口
-    window = MainWindow(config)
-
-    # 关闭启动画面
-    if splash:
-        splash.close()
+    try:
+        window = MainWindow(config)
+    finally:
+        # 确保启动画面关闭
+        if splash:
+            splash.close()
 
     window.show()
     sys.exit(app.exec())

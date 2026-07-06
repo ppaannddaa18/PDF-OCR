@@ -26,5 +26,7 @@ class Template:
     @classmethod
     def from_dict(cls, data: dict) -> "Template":
         data = data.copy()
-        data["regions"] = [Region.from_dict(r) for r in data.get("regions", [])]
+        if not isinstance(data.get("regions"), list):
+            data["regions"] = []
+        data["regions"] = [Region.from_dict(r) for r in data["regions"]]
         return cls(**data)

@@ -377,22 +377,3 @@ class FieldPanel(QWidget):
         # 隐藏详情区域
         self.detail_widget.setVisible(False)
 
-    def _refresh_preview_results(self):
-        """根据存储的_preview_results刷新表格显示"""
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item is None:
-                continue
-            rid = item.data(Qt.ItemDataRole.UserRole)
-            if rid in self._preview_results:
-                fr = self._preview_results[rid]
-                result_item = QTableWidgetItem(fr.text)
-                # 设置 Tooltip 显示完整内容和置信度
-                tooltip = f"内容: {fr.text}\n置信度: {fr.confidence:.2%}"
-                if fr.confidence < 0.7:
-                    result_item.setBackground(QColor("#FFE5E5"))
-                    tooltip += "\n(置信度较低，建议核对)"
-                    result_item.setToolTip(tooltip)
-                else:
-                    result_item.setToolTip(tooltip)
-                self.table.setItem(row, 2, result_item)

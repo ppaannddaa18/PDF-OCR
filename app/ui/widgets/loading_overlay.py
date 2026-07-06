@@ -26,6 +26,7 @@ class LoadingOverlay(QWidget):
         self._animation_timer.timeout.connect(self._update_animation)
         self._dot_count = 0
         self._current_error_key = None  # 当前错误类型关键字
+        self._download_url = None
 
     def _init_ui(self):
         """初始化UI"""

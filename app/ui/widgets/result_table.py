@@ -156,7 +156,14 @@ class ResultTable(QTableWidget):
             return
 
         if field_name not in self._field_names:
-            # 新字段，需要刷新整个表格
+            # 新字段，先更新数据再刷新整个表格
+            result = self._results[row]
+            from app.models.ocr_result import FieldResult
+            result.fields[field_name] = FieldResult(
+                field_name=field_name,
+                text=value,
+                confidence=confidence,
+            )
             self._refresh_table()
             return
 
