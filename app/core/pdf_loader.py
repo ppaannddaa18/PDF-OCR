@@ -98,7 +98,7 @@ class PdfLoader:
     def shutdown(self):
         """关闭所有资源（应用退出时调用）"""
         self.clear_cache()
-        self._async_executor.shutdown(wait=True, timeout=10)
+        self._async_executor.shutdown(wait=True)
 
     def clear_cache(self):
         """清空所有缓存的文档（跳过仍在使用的文档）"""
