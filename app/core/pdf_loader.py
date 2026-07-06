@@ -30,6 +30,8 @@ class PdfLoader:
         self._max_cached = max_cached_docs
         self._doc_cache: OrderedDict = OrderedDict()  # path -> (doc, last_access_time, estimated_size)
         self._lock = threading.RLock()
+        self._doc_locks = {}  # path -> threading.Lock, 保护单个文档的并发访问
+        self._doc_locks_lock = threading.Lock()  # 保护 _doc_locks 字典
         self._total_cache_size = 0  # 估算的缓存总大小（MB）
 
     def _estimate_doc_size(self, doc: fitz.Document) -> float:
@@ -80,6 +82,7 @@ class PdfLoader:
                 except Exception:
                     pass
                 self._total_cache_size -= size
+        self._cleanup_doc_lock(pdf_path)
 
     def clear_cache(self):
         """清空所有缓存的文档"""
@@ -92,6 +95,18 @@ class PdfLoader:
             self._doc_cache.clear()
             self._total_cache_size = 0
 
+    def _get_doc_lock(self, pdf_path: str) -> threading.Lock:
+        """获取文档级别的锁，保护单个 fitz.Document 的并发访问"""
+        with self._doc_locks_lock:
+            if pdf_path not in self._doc_locks:
+                self._doc_locks[pdf_path] = threading.Lock()
+            return self._doc_locks[pdf_path]
+
+    def _cleanup_doc_lock(self, pdf_path: str):
+        """清理已关闭文档的锁"""
+        with self._doc_locks_lock:
+            self._doc_locks.pop(pdf_path, None)
+
     def render_page(self, pdf_path: str, page_num: int = 0) -> Image.Image:
         """
         渲染指定页为 PIL Image
@@ -99,12 +114,14 @@ class PdfLoader:
         注意：此方法包含同步I/O，建议在后台线程调用
         """
         doc = self._get_document(pdf_path)
-        page = doc[page_num]
-        mat = fitz.Matrix(self.dpi / 72, self.dpi / 72)
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        # 使用零拷贝方式创建图像，避免PNG中间格式
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples_mv)
-        return img
+        doc_lock = self._get_doc_lock(pdf_path)
+        with doc_lock:
+            page = doc[page_num]
+            mat = fitz.Matrix(self.dpi / 72, self.dpi / 72)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            # 使用零拷贝方式创建图像，避免PNG中间格式
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples_mv)
+            return img
 
     def render_page_async(
         self,
@@ -135,9 +152,11 @@ class PdfLoader:
     def get_page_size(self, pdf_path: str, page_num: int = 0) -> Tuple[float, float]:
         """返回 PDF 页面原始尺寸 (width_pt, height_pt)"""
         doc = self._get_document(pdf_path)
-        page = doc[page_num]
-        rect = page.rect
-        return rect.width, rect.height
+        doc_lock = self._get_doc_lock(pdf_path)
+        with doc_lock:
+            page = doc[page_num]
+            rect = page.rect
+            return rect.width, rect.height
 
     def crop_region(
         self,

@@ -160,14 +160,15 @@ class PaddleOCREngine(OCREngineBase):
         """
         self._ensure_loaded()
 
-        # 预处理：为每个region计算像素坐标bbox
+        # 为每个region计算像素坐标（不修改原region对象，避免多线程竞态）
         W, H = image.size
+        pixel_bboxes = {}
         for region in regions:
             left = max(0, int(region.x * W))
             top = max(0, int(region.y * H))
             right = min(W, int((region.x + region.w) * W))
             bottom = min(H, int((region.y + region.h) * H))
-            region._pixel_bbox = [left, top, right, bottom]
+            pixel_bboxes[region.id] = [left, top, right, bottom]
 
         try:
             with self._pipeline_lock:
@@ -189,8 +190,8 @@ class PaddleOCREngine(OCREngineBase):
         elements = self._extract_elements(output)
         markdown_text = self._extract_markdown(output)
 
-        # 三级匹配
-        match_results = self._matcher.match(elements, regions, markdown_text)
+        # 三级匹配（传入像素坐标字典，避免修改共享region对象）
+        match_results = self._matcher.match(elements, regions, markdown_text, pixel_bboxes)
 
         # 转换为统一格式
         results = {}

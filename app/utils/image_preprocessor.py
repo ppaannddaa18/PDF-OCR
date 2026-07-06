@@ -142,35 +142,22 @@ class ImagePreprocessor:
         return self._current_image
 
     def _apply_transforms(self):
-        """应用所有变换（内部方法）"""
-        # 如果有自动对比度标记，直接应用
-        if self.auto_contrast_applied:
-            img = ImageOps.autocontrast(self._original_image)
-            if self.rotation != 0:
-                img = img.rotate(-self.rotation, expand=True, fillcolor=(255, 255, 255))
-            if self.threshold is not None:
-                gray = img.convert('L')
-                img = gray.point(
-                    lambda x: 0 if x < self.threshold else 255, '1'
-                ).convert('RGB')
-            if self.sharpen_applied:
-                img = img.filter(ImageFilter.SHARPEN)
-            self._current_image = img
-            return
-
-        # 标准处理流程
-        # 性能优化：仅在需要时复制原图
+        """应用所有变换（内部方法）—— 统一变换管线"""
         img = self._original_image.copy()
 
-        # 1. 先裁剪（在旋转前裁剪，基于原图坐标）
+        # 1. 自动对比度
+        if self.auto_contrast_applied:
+            img = ImageOps.autocontrast(img)
+
+        # 2. 裁剪（在旋转前裁剪，基于原图坐标）
         if self.crop_box:
             img = img.crop(self.crop_box)
 
-        # 2. 旋转
+        # 3. 旋转
         if self.rotation != 0:
             img = img.rotate(-self.rotation, expand=True, fillcolor=(255, 255, 255))
 
-        # 3. 亮度和对比度
+        # 4. 亮度和对比度
         if self.brightness != 1.0:
             enhancer = ImageEnhance.Brightness(img)
             img = enhancer.enhance(self.brightness)
@@ -179,12 +166,12 @@ class ImagePreprocessor:
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(self.contrast)
 
-        # 4. 二值化
+        # 5. 二值化
         if self.threshold is not None:
             gray = img.convert('L')
             img = gray.point(lambda x: 0 if x < self.threshold else 255, '1').convert('RGB')
 
-        # 5. 锐化
+        # 6. 锐化
         if self.sharpen_applied:
             img = img.filter(ImageFilter.SHARPEN)
 

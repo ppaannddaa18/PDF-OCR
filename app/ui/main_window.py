@@ -854,9 +854,10 @@ class MainWindow(FluentWindow):
             self.pdf_canvas.regions_data[r.id] = r
 
         def remove_region(rid):
-            self.field_panel._delete(rid)
+            # 先从画布数据删除（否则 _on_region_deleted 信号会创建重复命令）
             if rid in self.pdf_canvas.regions_data:
                 del self.pdf_canvas.regions_data[rid]
+            self.field_panel._delete(rid)
 
         ui = _get_ui_components()
         command = ui.AddRegionCommand(region, add_region, remove_region)

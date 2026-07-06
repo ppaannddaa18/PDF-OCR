@@ -77,6 +77,11 @@ class SelectableRectItem(QGraphicsRectItem):
 
     def _create_handles(self):
         """创建调整手柄"""
+        # 清除旧手柄防止泄漏
+        for h in self.handles:
+            if h.scene():
+                h.scene().removeItem(h)
+        self.handles.clear()
         rect = self.rect()
         # 四个角
         self.handles.append(ResizeHandle(rect.left(), rect.top(), HANDLE_SIZE, 'tl', self))

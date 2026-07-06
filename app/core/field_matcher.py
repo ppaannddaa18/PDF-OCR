@@ -22,7 +22,7 @@ class FieldMatcher:
         self.neighbor_radius = vl_cfg.get("match_neighbor_radius", 50)
 
     def match(self, elements: List[dict], regions: List[Any],
-              markdown_text: str = "") -> Dict[str, MatchResult]:
+              markdown_text: str = "", pixel_bboxes: Dict[str, List[float]] = None) -> Dict[str, MatchResult]:
         """
         主匹配方法。
 
@@ -30,16 +30,19 @@ class FieldMatcher:
             elements: PaddleOCR-VL返回的elements列表
             regions: 用户定义的Region列表
             markdown_text: 整页markdown文本（用于Level 3兜底）
+            pixel_bboxes: {region.id: [x1,y1,x2,y2]} 像素坐标字典（不修改region对象）
 
         Returns:
             {region.id: MatchResult(text, confidence, level, element)}
         """
         results: Dict[str, MatchResult] = {}
         remaining = list(elements)  # 可消耗的element池
+        bboxes = pixel_bboxes or {}
 
         for region in regions:
+            region_bbox = bboxes.get(region.id)
             # Level 1: IoU匹配
-            best = self._iou_match(region, remaining)
+            best = self._iou_match(region, remaining, region_bbox)
             if best is not None:
                 remaining.remove(best)
                 results[region.id] = MatchResult(
@@ -51,7 +54,7 @@ class FieldMatcher:
                 continue
 
             # Level 2: 就近搜索
-            best = self._neighbor_match(region, remaining)
+            best = self._neighbor_match(region, remaining, region_bbox)
             if best is not None:
                 remaining.remove(best)
                 text, consumed = self._merge_adjacent(best, remaining)
@@ -100,17 +103,17 @@ class FieldMatcher:
 
         return inter / union if union > 0 else 0.0
 
-    def _iou_match(self, region, elements: List[dict]) -> Optional[dict]:
+    def _iou_match(self, region, elements: List[dict], region_bbox: List[float]) -> Optional[dict]:
         """Level 1: 找到与region IoU最高的element"""
-        # region的归一化坐标需要转换为像素坐标（由调用者在传入elements前处理好）
-        # 这里region bbox和element bbox应该已经在同一坐标系（像素）
+        if region_bbox is None:
+            return None
         best_iou = 0.0
         best_elem = None
         for elem in elements:
             elem_bbox = elem.get("bbox")
             if not elem_bbox or len(elem_bbox) != 4:
                 continue
-            iou = self._calculate_iou(region._pixel_bbox, elem_bbox)
+            iou = self._calculate_iou(region_bbox, elem_bbox)
             if iou > best_iou:
                 best_iou = iou
                 best_elem = elem
@@ -118,11 +121,11 @@ class FieldMatcher:
             return best_elem
         return None
 
-    def _neighbor_match(self, region, elements: List[dict]) -> Optional[dict]:
+    def _neighbor_match(self, region, elements: List[dict], region_bbox: List[float]) -> Optional[dict]:
         """Level 2: 在region周围搜索最近的element"""
-        if not elements:
+        if not elements or region_bbox is None:
             return None
-        rx1, ry1, rx2, ry2 = region._pixel_bbox
+        rx1, ry1, rx2, ry2 = region_bbox
         rcx, rcy = (rx1 + rx2) / 2, (ry1 + ry2) / 2
 
         best_dist = float('inf')
