@@ -10,6 +10,9 @@ import threading
 import time
 from app.core.ocr_engine_base import OCREngineBase
 from app.core.field_matcher import FieldMatcher
+from app.core.layout_extractor import extract_blocks, extract_markdown, extract_raw_json
+from app.core.table_extractor import extract_tables
+from app.models.page_result import PageResult, Block
 
 logger = logging.getLogger("PDFOCR")
 
@@ -157,6 +160,64 @@ class PaddleOCREngine(OCREngineBase):
         results = self.recognize_page(image, [_DummyRegion(image.width, image.height, mode)])
         result = results.get("__single__", ("", 0.0, 0, None))
         return result[0], result[1]
+
+    def recognize_page_auto(self, image: Image.Image) -> PageResult:
+        """
+        整页自动解析 — PaddleOCR-VL模式专用。
+        利用pipeline的版面检测+VLM识别，返回结构化PageResult。
+        """
+        t0 = time.monotonic()
+        W, H = image.size
+
+        # VRAM守卫
+        max_px = self._calc_max_pixels(image.size)
+        free_vram = self._get_free_vram_gb()
+        if free_vram < self._min_free_vram_gb:
+            logger.warning(f"VRAM不足 ({free_vram:.2f}GB < {self._min_free_vram_gb}GB)，跳过推理")
+            return PageResult(blocks=[], markdown="", image_size=(W, H))
+
+        try:
+            with self._pipeline_lock:
+                self._ensure_loaded()
+                if self._pipeline is None:
+                    raise RuntimeError("Pipeline was unloaded after initialization")
+                arr = np.array(image) if isinstance(image, Image.Image) else image
+                outputs = list(self._pipeline.predict(
+                    arr,
+                    temperature=0,
+                    max_pixels=max_px,
+                ))
+                self._last_used_time = time.monotonic()
+            # 推理后释放缓存
+            try:
+                import paddle
+                paddle.device.cuda.empty_cache()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"PaddleOCR-VL推理失败: {e}")
+            return PageResult(blocks=[], markdown="", image_size=(W, H))
+
+        if not outputs:
+            return PageResult(blocks=[], markdown="", image_size=(W, H))
+
+        output = outputs[0] if isinstance(outputs, list) else outputs
+
+        # 提取
+        blocks = extract_blocks(output)
+        md = extract_markdown(output)
+        raw = extract_raw_json(output)
+        tables = extract_tables(md)
+
+        elapsed = (time.monotonic() - t0) * 1000
+        return PageResult(
+            blocks=blocks,
+            markdown=md,
+            tables=tables,
+            raw_json=raw,
+            image_size=(W, H),
+            inference_time_ms=elapsed,
+        )
 
     def recognize_page(
         self, image: Image.Image, regions: List[Any], page_dpi: float = 200
