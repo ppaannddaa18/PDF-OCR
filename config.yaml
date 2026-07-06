@@ -18,7 +18,8 @@ ocr:
     vl_rec_model_name: PaddleOCR-VL-1.6-0.9B
     device: gpu:0
     precision: fp16
-    warmup_on_startup: true
+    use_layout_detection: false
+    warmup_on_startup: false
     idle_unload_seconds: 300
     page_dpi: 200
     high_quality_dpi: 300

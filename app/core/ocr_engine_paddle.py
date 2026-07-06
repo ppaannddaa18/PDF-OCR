@@ -67,6 +67,7 @@ class PaddleOCREngine(OCREngineBase):
             self._model_name = vl_cfg.get("vl_rec_model_name", "PaddleOCR-VL-1.6-0.9B")
             self._device = vl_cfg.get("device", "gpu:0")
             self._precision = vl_cfg.get("precision", "fp16")
+            self._use_layout_detection = vl_cfg.get("use_layout_detection", False)
             self._warmup_on_startup = vl_cfg.get("warmup_on_startup", True)
             self._idle_unload_seconds = vl_cfg.get("idle_unload_seconds", 300)
             self._page_dpi = vl_cfg.get("page_dpi", 200)
@@ -89,7 +90,7 @@ class PaddleOCREngine(OCREngineBase):
                     vl_rec_model_name=self._model_name,
                     device=self._device,
                     precision=self._precision,
-                    use_layout_detection=True,
+                    use_layout_detection=self._use_layout_detection,
                 )
                 self._initialized = True
                 self._last_used_time = time.monotonic()
