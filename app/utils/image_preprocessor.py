@@ -204,7 +204,7 @@ class ImagePreprocessor:
             'crop_box': self.crop_box,
             'threshold': self.threshold,
             'auto_contrast_applied': self.auto_contrast_applied,
-            'sharpen': self.sharpen_applied,
+            'sharpen_applied': self.sharpen_applied,
         }
 
     def set_params(self, params: dict) -> Image.Image:
@@ -214,7 +214,7 @@ class ImagePreprocessor:
         self.contrast = params.get('contrast', 1.0)
         self.crop_box = params.get('crop_box', None)
         self.threshold = params.get('threshold', None)
-        self.auto_contrast_applied = params.get('auto_contrast', False)
-        self.sharpen_applied = params.get('sharpen', False)
+        self.auto_contrast_applied = params.get('auto_contrast_applied', False)
+        self.sharpen_applied = params.get('sharpen_applied', False)
         self._dirty = True
         return self._ensure_current_image()
