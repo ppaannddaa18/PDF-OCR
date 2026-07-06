@@ -3,6 +3,7 @@
 """
 import json
 import os
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -66,16 +67,19 @@ class HistoryManager:
         self._flush_to_disk()
 
     def _flush_to_disk(self):
-        """将缓存写入磁盘"""
+        """将缓存写入磁盘（原子写入）"""
         if not self._dirty or self._cached_history is None:
             return
         try:
             data = [asdict(record) for record in self._cached_history]
-            with open(self.history_file, 'w', encoding='utf-8') as f:
+            tmp_file = self.history_file + ".tmp"
+            with open(tmp_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, self.history_file)
             self._dirty = False
-        except Exception:
-            pass
+        except Exception as e:
+            logger = logging.getLogger("PDFOCR")
+            logger.exception(f"HistoryManager: failed to flush to disk: {e}")
 
     def add_record(self, results: List[FileResult], export_path: str = None) -> HistoryRecord:
         """添加新的历史记录"""

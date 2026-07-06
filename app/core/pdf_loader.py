@@ -9,6 +9,7 @@ from PIL import Image
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 
 
@@ -33,6 +34,7 @@ class PdfLoader:
         self._doc_locks = {}  # path -> threading.Lock, 保护单个文档的并发访问
         self._doc_locks_lock = threading.Lock()  # 保护 _doc_locks 字典
         self._total_cache_size = 0  # 估算的缓存总大小（MB）
+        self._async_executor = ThreadPoolExecutor(max_workers=2)
 
     def _estimate_doc_size(self, doc: fitz.Document) -> float:
         """估算文档内存占用（MB）"""
@@ -94,6 +96,9 @@ class PdfLoader:
                     pass
             self._doc_cache.clear()
             self._total_cache_size = 0
+        # 清理异步执行器并重建
+        self._async_executor.shutdown(wait=False)
+        self._async_executor = ThreadPoolExecutor(max_workers=2)
 
     def _get_doc_lock(self, pdf_path: str) -> threading.Lock:
         """获取文档级别的锁，保护单个 fitz.Document 的并发访问"""
@@ -146,8 +151,7 @@ class PdfLoader:
                 if callback:
                     callback(None, str(e))
 
-        thread = threading.Thread(target=_render, daemon=True, name="PDF-Render")
-        thread.start()
+        self._async_executor.submit(_render)
 
     def get_page_size(self, pdf_path: str, page_num: int = 0) -> Tuple[float, float]:
         """返回 PDF 页面原始尺寸 (width_pt, height_pt)"""

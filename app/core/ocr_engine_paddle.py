@@ -13,6 +13,24 @@ from app.core.field_matcher import FieldMatcher
 logger = logging.getLogger("PDFOCR")
 
 
+class _DummyRegion:
+    """虚拟Region用于单图识别（recognize方法）"""
+    __slots__ = ('id', 'field_name', 'x', 'y', 'w', 'h',
+                 '_pixel_bbox', 'match_keywords', 'match_mode', 'ocr_mode')
+
+    def __init__(self, width, height, mode="general"):
+        self.id = "__single__"
+        self.field_name = "text"
+        self.x = 0.0
+        self.y = 0.0
+        self.w = 1.0
+        self.h = 1.0
+        self._pixel_bbox = [0, 0, width, height]
+        self.match_keywords = []
+        self.match_mode = "value"
+        self.ocr_mode = mode
+
+
 class PaddleOCREngine(OCREngineBase):
     """
     PaddleOCR-VL引擎 — 单例
@@ -132,22 +150,6 @@ class PaddleOCREngine(OCREngineBase):
     def recognize(self, image: Image.Image, mode: str = "general") -> Tuple[str, float]:
         """单图识别 — 降级为整页识别后只取第一个匹配"""
         # 创建虚拟region覆盖全图
-        class _DummyRegion:
-            __slots__ = ('id', 'field_name', 'x', 'y', 'w', 'h',
-                         '_pixel_bbox', 'match_keywords', 'match_mode', 'ocr_mode')
-
-            def __init__(self, width, height, mode="general"):
-                self.id = "__single__"
-                self.field_name = "text"
-                self.x = 0.0
-                self.y = 0.0
-                self.w = 1.0
-                self.h = 1.0
-                self._pixel_bbox = [0, 0, width, height]
-                self.match_keywords = []
-                self.match_mode = "value"
-                self.ocr_mode = mode
-
         results = self.recognize_page(image, [_DummyRegion(image.width, image.height, mode)])
         result = results.get("__single__", ("", 0.0, 0, None))
         return result[0], result[1]
@@ -263,8 +265,8 @@ class PaddleOCREngine(OCREngineBase):
                         "bbox": coord,
                     })
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"PaddleOCR-VL element extraction failed: {e}")
         return elements
 
     def _extract_markdown(self, output) -> str:

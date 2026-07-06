@@ -323,9 +323,15 @@ class FieldPanel(QWidget):
         return Template(name="current", regions=regions)
 
     def load_template(self, template: Template):
-        self.clear_all()
+        # 手动清空，避免 clear_all() 触发多次信号
+        self.regions.clear()
+        self._preview_results.clear()
+        self.table.setRowCount(0)
+        self.detail_widget.setVisible(False)
         for r in template.regions:
             self.add_region(r)
+        self._update_empty_state()
+        # 仅在所有区域添加完毕后触发一次信号
         self.region_changed.emit(list(self.regions.values()))
 
     def show_preview_result(self, file_result):

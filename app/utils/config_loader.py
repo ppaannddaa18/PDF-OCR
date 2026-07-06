@@ -44,6 +44,8 @@ def load_config(path: str = None) -> dict:
     else:
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
+        if config is None:
+            config = {}
 
     # 启动器环境变量覆盖（优先级高于配置文件）
     env_engine = os.environ.get("PDFOCR_ENGINE", "")

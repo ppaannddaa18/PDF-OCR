@@ -14,7 +14,10 @@ class Exporter:
                     row[f"{field_name}_置信度"] = round(fr.confidence, 3)
             rows.append(row)
         df = pd.DataFrame(rows)
-        df.to_excel(output_path, index=False, engine="openpyxl")
+        try:
+            df.to_excel(output_path, index=False, engine="openpyxl")
+        except Exception as e:
+            raise IOError(f"Failed to write Excel file: {e}")
 
     def to_csv(self, results: List[FileResult], output_path: str, include_confidence: bool = True):
         rows = []
@@ -26,4 +29,7 @@ class Exporter:
                     row[f"{field_name}_置信度"] = round(fr.confidence, 3)
             rows.append(row)
         df = pd.DataFrame(rows)
-        df.to_csv(output_path, index=False, encoding="utf-8-sig")
+        try:
+            df.to_csv(output_path, index=False, encoding="utf-8-sig")
+        except Exception as e:
+            raise IOError(f"Failed to write CSV file: {e}")

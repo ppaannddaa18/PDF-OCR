@@ -611,9 +611,14 @@ class MainWindow(FluentWindow):
             self.status_label.setText(f"已修改 {modified} 个单元格")
 
     def _on_filter_changed(self):
-        """[修复] 筛选条件变更 - 支持全部字段筛选"""
+        """[修复] 筛选条件变更 - 支持全部字段筛选，重置低置信度模式"""
         keyword = self.filter_edit.text()
         field_idx = self.filter_field_combo.currentIndex()
+
+        # 重置低置信度模式
+        if self._low_confidence_mode:
+            self._low_confidence_mode = False
+            self.btn_low_conf.setText("显示低置信度")
 
         if field_idx == 0:
             # 全部字段

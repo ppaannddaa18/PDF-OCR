@@ -160,6 +160,8 @@ class FieldMatcher:
                 if 0 < h_dist < self.neighbor_radius * 2:
                     texts.append(elem.get("text", ""))
                     consumed.append(elem)
+        consumed.sort(key=lambda e: e.get("bbox", [0, 0, 0, 0])[0])
+        texts = [best.get("text", "")] + [e.get("text", "") for e in consumed]
         return " ".join(texts), consumed
 
     def _keyword_match(self, region, markdown_text: str) -> Tuple[str, float]:
@@ -171,9 +173,9 @@ class FieldMatcher:
         for kw in region.match_keywords:
             # 匹配 "关键词：值"、"**关键词**: 值" 等格式
             # 支持markdown粗体标记（**关键词**）以及多种分隔符
-            pattern = r'\*{0,2}' + re.escape(kw) + r'\*{0,2}[：:\s]*(\S+)'
+            pattern = r'\*{0,2}' + re.escape(kw) + r'\*{0,2}[：:\s]*([^\n]+)'
             m = re.search(pattern, markdown_text)
             if m:
-                return m.group(1), 0.5  # 关键词兜底置信度设为0.5
+                return m.group(1).strip(), 0.5  # 关键词兜底置信度设为0.5
 
         return "", 0.0

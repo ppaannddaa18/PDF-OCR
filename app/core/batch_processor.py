@@ -190,6 +190,10 @@ class BatchProcessor:
             result = self.process_one(path, template)
             return idx, result
 
+        # 如果模板列表为空，直接返回错误结果
+        if not templates:
+            return [FileResult(p, {}, success=False, error_msg="No templates available") for p in pdf_paths]
+
         # 准备任务列表
         tasks = [
             (i, p, templates[i] if i < len(templates) else templates[-1])
