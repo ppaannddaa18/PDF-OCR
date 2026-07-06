@@ -18,11 +18,15 @@ def get_ocr_engine(config: dict) -> OCREngineBase:
     """
     engine_type = config.get("ocr", {}).get("engine", "rapidocr")
 
-    if engine_type == "paddleocr_vl":
+    if engine_type in ("paddleocr_vl", "paddleocr_vl_cpu"):
         try:
-            # 预检：确认 PaddleOCR 实际可导入（PaddleOCREngine 本身延迟导入）
+            # 预检：确认 PaddleOCR 实际可导入
             import paddleocr  # noqa: F401
             from app.core.ocr_engine_paddle import PaddleOCREngine
+            # CPU模式：覆盖device配置（质量相同，0显存，较慢）
+            if engine_type == "paddleocr_vl_cpu":
+                config.setdefault("ocr", {}).setdefault("paddleocr_vl", {})["device"] = "cpu"
+                config["ocr"]["paddleocr_vl"]["precision"] = "fp32"  # CPU不支持fp16
             return PaddleOCREngine(config)
         except ImportError as e:
             import logging

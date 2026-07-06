@@ -778,18 +778,20 @@ class MainWindow(FluentWindow):
 
         toolbar_layout.addSpacing(8)
 
-        # 引擎切换
+        # 引擎切换（三引擎）
         from qfluentwidgets import ComboBox
         self.engine_combo = ComboBox()
         self.engine_combo.addItems([
             "PaddleOCR-VL (GPU)",
+            "PaddleOCR-VL (CPU)",
             "RapidOCR (CPU)",
         ])
         # 根据当前引擎设置默认选项
         current_engine = self.config.get("ocr", {}).get("engine", "paddleocr_vl")
-        self.engine_combo.setCurrentIndex(0 if current_engine == "paddleocr_vl" else 1)
+        idx_map = {"paddleocr_vl": 0, "paddleocr_vl_cpu": 1, "rapidocr": 2}
+        self.engine_combo.setCurrentIndex(idx_map.get(current_engine, 0))
         self.engine_combo.currentIndexChanged.connect(self._on_engine_switched)
-        self.engine_combo.setMinimumWidth(160)
+        self.engine_combo.setMinimumWidth(170)
         toolbar_layout.addWidget(self.engine_combo)
 
         toolbar_layout.addSpacing(4)
@@ -1800,9 +1802,12 @@ class MainWindow(FluentWindow):
         )
 
     def _on_engine_switched(self, index: int):
-        """引擎切换处理"""
-        new_engine_type = "paddleocr_vl" if index == 0 else "rapidocr"
+        """引擎切换处理（三引擎: GPU / CPU-VLM / CPU-Rapid）"""
+        engine_names = ["paddleocr_vl", "paddleocr_vl_cpu", "rapidocr"]
+        engine_labels = ["PaddleOCR-VL (GPU)", "PaddleOCR-VL (CPU)", "RapidOCR (CPU)"]
+        new_engine_type = engine_names[index]
         current_engine = self.config.get("ocr", {}).get("engine", "paddleocr_vl")
+        current_idx = engine_names.index(current_engine) if current_engine in engine_names else 0
         if new_engine_type == current_engine:
             return
 
@@ -1812,24 +1817,25 @@ class MainWindow(FluentWindow):
                             orient=Qt.Orientation.Horizontal, isClosable=True,
                             position=InfoBarPosition.TOP, duration=3000, parent=self)
             self.engine_combo.blockSignals(True)
-            self.engine_combo.setCurrentIndex(0 if current_engine == "paddleocr_vl" else 1)
+            self.engine_combo.setCurrentIndex(current_idx)
             self.engine_combo.blockSignals(False)
             return
 
-        # 确认提示
-        from qfluentwidgets import MessageBox
+        # 确认提示（CPU VLM 模式特别说明）
+        extra = ""
+        if new_engine_type == "paddleocr_vl_cpu":
+            extra = "\n\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，但0显存占用"
         msg = MessageBox(
             "切换OCR引擎",
-            f"切换到 {'PaddleOCR-VL (GPU)' if index == 0 else 'RapidOCR (CPU)'}？\n\n"
+            f"切换到 {engine_labels[index]}？{extra}\n\n"
             "注意：切换引擎后需要重新识别，当前未保存的识别结果将丢失。",
             self
         )
         msg.yesButton.setText("确认切换")
         msg.cancelButton.setText("取消")
         if not msg.exec():
-            # 恢复原选项
             self.engine_combo.blockSignals(True)
-            self.engine_combo.setCurrentIndex(0 if current_engine == "paddleocr_vl" else 1)
+            self.engine_combo.setCurrentIndex(current_idx)
             self.engine_combo.blockSignals(False)
             return
 
