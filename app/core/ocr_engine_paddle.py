@@ -3,11 +3,14 @@ PaddleOCR-VL 引擎 — 基于视觉语言模型的智能OCR
 GPU加速，整页理解，支持表格/手写/公式
 """
 from typing import Optional, Tuple, Dict, List, Any
+import logging
 from PIL import Image
 import threading
 import time
 from app.core.ocr_engine_base import OCREngineBase
 from app.core.field_matcher import FieldMatcher
+
+logger = logging.getLogger("PDFOCR")
 
 
 class PaddleOCREngine(OCREngineBase):
@@ -42,8 +45,9 @@ class PaddleOCREngine(OCREngineBase):
             self._initialized = False
             self._init_error: Optional[str] = None
             self._pipeline_lock = threading.RLock()
-            self._model_name = vl_cfg.get("model_name", "PaddleOCR-VL-1.6-0.9B")
-            self._device = vl_cfg.get("device", "gpu")
+            self._model_name = vl_cfg.get("vl_rec_model_name", "PaddleOCR-VL-1.6-0.9B")
+            self._device = vl_cfg.get("device", "gpu:0")
+            self._precision = vl_cfg.get("precision", "fp16")
             self._warmup_on_startup = vl_cfg.get("warmup_on_startup", True)
             self._idle_unload_seconds = vl_cfg.get("idle_unload_seconds", 300)
             self._page_dpi = vl_cfg.get("page_dpi", 200)
@@ -62,7 +66,12 @@ class PaddleOCREngine(OCREngineBase):
                 return
             try:
                 from paddleocr import PaddleOCRVL
-                self._pipeline = PaddleOCRVL(model_name=self._model_name)
+                self._pipeline = PaddleOCRVL(
+                    vl_rec_model_name=self._model_name,
+                    device=self._device,
+                    precision=self._precision,
+                    use_layout_detection=True,
+                )
                 self._initialized = True
                 self._last_used_time = time.time()
 
@@ -79,7 +88,7 @@ class PaddleOCREngine(OCREngineBase):
             return
         try:
             dummy = Image.new("RGB", (64, 64), "white")
-            list(self._pipeline.predict(dummy))
+            list(self._pipeline.predict(dummy, temperature=0))
         except Exception:
             pass  # 预热失败不影响正常使用
 
@@ -162,9 +171,14 @@ class PaddleOCREngine(OCREngineBase):
 
         try:
             with self._pipeline_lock:
-                outputs = list(self._pipeline.predict(image))
+                max_px = self._calc_max_pixels(image.size)
+                outputs = list(self._pipeline.predict(
+                    image,
+                    temperature=0,
+                    max_pixels=max_px,
+                ))
         except Exception as e:
-            # 推理失败，返回空结果
+            logger.error(f"PaddleOCR-VL推理失败: {e}")
             return {r.id: ("", 0.0, 0, None) for r in regions}
 
         if not outputs:
@@ -190,34 +204,78 @@ class PaddleOCREngine(OCREngineBase):
         self._last_used_time = time.time()
         return results
 
+    def _calc_max_pixels(self, image_size: Tuple[int, int]) -> int:
+        """根据图片尺寸计算 max_pixels，避免 VLM 压缩高分辨率文档"""
+        w, h = image_size
+        actual_pixels = w * h
+        # 取实际像素的 1.2 倍作为上限（留余量防止边界情况）
+        return max(actual_pixels, 1024 * 1024)
+
     def _extract_elements(self, output) -> List[dict]:
-        """从PaddleOCR-VL输出提取elements列表"""
-        if hasattr(output, 'elements'):
-            elements = []
-            for elem in output.elements:
-                elem_dict = {
-                    "type": getattr(elem, "type", "text"),
-                    "text": getattr(elem, "text", ""),
-                    "confidence": getattr(elem, "confidence", 0.0),
-                }
-                bbox = getattr(elem, "bbox", None)
-                if bbox is not None:
-                    if hasattr(bbox, 'tolist'):
-                        bbox = bbox.tolist()
-                    elem_dict["bbox"] = list(bbox)
-                elements.append(elem_dict)
-            return elements
-        elif isinstance(output, dict):
-            return output.get("elements", [])
-        return []
+        """从 PaddleOCR-VL Result 对象提取 elements 列表
+
+        官方 Result 对象结构:
+        - .json -> dict 含 overall_ocr_res (dt_polys, rec_texts, rec_scores)
+                            + parsing_res_list (block_bbox, block_label, block_content)
+        - .markdown -> dict 含 markdown_texts
+        """
+        elements = []
+        try:
+            data = output.json if hasattr(output, 'json') else (output if isinstance(output, dict) else {})
+
+            # 从 overall_ocr_res 提取文字 + 四点坐标 + 置信度
+            ocr_res = data.get("overall_ocr_res", {})
+            rec_texts = ocr_res.get("rec_texts", [])
+            rec_scores = ocr_res.get("rec_scores", [])
+            dt_polys = ocr_res.get("dt_polys", [])
+
+            for i, text in enumerate(rec_texts):
+                if not text or not text.strip():
+                    continue
+                bbox = None
+                if i < len(dt_polys):
+                    poly = dt_polys[i]
+                    # dt_polys = [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+                    if len(poly) >= 4:
+                        xs = [p[0] for p in poly]
+                        ys = [p[1] for p in poly]
+                        bbox = [min(xs), min(ys), max(xs), max(ys)]
+
+                confidence = rec_scores[i] if i < len(rec_scores) else 0.0
+                elements.append({
+                    "type": "text",
+                    "text": text,
+                    "confidence": float(confidence),
+                    "bbox": bbox,
+                })
+
+            # 从 parsing_res_list 提取表格/公式等结构化元素
+            for item in data.get("parsing_res_list", []):
+                block_label = item.get("block_label", "")
+                if block_label in ("table", "formula"):
+                    content = item.get("block_content", "")
+                    coord = item.get("block_bbox", None)
+                    elements.append({
+                        "type": block_label,
+                        "text": content if isinstance(content, str) else str(content),
+                        "confidence": 0.95,
+                        "bbox": coord,
+                    })
+
+        except Exception:
+            pass
+        return elements
 
     def _extract_markdown(self, output) -> str:
-        """从PaddleOCR-VL输出提取markdown文本"""
-        if hasattr(output, 'markdown'):
-            return str(output.markdown)
-        elif isinstance(output, dict):
-            return output.get("markdown", "")
-        return ""
+        """从 PaddleOCR-VL Result 对象提取 markdown 文本"""
+        try:
+            md = output.markdown if hasattr(output, 'markdown') else {}
+            if isinstance(md, dict):
+                texts = md.get("markdown_texts", [])
+                return "\n\n".join(texts) if texts else ""
+            return str(md) if md else ""
+        except Exception:
+            return ""
 
     def _init_nvml(self) -> None:
         """惰性初始化NVML并查找最大显存的GPU（I2+I3）"""

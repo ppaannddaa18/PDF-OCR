@@ -71,13 +71,13 @@ def get_default_config() -> dict:
             "use_angle_cls": True,
             "det_db_box_thresh": 0.5,
             "drop_score": 0.5,
-            # PaddleOCR-VL 专属
+            # PaddleOCR-VL 专属（官方 API: PaddleOCRVL(vl_rec_model_name, device, precision)）
             "paddleocr_vl": {
-                "model_name": "PaddleOCR-VL-1.6-0.9B",
-                "device": "gpu",
+                "vl_rec_model_name": "PaddleOCR-VL-1.6-0.9B",
+                "device": "gpu:0",
+                "precision": "fp16",
                 "warmup_on_startup": True,
                 "idle_unload_seconds": 300,
-                "backend": "paddle",
                 "page_dpi": 200,
                 "high_quality_dpi": 300,
                 "match_iou_threshold": 0.5,
