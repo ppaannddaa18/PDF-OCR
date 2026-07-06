@@ -100,6 +100,7 @@ class MainWindow(FluentWindow):
         self.ocr_engine = get_ocr_engine(self.config)
         self.processor = None  # 将在OCR引擎就绪后创建
         self._init_gen = 0  # 初始化世代计数器，防止竞态条件
+        self._ready_gen = -1  # 当前就绪回调的世代号，-1=未初始化
 
         # 在后台线程中同步初始化（不阻塞UI）
         import threading
@@ -111,6 +112,7 @@ class MainWindow(FluentWindow):
                 return  # stale，引擎已被切换
             ocr.initialize()
             if self._init_gen == gen:
+                self._ready_gen = gen
                 QTimer.singleShot(0, self._on_ocr_ready)
         threading.Thread(target=_init_ocr, daemon=True, name="OCR-Init").start()
         self.template_mgr = TemplateManager()
@@ -219,6 +221,9 @@ class MainWindow(FluentWindow):
 
     def _on_ocr_ready(self):
         """OCR引擎初始化完成回调"""
+        # 防止过期回调（引擎已被切换）覆盖当前状态
+        if hasattr(self, '_ready_gen') and self._ready_gen != self._init_gen:
+            return
         if self.ocr_engine.is_ready:
             # 初始化成功，隐藏遮罩层
             self.loading_overlay.hide_overlay()
@@ -246,6 +251,7 @@ class MainWindow(FluentWindow):
                 return
             ocr.initialize()
             if self._init_gen == gen:
+                self._ready_gen = gen
                 QTimer.singleShot(0, self._on_ocr_ready)
         threading.Thread(target=_reinit, daemon=True, name="OCR-Retry").start()
 
@@ -265,7 +271,8 @@ class MainWindow(FluentWindow):
                     return
                 ocr.initialize()
                 if self._init_gen == gen:
-                    QTimer.singleShot(0, self._on_ocr_ready)
+                    self._ready_gen = gen
+                QTimer.singleShot(0, self._on_ocr_ready)
             threading.Thread(target=_reinit, daemon=True, name="OCR-CPU").start()
             InfoBar.success(
                 title="已切换到CPU模式",
@@ -1230,6 +1237,12 @@ class MainWindow(FluentWindow):
         self.status_label.setText(f"试识别完成 - 共 {len(template.regions)} 个字段")
 
     def on_batch_run(self):
+        # 防止重复点击启动多个 Worker
+        if self.worker and self.worker.isRunning():
+            InfoBar.warning(title="提示", content="批量识别正在进行中，请等待完成",
+                            orient=Qt.Orientation.Horizontal, isClosable=True,
+                            position=InfoBarPosition.TOP, duration=2000, parent=self)
+            return
         # 检查OCR引擎是否已初始化且 BatchProcessor 已创建
         if not self.ocr_engine.is_ready or self.processor is None:
             error_msg = self.ocr_engine.init_error
@@ -1688,6 +1701,16 @@ class MainWindow(FluentWindow):
         if new_engine_type == current_engine:
             return
 
+        # 防止批量识别进行中切换引擎
+        if self.worker and self.worker.isRunning():
+            InfoBar.warning(title="提示", content="批量识别进行中，请等待完成或取消后再切换引擎",
+                            orient=Qt.Orientation.Horizontal, isClosable=True,
+                            position=InfoBarPosition.TOP, duration=3000, parent=self)
+            self.engine_combo.blockSignals(True)
+            self.engine_combo.setCurrentIndex(0 if current_engine == "paddleocr_vl" else 1)
+            self.engine_combo.blockSignals(False)
+            return
+
         # 确认提示
         from qfluentwidgets import MessageBox
         msg = MessageBox(
@@ -1723,6 +1746,7 @@ class MainWindow(FluentWindow):
                 return  # stale，引擎已被再次切换
             ocr.initialize()
             if self._init_gen == gen:
+                self._ready_gen = gen
                 QTimer.singleShot(0, self._on_ocr_ready)
         threading.Thread(target=_reinit, daemon=True, name="OCR-Reinit").start()
 
