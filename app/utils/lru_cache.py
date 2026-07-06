@@ -165,6 +165,12 @@ class LRUCache:
         with self._lock:
             if key not in self._cache:
                 raise KeyError(key)
+            # 检查 TTL 过期（与 get() 和 contains() 一致）
+            if self._ttl is not None:
+                access_time = self._timestamps.get(key, 0)
+                if time.time() - access_time > self._ttl:
+                    self._remove_internal(key)
+                    raise KeyError(key)
             # 更新访问时间并移到末尾（LRU）
             self._timestamps[key] = time.time()
             self._cache.move_to_end(key)

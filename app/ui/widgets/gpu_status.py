@@ -81,3 +81,9 @@ class GpuStatusWidget(QWidget):
         """隐藏时停止定时器"""
         self._timer.stop()
         super().hideEvent(event)
+
+    def showEvent(self, event):
+        """显示时重启定时器"""
+        super().showEvent(event)
+        if self._engine and self._engine.engine_name == "paddleocr_vl":
+            self._timer.start(5000)

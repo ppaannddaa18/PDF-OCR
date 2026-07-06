@@ -62,12 +62,21 @@ class PdfLoader:
             doc = fitz.open(pdf_path)
             size = self._estimate_doc_size(doc)
 
-            # 内存感知淘汰
+            # 内存感知淘汰（跳过正在使用的文档）
             while (len(self._doc_cache) >= self._max_cached or
                    self._total_cache_size + size > self.MEMORY_THRESHOLD_MB):
                 if not self._doc_cache:
                     break
-                oldest_path, (oldest_doc, _, oldest_size) = self._doc_cache.popitem(last=False)
+                # 找最旧的未被使用的文档
+                evictable = None
+                for path in list(self._doc_cache.keys()):
+                    with self._doc_refcount_lock:
+                        if self._doc_refcount.get(path, 0) == 0:
+                            evictable = path
+                            break
+                if evictable is None:
+                    break  # 所有文档都在使用中
+                _, oldest_doc, oldest_size = self._doc_cache.pop(evictable)
                 try:
                     oldest_doc.close()
                 except Exception:
@@ -97,8 +106,8 @@ class PdfLoader:
 
     def shutdown(self):
         """关闭所有资源（应用退出时调用）"""
-        self.clear_cache()
         self._async_executor.shutdown(wait=True)
+        self.clear_cache()
 
     def clear_cache(self):
         """清空所有缓存的文档（跳过仍在使用的文档）"""
@@ -129,12 +138,14 @@ class PdfLoader:
             return self._doc_locks[pdf_path]
 
     def _release_document(self, pdf_path: str):
-        """释放文档引用计数"""
+        """释放文档引用计数，归零时清理锁"""
         with self._doc_refcount_lock:
             if pdf_path in self._doc_refcount:
                 self._doc_refcount[pdf_path] -= 1
                 if self._doc_refcount[pdf_path] <= 0:
                     del self._doc_refcount[pdf_path]
+        # 引用归零时清理文档锁
+        self._cleanup_doc_lock(pdf_path)
 
     def _cleanup_doc_lock(self, pdf_path: str):
         """清理已关闭文档的锁"""
