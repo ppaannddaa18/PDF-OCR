@@ -5,6 +5,7 @@ GPU加速，整页理解，支持表格/手写/公式
 from typing import Optional, Tuple, Dict, List, Any
 import logging
 from PIL import Image
+import numpy as np
 import threading
 import time
 from app.core.ocr_engine_base import OCREngineBase
@@ -105,7 +106,7 @@ class PaddleOCREngine(OCREngineBase):
         if not self._pipeline:
             return
         try:
-            dummy = Image.new("RGB", (64, 64), "white")
+            dummy = np.zeros((64, 64, 3), dtype=np.uint8)
             list(self._pipeline.predict(dummy, temperature=0))
         except Exception:
             pass  # 预热失败不影响正常使用
@@ -176,8 +177,9 @@ class PaddleOCREngine(OCREngineBase):
                 if self._pipeline is None:
                     raise RuntimeError("Pipeline was unloaded after initialization")
                 max_px = self._calc_max_pixels(image.size)
+                arr = np.array(image) if isinstance(image, Image.Image) else image
                 outputs = list(self._pipeline.predict(
-                    image,
+                    arr,
                     temperature=0,
                     max_pixels=max_px,
                 ))
