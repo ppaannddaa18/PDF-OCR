@@ -15,7 +15,7 @@ class FieldPanel(QWidget):
     region_deleted = Signal(str)           # region_id
     current_cleared = Signal()             # 清空当前字段信号
     all_cleared = Signal()                 # 清空所有字段信号
-    field_name_changed = Signal(str, str)  # (old_name, new_name) 字段名变更信号
+    field_name_changed = Signal(str, str, str)  # (region_id, old_name, new_name) 字段名变更信号
     set_as_default_template = Signal()     # 设为默认模板信号
 
     # 字段类型颜色映射
@@ -177,8 +177,8 @@ class FieldPanel(QWidget):
         if region_id in self._preview_results:
             self._preview_results[region_id].field_name = new_name
 
-        # 发送字段名变更信号
-        self.field_name_changed.emit(old_name, new_name)
+        # 发送字段名变更信号（含 region_id 避免同名冲突）
+        self.field_name_changed.emit(region_id, old_name, new_name)
 
     def _on_cell_clicked(self, row: int, column: int):
         """点击单元格事件 - 点击识别结果列显示详情"""

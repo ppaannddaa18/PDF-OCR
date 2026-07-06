@@ -145,8 +145,10 @@ class CommandHistory:
         if not self.can_undo():
             return False
         command = self.commands[self.current_index]
-        command.undo()
-        self.current_index -= 1
+        try:
+            command.undo()
+        finally:
+            self.current_index -= 1
         return True
 
     def redo(self) -> bool:
@@ -154,8 +156,12 @@ class CommandHistory:
         if not self.can_redo():
             return False
         self.current_index += 1
-        command = self.commands[self.current_index]
-        command.redo()
+        try:
+            command = self.commands[self.current_index]
+            command.redo()
+        except Exception:
+            self.current_index -= 1  # 回滚索引
+            raise
         return True
 
     def clear(self):

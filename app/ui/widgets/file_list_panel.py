@@ -268,7 +268,5 @@ class FileListPanel(QWidget):
             if path.lower().endswith('.pdf'):
                 files.append(path)
         if files:
-            self.add_files(files)
-            # 发送信号加载第一个文件
-            self.file_selected.emit(files[0])
+            self.add_files(files)  # add_files 内部已触发 file_selected 信号
         event.acceptProposedAction()

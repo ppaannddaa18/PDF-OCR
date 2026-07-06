@@ -160,10 +160,13 @@ class LRUCache:
         return self.contains(key)
 
     def __getitem__(self, key):
-        result = self.get(key)
-        if result is None and key not in self._cache:
-            raise KeyError(key)
-        return result
+        with self._lock:
+            if key not in self._cache:
+                raise KeyError(key)
+            # 更新访问时间并移到末尾（LRU）
+            self._timestamps[key] = time.time()
+            self._cache.move_to_end(key)
+            return self._cache[key]
 
     def __setitem__(self, key, value):
         self.set(key, value)

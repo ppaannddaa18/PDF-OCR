@@ -206,11 +206,11 @@ class PaddleOCREngine(OCREngineBase):
         return results
 
     def _calc_max_pixels(self, image_size: Tuple[int, int]) -> int:
-        """根据图片尺寸计算 max_pixels，避免 VLM 压缩高分辨率文档"""
+        """根据图片尺寸计算 max_pixels，防止高DPI导致GPU OOM"""
         w, h = image_size
         actual_pixels = w * h
-        # 取实际像素的 1.2 倍作为上限（留余量防止边界情况）
-        return max(actual_pixels, 1024 * 1024)
+        # 上限 16M 像素（约 4000x4000），防止 GPU OOM；下限 1M
+        return max(min(actual_pixels, 16 * 1024 * 1024), 1024 * 1024)
 
     def _extract_elements(self, output) -> List[dict]:
         """从 PaddleOCR-VL Result 对象提取 elements 列表
@@ -313,14 +313,15 @@ class PaddleOCREngine(OCREngineBase):
             return 0.0, 0.0
 
     def _check_idle_unload(self) -> None:
-        """检查是否需要空闲卸载（由定时器调用）"""
+        """检查是否需要空闲卸载（由定时器调用，加锁保证原子性）"""
         if self._idle_unload_seconds <= 0:
             return
-        if not self._initialized:
-            return
-        elapsed = time.time() - self._last_used_time
-        if elapsed > self._idle_unload_seconds:
-            self.unload()
+        with self._pipeline_lock:
+            if not self._initialized:
+                return
+            elapsed = time.time() - self._last_used_time
+            if elapsed > self._idle_unload_seconds:
+                self.unload()
 
     @classmethod
     def reset_instance(cls) -> None:

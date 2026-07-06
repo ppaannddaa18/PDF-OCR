@@ -965,9 +965,7 @@ class MainWindow(FluentWindow):
     def on_upload(self):
         files, _ = QFileDialog.getOpenFileNames(self, "选择PDF", "", "PDF Files (*.pdf)")
         if files:
-            self.file_panel.add_files(files)
-            # 将首份作为模板
-            self.on_file_selected(files[0])
+            self.file_panel.add_files(files)  # add_files 内部已触发 file_selected 信号
             self.status_label.setText(f"已加载 {len(files)} 个文件 - 请框选识别区域")
 
     def _get_effective_template(self, pdf_path: str = None):
@@ -1180,8 +1178,8 @@ class MainWindow(FluentWindow):
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
 
     def on_try_ocr(self):
-        # 检查OCR引擎是否已初始化
-        if not self.ocr_engine.is_ready:
+        # 检查OCR引擎是否已初始化且 BatchProcessor 已创建
+        if not self.ocr_engine.is_ready or self.processor is None:
             error_msg = self.ocr_engine.init_error
             if error_msg:
                 InfoBar.error(
@@ -1227,8 +1225,8 @@ class MainWindow(FluentWindow):
         self.status_label.setText(f"试识别完成 - 共 {len(template.regions)} 个字段")
 
     def on_batch_run(self):
-        # 检查OCR引擎是否已初始化
-        if not self.ocr_engine.is_ready:
+        # 检查OCR引擎是否已初始化且 BatchProcessor 已创建
+        if not self.ocr_engine.is_ready or self.processor is None:
             error_msg = self.ocr_engine.init_error
             if error_msg:
                 InfoBar.error(
@@ -1631,19 +1629,12 @@ class MainWindow(FluentWindow):
             parent=self
         )
 
-    def on_field_name_changed(self, old_name: str, new_name: str):
-        """字段名变更处理 - [修复] 使用命令模式记录到历史"""
+    def on_field_name_changed(self, region_id: str, old_name: str, new_name: str):
+        """字段名变更处理 - 使用 region_id 精确定位"""
         if self._current_pdf is None:
             return
 
-        # 查找对应的 region_id
-        region_id = None
-        for rid, region in self.field_panel.regions.items():
-            if region.field_name == new_name:
-                region_id = rid
-                break
-
-        if region_id is None:
+        if region_id is None or region_id not in self.field_panel.regions:
             return
 
         # [修复] 创建 UpdateFieldNameCommand 记录到历史
