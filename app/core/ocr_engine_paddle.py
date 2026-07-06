@@ -71,6 +71,8 @@ class PaddleOCREngine(OCREngineBase):
             self._warmup_on_startup = vl_cfg.get("warmup_on_startup", True)
             self._idle_unload_seconds = vl_cfg.get("idle_unload_seconds", 300)
             self._page_dpi = vl_cfg.get("page_dpi", 200)
+            self._max_vram_gb = vl_cfg.get("max_vram_gb", 7.0)    # VRAM用量上限
+            self._min_free_vram_gb = vl_cfg.get("min_free_vram_gb", 0.5)  # 最小保留显存
             self._matcher = FieldMatcher(config)
             self._last_used_time = time.monotonic()
             self._nvml_initialized = False
@@ -172,12 +174,23 @@ class PaddleOCREngine(OCREngineBase):
             bottom = min(H, int((region.y + region.h) * H))
             pixel_bboxes[region.id] = [left, top, right, bottom]
 
+        # VRAM守卫：检查可用显存是否足够（低于阈值时降低分辨率或拒绝推理）
+        max_px = self._calc_max_pixels(image.size)
+        free_vram = self._get_free_vram_gb()
+        if free_vram < self._min_free_vram_gb:
+            # 显存极度紧张：跳过此页，返回空结果
+            logger.warning(f"VRAM不足 ({free_vram:.2f}GB < {self._min_free_vram_gb}GB)，跳过推理")
+            return {r.id: ("", 0.0, 0, None) for r in regions}
+        elif free_vram < 1.0:
+            # 显存紧张：降低分辨率上限
+            max_px = min(max_px, 2 * 1024 * 1024)  # 限制到 2M 像素
+            logger.info(f"VRAM紧张 ({free_vram:.2f}GB)，降低分辨率到 {max_px/1e6:.1f}M 像素")
+
         try:
             with self._pipeline_lock:
                 self._ensure_loaded()
                 if self._pipeline is None:
                     raise RuntimeError("Pipeline was unloaded after initialization")
-                max_px = self._calc_max_pixels(image.size)
                 arr = np.array(image) if isinstance(image, Image.Image) else image
                 outputs = list(self._pipeline.predict(
                     arr,
@@ -185,6 +198,12 @@ class PaddleOCREngine(OCREngineBase):
                     max_pixels=max_px,
                 ))
                 self._last_used_time = time.monotonic()
+            # 推理后释放缓存（锁外，避免阻塞）
+            try:
+                import paddle
+                paddle.device.cuda.empty_cache()
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"PaddleOCR-VL推理失败: {e}")
             return {r.id: ("", 0.0, 0, None) for r in regions}
@@ -329,6 +348,18 @@ class PaddleOCREngine(OCREngineBase):
             return info.used / 1024**3, info.total / 1024**3
         except Exception:
             return 0.0, 0.0
+
+    def _get_free_vram_gb(self) -> float:
+        """获取可用显存 (GB)，用于VRAM预算检查"""
+        self._init_nvml()
+        if self._nvml_handle is None:
+            return 999.0  # 无法获取时返回大值，不阻止推理
+        try:
+            import pynvml
+            info = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
+            return (info.total - info.used) / 1024**3
+        except Exception:
+            return 999.0
 
     def _check_idle_unload(self) -> None:
         """检查是否需要空闲卸载（由定时器调用，加锁保证原子性）"""

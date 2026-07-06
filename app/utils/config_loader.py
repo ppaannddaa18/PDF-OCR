@@ -109,6 +109,8 @@ def get_default_config() -> dict:
                 "high_quality_dpi": 300,
                 "match_iou_threshold": 0.5,
                 "match_neighbor_radius": 50,
+                "max_vram_gb": 7.0,         # VRAM用量上限(GB), 防止爆显存
+                "min_free_vram_gb": 0.5,    # 最小保留显存(GB), 不足时降分辨率或跳过
             },
             # RapidOCR 专属
             "rapidocr": {
