@@ -794,6 +794,25 @@ class MainWindow(FluentWindow):
 
         toolbar_layout.addSpacing(4)
 
+        # 版面检测开关（仅PaddleOCR-VL模式，关闭可省~3GB显存）
+        from qfluentwidgets import SwitchButton, BodyLabel
+        layout_label = BodyLabel("版面检测")
+        layout_label.setStyleSheet("font-size: 11px; color: #666;")
+        toolbar_layout.addWidget(layout_label)
+        self.layout_detection_switch = SwitchButton()
+        use_layout = self.config.get("ocr", {}).get("paddleocr_vl", {}).get("use_layout_detection", False)
+        self.layout_detection_switch.setChecked(use_layout)
+        self.layout_detection_switch.setOnText("开")
+        self.layout_detection_switch.setOffText("关")
+        self.layout_detection_switch.setToolTip(
+            "开启: 加载版面检测模型(~3GB显存), 适合极复杂版面\n"
+            "关闭: VLM自带版面理解, 显存更省(推荐)"
+        )
+        self.layout_detection_switch.checkedChanged.connect(self._on_layout_detection_toggled)
+
+        toolbar_layout.addWidget(self.layout_detection_switch)
+        toolbar_layout.addSpacing(8)
+
         # GPU 状态指示器
         from app.ui.widgets.gpu_status import GpuStatusWidget
         self.gpu_status = GpuStatusWidget()
@@ -1763,6 +1782,22 @@ class MainWindow(FluentWindow):
             self._current_preview_result.fields[new_name] = field_result
 
         self.status_label.setText(f"字段名已更新: {old_name} -> {new_name}")
+
+    def _on_layout_detection_toggled(self, checked: bool):
+        """版面检测开关 — 切换后需重启引擎生效"""
+        self.config.setdefault("ocr", {}).setdefault("paddleocr_vl", {})["use_layout_detection"] = checked
+        mode = "开启" if checked else "关闭"
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        InfoBar.info(
+            title="版面检测已" + mode,
+            content="此设置将在下次启动或切换引擎时生效" if not checked else
+                    "已开启版面检测模型，将占用额外~3GB显存",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3000,
+            parent=self
+        )
 
     def _on_engine_switched(self, index: int):
         """引擎切换处理"""
