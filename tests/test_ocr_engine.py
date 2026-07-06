@@ -1,22 +1,26 @@
-import unittest
-import sys
-import os
-
-# 添加项目根目录到路径
+"""
+OCR引擎旧接口测试 — 已迁移到 test_ocr_engines.py
+"""
+import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.ocr_engine import OCREngine
+import pytest
+from app.core.ocr_engine import get_ocr_engine
+from app.utils.config_loader import get_default_config
 
 
-class TestOCREngine(unittest.TestCase):
-    """OCR 引擎测试"""
+class TestOCREngineCompat:
+    """向后兼容测试"""
 
-    def test_singleton(self):
-        """测试单例模式"""
-        engine1 = OCREngine(lang="ch", use_gpu=False)
-        engine2 = OCREngine(lang="ch", use_gpu=False)
-        self.assertIs(engine1, engine2)
+    def test_factory_returns_singleton_for_rapidocr(self):
+        config = get_default_config()
+        config['ocr']['engine'] = 'rapidocr'
+        e1 = get_ocr_engine(config)
+        e2 = get_ocr_engine(config)
+        assert e1 is e2  # 单例
 
+    def test_default_degradation(self):
+        config = get_default_config()
+        engine = get_ocr_engine(config)
+        assert engine.engine_name in ('rapidocr', 'paddleocr_vl')
 
-if __name__ == "__main__":
-    unittest.main()

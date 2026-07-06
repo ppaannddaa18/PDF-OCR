@@ -3,10 +3,10 @@ from datetime import datetime
 from typing import Tuple, Optional
 
 PATTERNS = {
-    "email": r'^[\w]+([\w.+-]*[\w]+)?@[\w]+([\w-]*[\w]+)?(\.[\w]{2,})+$',
+    "email": r'^[\w]+([.+\-][\w]+)*@[\w]+(\.[\w]+)+$',
     "phone": r"^1[3-9]\d{9}$",
     "date":  r"^\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?$",
-    "number": r"^-?\d+(\.\d+)?$",
+    "number": r"^-?\d+(\.\d+)?([eE][+-]?\d+)?$",
 }
 
 # 日期解析格式
