@@ -20,6 +20,8 @@ def get_ocr_engine(config: dict) -> OCREngineBase:
 
     if engine_type == "paddleocr_vl":
         try:
+            # 预检：确认 PaddleOCR 实际可导入（PaddleOCREngine 本身延迟导入）
+            import paddleocr  # noqa: F401
             from app.core.ocr_engine_paddle import PaddleOCREngine
             return PaddleOCREngine(config)
         except ImportError as e:
