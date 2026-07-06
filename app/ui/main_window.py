@@ -1750,4 +1750,7 @@ class MainWindow(FluentWindow):
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
             self.progress_dialog.close()
 
+        # I4: clean up GPU status widget timer
+        self.gpu_status.cleanup()
+
         event.accept()

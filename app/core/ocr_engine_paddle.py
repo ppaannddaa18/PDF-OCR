@@ -49,6 +49,8 @@ class PaddleOCREngine(OCREngineBase):
             self._page_dpi = vl_cfg.get("page_dpi", 200)
             self._matcher = FieldMatcher(config)
             self._last_used_time = time.time()
+            self._nvml_initialized = False
+            self._nvml_handle = None
             self._initialized_flag = True
 
     def initialize(self) -> None:
@@ -100,6 +102,15 @@ class PaddleOCREngine(OCREngineBase):
                 del self._pipeline
                 self._pipeline = None
                 self._initialized = False
+        # I2: shutdown NVML on unload
+        if self._nvml_initialized:
+            try:
+                import pynvml
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
+            self._nvml_initialized = False
+            self._nvml_handle = None
 
     def _ensure_loaded(self) -> None:
         """确保模型已加载（支持空闲后重新加载）"""
@@ -208,13 +219,36 @@ class PaddleOCREngine(OCREngineBase):
             return output.get("markdown", "")
         return ""
 
-    def get_vram_usage(self) -> Tuple[float, float]:
-        """获取GPU显存使用 (used_gb, total_gb) - 需要pynvml"""
+    def _init_nvml(self) -> None:
+        """惰性初始化NVML并查找最大显存的GPU（I2+I3）"""
+        if self._nvml_initialized:
+            return
         try:
             import pynvml
             pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            self._nvml_initialized = True
+            count = pynvml.nvmlDeviceGetCount()
+            best_handle = None
+            best_mem = 0
+            for i in range(count):
+                h = pynvml.nvmlDeviceGetHandleByIndex(i)
+                info = pynvml.nvmlDeviceGetMemoryInfo(h)
+                if info.total > best_mem:
+                    best_mem = info.total
+                    best_handle = h
+            self._nvml_handle = best_handle
+        except Exception:
+            self._nvml_initialized = False
+            self._nvml_handle = None
+
+    def get_vram_usage(self) -> Tuple[float, float]:
+        """获取GPU显存使用 (used_gb, total_gb) - 需要pynvml"""
+        self._init_nvml()
+        if self._nvml_handle is None:
+            return 0.0, 0.0
+        try:
+            import pynvml
+            info = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
             return info.used / 1024**3, info.total / 1024**3
         except Exception:
             return 0.0, 0.0
