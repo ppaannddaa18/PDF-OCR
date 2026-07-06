@@ -5,10 +5,13 @@
 """
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox
 from PyQt6.QtCore import Qt, pyqtSignal as Signal
-from qfluentwidgets import BodyLabel, PushButton, SubtitleLabel, CheckBox
+from qfluentwidgets import BodyLabel, PushButton, SubtitleLabel, CheckBox, InfoBar, InfoBarPosition
 from pathlib import Path
 import json
+import logging
 from datetime import datetime
+
+logger = logging.getLogger("PDFOCR")
 
 
 class CancelResultDialog(QDialog):
@@ -176,9 +179,7 @@ class CancelResultDialog(QDialog):
                 json.dump(task_data, f, indent=2, ensure_ascii=False)
 
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"保存待恢复任务失败: {e}")
-            from qfluentwidgets import InfoBar, InfoBarPosition
+            logger.error(f"保存待恢复任务失败: {e}", exc_info=True)
             InfoBar.error(
                 title="保存失败",
                 content=f"无法保存任务进度: {e}",

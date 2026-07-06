@@ -98,7 +98,9 @@ class HistoryManager:
                 result_dict["fields"][fn] = {
                     "text": fr.text,
                     "confidence": fr.confidence,
-                    "manually_edited": fr.manually_edited
+                    "manually_edited": fr.manually_edited,
+                    "match_level": fr.match_level,
+                    "engine": fr.engine
                 }
             results_data.append(result_dict)
 
@@ -171,7 +173,9 @@ class HistoryManager:
                 field_result = FieldResult(
                     field_name=fn,
                     text=fd["text"],
-                    confidence=fd["confidence"]
+                    confidence=fd["confidence"],
+                    match_level=fd.get("match_level", 0),
+                    engine=fd.get("engine", "")
                 )
                 field_result.manually_edited = fd.get("manually_edited", False)
                 fields[fn] = field_result

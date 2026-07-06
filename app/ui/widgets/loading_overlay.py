@@ -189,6 +189,12 @@ class LoadingOverlay(QWidget):
         self._animation_timer.stop()
         self.setVisible(False)
 
+    def setVisible(self, visible):
+        """重写 setVisible，隐藏时停止动画定时器"""
+        if not visible:
+            self._animation_timer.stop()
+        super().setVisible(visible)
+
     def closeEvent(self, event):
         """[修复] 组件关闭时停止定时器"""
         self._animation_timer.stop()

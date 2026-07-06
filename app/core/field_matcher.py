@@ -144,22 +144,32 @@ class FieldMatcher:
 
     def _merge_adjacent(self, best: dict, remaining: List[dict]) -> Tuple[str, List[dict]]:
         """合并与best相邻的同一行elements，返回(merged_text, consumed_elements)"""
-        texts = [best.get("text", "")]
         best_bbox = best.get("bbox", [0, 0, 0, 0])
         by_mid = (best_bbox[1] + best_bbox[3]) / 2
         consumed = []
 
+        # 第一遍：收集右侧相邻元素
         for elem in list(remaining):
             bbox = elem.get("bbox")
             if not bbox or len(bbox) != 4:
                 continue
             ey_mid = (bbox[1] + bbox[3]) / 2
-            # 同一行（y中点接近）且在附近
             if abs(ey_mid - by_mid) < 20:
                 h_dist = bbox[0] - best_bbox[2]
                 if 0 < h_dist < self.neighbor_radius * 2:
-                    texts.append(elem.get("text", ""))
                     consumed.append(elem)
+
+        # 第二遍：收集左侧相邻元素
+        for elem in list(remaining):
+            bbox = elem.get("bbox")
+            if not bbox or len(bbox) != 4 or elem in consumed:
+                continue
+            ey_mid = (bbox[1] + bbox[3]) / 2
+            if abs(ey_mid - by_mid) < 20:
+                h_dist = best_bbox[0] - bbox[2]
+                if 0 < h_dist < self.neighbor_radius * 2:
+                    consumed.append(elem)
+
         consumed.sort(key=lambda e: e.get("bbox", [0, 0, 0, 0])[0])
         texts = [best.get("text", "")] + [e.get("text", "") for e in consumed]
         return " ".join(texts), consumed

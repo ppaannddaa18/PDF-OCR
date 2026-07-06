@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Tuple, Optional
 
 PATTERNS = {
-    "email": r"^[\w\.-]+@[\w\.-]+\.\w+$",
+    "email": r'^[\w]+([\w.+-]*[\w]+)?@[\w]+([\w-]*[\w]+)?(\.[\w]{2,})+$',
     "phone": r"^1[3-9]\d{9}$",
     "date":  r"^\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?$",
     "number": r"^-?\d+(\.\d+)?$",
@@ -90,7 +90,8 @@ def normalize_number(text: str) -> str:
     if not text:
         return text
     # 提取数字部分
-    numbers = re.findall(r"-?\d+\.?\d*", text.replace(",", ""))
+    cleaned = text.replace(",", "").rstrip(".")
+    numbers = re.findall(r"-?\d+(?:\.\d+)?", cleaned)
     if numbers:
         return numbers[0]
     return text

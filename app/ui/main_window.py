@@ -231,7 +231,7 @@ class MainWindow(FluentWindow):
             # 引擎就绪后才创建 BatchProcessor（避免引擎未就绪就被使用）
             self.processor = BatchProcessor(
                 self.pdf_loader, self.ocr_engine, self.config,
-                max_workers=self.config["batch"]["max_workers"]
+                max_workers=self.config.get("batch", {}).get("max_workers", 4)
             )
         else:
             # 初始化失败，显示错误面板
@@ -1880,5 +1880,8 @@ class MainWindow(FluentWindow):
 
         # I4: clean up GPU status widget timer
         self.gpu_status.cleanup()
+
+        # 关闭 PDF 加载器（释放文件句柄和线程池）
+        self.pdf_loader.shutdown()
 
         event.accept()

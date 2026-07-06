@@ -35,6 +35,8 @@ class PdfLoader:
         self._doc_locks_lock = threading.Lock()  # 保护 _doc_locks 字典
         self._total_cache_size = 0  # 估算的缓存总大小（MB）
         self._async_executor = ThreadPoolExecutor(max_workers=2)
+        self._doc_refcount = {}  # path -> int, 活跃用户计数
+        self._doc_refcount_lock = threading.Lock()
 
     def _estimate_doc_size(self, doc: fitz.Document) -> float:
         """估算文档内存占用（MB）"""
@@ -52,6 +54,8 @@ class PdfLoader:
                 doc, _, size = self._doc_cache[pdf_path]
                 # 更新访问时间并移到末尾（最近使用）
                 self._doc_cache.move_to_end(pdf_path)
+                with self._doc_refcount_lock:
+                    self._doc_refcount[pdf_path] = self._doc_refcount.get(pdf_path, 0) + 1
                 return doc
 
             # 打开新文档
@@ -72,12 +76,17 @@ class PdfLoader:
 
             self._doc_cache[pdf_path] = (doc, time.time(), size)
             self._total_cache_size += size
+            with self._doc_refcount_lock:
+                self._doc_refcount[pdf_path] = self._doc_refcount.get(pdf_path, 0) + 1
             return doc
 
     def _close_document(self, pdf_path: str):
-        """关闭并移除缓存的文档"""
+        """关闭并移除缓存的文档（跳过仍在使用的文档）"""
         with self._lock:
             if pdf_path in self._doc_cache:
+                with self._doc_refcount_lock:
+                    if self._doc_refcount.get(pdf_path, 0) > 0:
+                        return  # doc is in use, skip close
                 doc, _, size = self._doc_cache.pop(pdf_path)
                 try:
                     doc.close()
@@ -86,16 +95,28 @@ class PdfLoader:
                 self._total_cache_size -= size
         self._cleanup_doc_lock(pdf_path)
 
+    def shutdown(self):
+        """关闭所有资源（应用退出时调用）"""
+        self.clear_cache()
+        self._async_executor.shutdown(wait=True, timeout=10)
+
     def clear_cache(self):
-        """清空所有缓存的文档"""
+        """清空所有缓存的文档（跳过仍在使用的文档）"""
         with self._lock:
-            for doc, _, _ in self._doc_cache.values():
+            to_remove = []
+            for path, (doc, _, size) in list(self._doc_cache.items()):
+                with self._doc_refcount_lock:
+                    if self._doc_refcount.get(path, 0) > 0:
+                        continue  # skip in-use documents
                 try:
                     doc.close()
                 except Exception:
                     pass
-            self._doc_cache.clear()
-            self._total_cache_size = 0
+                to_remove.append(path)
+            for path in to_remove:
+                if path in self._doc_cache:
+                    _, _, size = self._doc_cache.pop(path)
+                    self._total_cache_size -= size
         # 清理异步执行器并重建
         self._async_executor.shutdown(wait=False)
         self._async_executor = ThreadPoolExecutor(max_workers=2)
@@ -106,6 +127,14 @@ class PdfLoader:
             if pdf_path not in self._doc_locks:
                 self._doc_locks[pdf_path] = threading.Lock()
             return self._doc_locks[pdf_path]
+
+    def _release_document(self, pdf_path: str):
+        """释放文档引用计数"""
+        with self._doc_refcount_lock:
+            if pdf_path in self._doc_refcount:
+                self._doc_refcount[pdf_path] -= 1
+                if self._doc_refcount[pdf_path] <= 0:
+                    del self._doc_refcount[pdf_path]
 
     def _cleanup_doc_lock(self, pdf_path: str):
         """清理已关闭文档的锁"""
@@ -119,14 +148,20 @@ class PdfLoader:
         注意：此方法包含同步I/O，建议在后台线程调用
         """
         doc = self._get_document(pdf_path)
-        doc_lock = self._get_doc_lock(pdf_path)
-        with doc_lock:
-            page = doc[page_num]
-            mat = fitz.Matrix(self.dpi / 72, self.dpi / 72)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            # 使用零拷贝方式创建图像，避免PNG中间格式
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples_mv)
-            return img
+        if page_num >= len(doc):
+            self._release_document(pdf_path)
+            raise ValueError(f"Page {page_num} out of range (doc has {len(doc)} pages)")
+        try:
+            doc_lock = self._get_doc_lock(pdf_path)
+            with doc_lock:
+                page = doc[page_num]
+                mat = fitz.Matrix(self.dpi / 72, self.dpi / 72)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                # 使用零拷贝方式创建图像，避免PNG中间格式
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples_mv)
+                return img
+        finally:
+            self._release_document(pdf_path)
 
     def render_page_async(
         self,
@@ -156,11 +191,14 @@ class PdfLoader:
     def get_page_size(self, pdf_path: str, page_num: int = 0) -> Tuple[float, float]:
         """返回 PDF 页面原始尺寸 (width_pt, height_pt)"""
         doc = self._get_document(pdf_path)
-        doc_lock = self._get_doc_lock(pdf_path)
-        with doc_lock:
-            page = doc[page_num]
-            rect = page.rect
-            return rect.width, rect.height
+        try:
+            doc_lock = self._get_doc_lock(pdf_path)
+            with doc_lock:
+                page = doc[page_num]
+                rect = page.rect
+                return rect.width, rect.height
+        finally:
+            self._release_document(pdf_path)
 
     def crop_region(
         self,

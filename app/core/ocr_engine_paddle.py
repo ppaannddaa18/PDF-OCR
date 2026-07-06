@@ -70,7 +70,7 @@ class PaddleOCREngine(OCREngineBase):
             self._idle_unload_seconds = vl_cfg.get("idle_unload_seconds", 300)
             self._page_dpi = vl_cfg.get("page_dpi", 200)
             self._matcher = FieldMatcher(config)
-            self._last_used_time = time.time()
+            self._last_used_time = time.monotonic()
             self._nvml_initialized = False
             self._nvml_handle = None
             self._initialized_flag = True
@@ -91,7 +91,7 @@ class PaddleOCREngine(OCREngineBase):
                     use_layout_detection=True,
                 )
                 self._initialized = True
-                self._last_used_time = time.time()
+                self._last_used_time = time.monotonic()
 
                 # 启动预热
                 if self._warmup_on_startup:
@@ -145,7 +145,7 @@ class PaddleOCREngine(OCREngineBase):
             self.initialize()
         if not self._initialized:
             raise RuntimeError(f"PaddleOCR-VL初始化失败: {self._init_error}")
-        self._last_used_time = time.time()
+        self._last_used_time = time.monotonic()
 
     def recognize(self, image: Image.Image, mode: str = "general") -> Tuple[str, float]:
         """单图识别 — 降级为整页识别后只取第一个匹配"""
@@ -160,8 +160,6 @@ class PaddleOCREngine(OCREngineBase):
         """
         整页识别 — PaddleOCR-VL一次推理，FieldMatcher匹配到各region
         """
-        self._ensure_loaded()
-
         # 为每个region计算像素坐标（不修改原region对象，避免多线程竞态）
         W, H = image.size
         pixel_bboxes = {}
@@ -174,12 +172,16 @@ class PaddleOCREngine(OCREngineBase):
 
         try:
             with self._pipeline_lock:
+                self._ensure_loaded()
+                if self._pipeline is None:
+                    raise RuntimeError("Pipeline was unloaded after initialization")
                 max_px = self._calc_max_pixels(image.size)
                 outputs = list(self._pipeline.predict(
                     image,
                     temperature=0,
                     max_pixels=max_px,
                 ))
+                self._last_used_time = time.monotonic()
         except Exception as e:
             logger.error(f"PaddleOCR-VL推理失败: {e}")
             return {r.id: ("", 0.0, 0, None) for r in regions}
@@ -204,7 +206,6 @@ class PaddleOCREngine(OCREngineBase):
             else:
                 results[region.id] = ("", 0.0, 0, None)
 
-        self._last_used_time = time.time()
         return results
 
     def _calc_max_pixels(self, image_size: Tuple[int, int]) -> int:
@@ -258,11 +259,23 @@ class PaddleOCREngine(OCREngineBase):
                 if block_label in ("table", "formula"):
                     content = item.get("block_content", "")
                     coord = item.get("block_bbox", None)
+                    if coord and isinstance(coord, list) and len(coord) >= 4:
+                        if isinstance(coord[0], (list, tuple)):
+                            # nested list of points -> extract min/max
+                            xs = [p[0] for p in coord]
+                            ys = [p[1] for p in coord]
+                            bbox = [min(xs), min(ys), max(xs), max(ys)]
+                        elif len(coord) == 4 and all(isinstance(v, (int, float)) for v in coord):
+                            bbox = coord
+                        else:
+                            bbox = None
+                    else:
+                        bbox = None
                     elements.append({
                         "type": block_label,
                         "text": content if isinstance(content, str) else str(content),
                         "confidence": 0.95,
-                        "bbox": coord,
+                        "bbox": bbox,
                     })
 
         except Exception as e:
@@ -321,7 +334,7 @@ class PaddleOCREngine(OCREngineBase):
         with self._pipeline_lock:
             if not self._initialized:
                 return
-            elapsed = time.time() - self._last_used_time
+            elapsed = time.monotonic() - self._last_used_time
             if elapsed > self._idle_unload_seconds:
                 self.unload()
 

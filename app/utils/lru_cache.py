@@ -39,6 +39,8 @@ class LRUCache:
             ttl_seconds: 过期时间（秒），None表示永不过期
             on_evict: 淘汰回调函数
         """
+        if max_size <= 0:
+            raise ValueError(f"max_size must be > 0, got {max_size}")
         self._cache: OrderedDict = OrderedDict()
         self._max_size = max_size
         self._ttl = ttl_seconds

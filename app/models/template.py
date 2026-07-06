@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import List
 from datetime import datetime
 from app.models.region import Region
@@ -14,14 +14,7 @@ class Template:
     description: str = ""
 
     def to_dict(self) -> dict:
-        return {
-            "name": self.name,
-            "regions": [r.to_dict() for r in self.regions],
-            "page_width": self.page_width,
-            "page_height": self.page_height,
-            "created_at": self.created_at,
-            "description": self.description,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Template":

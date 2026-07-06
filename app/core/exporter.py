@@ -12,6 +12,9 @@ class Exporter:
                 row[field_name] = fr.text
                 if include_confidence:
                     row[f"{field_name}_置信度"] = round(fr.confidence, 3)
+                row[f"{field_name}_引擎"] = fr.engine
+                row[f"{field_name}_匹配级别"] = fr.match_level
+                row[f"{field_name}_人工修正"] = "是" if fr.manually_edited else "否"
             rows.append(row)
         df = pd.DataFrame(rows)
         try:
@@ -27,6 +30,9 @@ class Exporter:
                 row[field_name] = fr.text
                 if include_confidence:
                     row[f"{field_name}_置信度"] = round(fr.confidence, 3)
+                row[f"{field_name}_引擎"] = fr.engine
+                row[f"{field_name}_匹配级别"] = fr.match_level
+                row[f"{field_name}_人工修正"] = "是" if fr.manually_edited else "否"
             rows.append(row)
         df = pd.DataFrame(rows)
         try:
