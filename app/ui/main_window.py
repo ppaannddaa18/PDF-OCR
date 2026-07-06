@@ -468,6 +468,27 @@ class MainWindow(FluentWindow):
         self.pdf_canvas = ui.PdfCanvas()
         canvas_layout.addWidget(self.pdf_canvas, 1)
 
+        # 版面可视化（VLM自动模式下的block覆盖层）
+        from app.ui.widgets.layout_visualizer import LayoutVisualizer
+        self._layout_view = LayoutVisualizer()
+        self._layout_view.setMinimumWidth(200)
+        self._layout_view.hide()  # 默认隐藏，VLM模式显示
+
+        # 中间区域子 splitter（PDF 画布 + 版面可视化）
+        middle_splitter = QSplitter(Qt.Orientation.Horizontal)
+        middle_splitter.addWidget(canvas_container)
+        middle_splitter.addWidget(self._layout_view)
+        middle_splitter.setStretchFactor(0, 3)
+        middle_splitter.setStretchFactor(1, 2)
+
+        # 滚动同步：pdf_canvas <-> layout_visualizer
+        self.pdf_canvas.verticalScrollBar().valueChanged.connect(
+            self._layout_view.scroll_to
+        )
+        self._layout_view.scrolled.connect(
+            self.pdf_canvas.verticalScrollBar().setValue
+        )
+
         # 右栏：字段配置（包含标题）
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
@@ -508,7 +529,7 @@ class MainWindow(FluentWindow):
 
         # 添加到 splitter
         splitter.addWidget(left_panel)
-        splitter.addWidget(canvas_container)
+        splitter.addWidget(middle_splitter)
         splitter.addWidget(right_panel)
 
         # 设置初始比例 (左:中:右 = 1:4:1.5)
@@ -1203,6 +1224,10 @@ class MainWindow(FluentWindow):
         self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
         self._current_page_image = self._current_preprocessor.get_current_image()
         self.preprocess_toolbar.setEnabled(True)
+
+        # 同步设置版面可视化背景图
+        if self._layout_view is not None:
+            self._layout_view.set_page_image_from_pil(self._current_page_image)
 
         # 加载该PDF的字段配置（默认或特殊配置）
         template = self._get_effective_template(pdf_path)
