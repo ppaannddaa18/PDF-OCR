@@ -779,6 +779,7 @@ class MainWindow(FluentWindow):
         # 引擎切换（三引擎）
         from qfluentwidgets import ComboBox
         self.engine_combo = ComboBox()
+        self.engine_combo.blockSignals(True)  # 防止初始化时触发切换
         self.engine_combo.addItems([
             "PaddleOCR-VL (GPU)",
             "PaddleOCR-VL (CPU)",
@@ -788,6 +789,7 @@ class MainWindow(FluentWindow):
         current_engine = self.config.get("ocr", {}).get("engine", "paddleocr_vl")
         idx_map = {"paddleocr_vl": 0, "paddleocr_vl_cpu": 1, "rapidocr": 2}
         self.engine_combo.setCurrentIndex(idx_map.get(current_engine, 0))
+        self.engine_combo.blockSignals(False)
         self.engine_combo.currentIndexChanged.connect(self._on_engine_switched)
         self.engine_combo.setMinimumWidth(170)
         toolbar_layout.addWidget(self.engine_combo)
@@ -1831,9 +1833,11 @@ class MainWindow(FluentWindow):
         # 更新配置
         self.config["ocr"]["engine"] = new_engine_type
 
-        # 重新创建引擎
+        # 重新创建引擎（先卸载旧引擎+重置单例，确保新配置生效）
         if hasattr(self.ocr_engine, 'unload'):
             self.ocr_engine.unload()
+        if hasattr(type(self.ocr_engine), 'reset_instance'):
+            type(self.ocr_engine).reset_instance()
         self.ocr_engine = get_ocr_engine(self.config)
 
         # 异步初始化新引擎（带世代计数器防竞态）
