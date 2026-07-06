@@ -61,9 +61,14 @@ class GpuStatusWidget(QWidget):
             except Exception:
                 self.status_icon.setStyleSheet("font-size: 10px; color: #0078d4;")
                 self.status_label.setText("GPU: PaddleOCR-VL (就绪)")
-            # I1: wire up idle unload timer
+            # I1: wire up idle unload timer (offloaded to background thread to avoid UI stutter)
             if hasattr(self._engine, '_check_idle_unload'):
-                self._engine._check_idle_unload()
+                import threading
+                threading.Thread(
+                    target=self._engine._check_idle_unload,
+                    daemon=True,
+                    name="GPU-Idle-Check"
+                ).start()
         else:
             self.status_icon.setStyleSheet("font-size: 10px; color: #666;")
             self.status_label.setText("CPU: RapidOCR (就绪)")

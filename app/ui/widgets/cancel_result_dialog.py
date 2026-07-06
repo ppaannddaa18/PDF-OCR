@@ -176,7 +176,18 @@ class CancelResultDialog(QDialog):
                 json.dump(task_data, f, indent=2, ensure_ascii=False)
 
         except Exception as e:
-            print(f"保存待恢复任务失败: {e}")
+            import logging
+            logging.getLogger(__name__).error(f"保存待恢复任务失败: {e}")
+            from qfluentwidgets import InfoBar, InfoBarPosition
+            InfoBar.error(
+                title="保存失败",
+                content=f"无法保存任务进度: {e}",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self.parent() if self.parent() else self
+            )
 
     @classmethod
     def has_pending_task(cls) -> bool:

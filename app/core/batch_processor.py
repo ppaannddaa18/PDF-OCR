@@ -69,7 +69,7 @@ class BatchProcessor:
             fields = {}
             regions_by_page: Dict[int, list] = {}
             for region in template.regions:
-                page_num = getattr(region, 'page_num', 0)
+                page_num = 0  # 多页未实现，统一归到第0页
                 if page_num not in regions_by_page:
                     regions_by_page[page_num] = []
                 regions_by_page[page_num].append(region)

@@ -84,9 +84,15 @@ class RapidOCREngine(OCREngineBase):
 
     def recognize(self, image: Image.Image, mode: str = "general") -> Tuple[str, float]:
         if not self._initialized:
-            if self._init_error:
-                raise RuntimeError(f"OCR引擎初始化失败: {self._init_error}")
-            raise RuntimeError("OCR引擎未初始化")
+            # 尝试自动重新初始化
+            try:
+                self.initialize()
+            except Exception:
+                pass
+            if not self._initialized:
+                if self._init_error:
+                    raise RuntimeError(f"OCR引擎初始化失败: {self._init_error}")
+                raise RuntimeError("OCR引擎未初始化")
 
         img = preprocess_for_ocr(image, mode)
         arr = np.array(img)

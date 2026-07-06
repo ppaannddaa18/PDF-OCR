@@ -152,16 +152,14 @@ class ImagePreprocessToolbar(QWidget):
         self.image_changed.emit()
 
     def _on_auto_contrast(self):
-        """[修复] 触发自动对比度处理"""
+        """[修复] 触发自动对比度处理，标记持久化直到显式重置"""
         self._current_params['auto_contrast_applied'] = True
-        self.apply_auto_contrast.emit()  # [修复] 发送专门信号触发处理
-        self._current_params['auto_contrast_applied'] = False  # 重置标记
+        self.apply_auto_contrast.emit()
 
     def _on_sharpen(self):
-        """[修复] 触发锐化处理"""
+        """[修复] 触发锐化处理，标记持久化直到显式重置"""
         self._current_params['sharpen_applied'] = True
-        self.apply_sharpen.emit()  # [修复] 发送专门信号触发处理
-        self._current_params['sharpen_applied'] = False  # 重置标记
+        self.apply_sharpen.emit()
 
     def _on_reset(self):
         self.rotation_combo.setCurrentIndex(0)

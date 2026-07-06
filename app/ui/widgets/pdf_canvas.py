@@ -477,13 +477,15 @@ class PdfCanvas(QGraphicsView):
             rect = self.temp_rect.rect()
             if rect.width() > 5 and rect.height() > 5 and self.img_w > 0 and self.img_h > 0:
                 color = self.temp_rect.data(0)  # 获取颜色
+                # 钳制坐标到 [0, 1]，避免浮点边界值导致崩溃
+                x = max(0.0, min(1.0, rect.x() / self.img_w))
+                y = max(0.0, min(1.0, rect.y() / self.img_h))
+                w = max(0.001, min(1.0, rect.width() / self.img_w))
+                h = max(0.001, min(1.0, rect.height() / self.img_h))
                 region = Region(
-                    id=str(uuid.uuid4())[:8],
+                    id=uuid.uuid4().hex,
                     field_name=f"字段{len(self.region_items)+1}",
-                    x=rect.x() / self.img_w,
-                    y=rect.y() / self.img_h,
-                    w=rect.width() / self.img_w,
-                    h=rect.height() / self.img_h,
+                    x=x, y=y, w=w, h=h,
                     color=color,
                 )
                 # 创建正式的 SelectableRectItem

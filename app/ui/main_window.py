@@ -911,8 +911,6 @@ class MainWindow(FluentWindow):
             if rid in self.pdf_canvas.regions_data:
                 del self.pdf_canvas.regions_data[rid]
             self.pdf_canvas.remove_region(rid)
-            # 从字段面板删除
-            self.field_panel._delete(rid)
             self._save_current_pdf_config()
 
         def add_region_back(r):
@@ -1009,6 +1007,11 @@ class MainWindow(FluentWindow):
             # 当前没有字段配置
             self._set_template_name("未配置", is_default=False)
 
+        # 清除缓存的预览结果（区域已变化，旧预览已失效）
+        self._current_preview_result = None
+        if self._current_pdf and self._current_pdf in self._pdf_preview_results:
+            del self._pdf_preview_results[self._current_pdf]
+
         # 更新文件列表中的配置状态显示
         self._update_file_list_status()
 
@@ -1052,6 +1055,21 @@ class MainWindow(FluentWindow):
             )
             return
 
+        # 检查是否有自定义的per-file配置将被丢弃
+        if self._pdf_overrides:
+            from qfluentwidgets import MessageBox
+            msg = MessageBox(
+                "确认设置默认模板",
+                f"当前有 {len(self._pdf_overrides)} 个PDF文件使用了自定义配置。\n"
+                "设为默认模板后，所有自定义配置将被丢弃。\n\n"
+                "确定要继续吗？",
+                self
+            )
+            msg.yesButton.setText("确认")
+            msg.cancelButton.setText("取消")
+            if not msg.exec():
+                return
+
         self._default_template = template
         # 清除所有特殊配置（因为现在都使用新的默认模板）
         self._pdf_overrides.clear()
@@ -1094,7 +1112,21 @@ class MainWindow(FluentWindow):
         self._current_pdf = pdf_path
 
         # 加载新 PDF 预览（自动保留已有的框选区域）
-        image = self.pdf_loader.render_page(pdf_path)
+        try:
+            image = self.pdf_loader.render_page(pdf_path)
+        except Exception as e:
+            InfoBar.error(
+                title="PDF加载失败",
+                content=f"无法渲染PDF文件: {e}",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self
+            )
+            self.status_label.setText("PDF加载失败")
+            self._current_pdf = None
+            return
 
         # 初始化或恢复图像预处理器
         from app.utils.image_preprocessor import ImagePreprocessor
@@ -1158,8 +1190,10 @@ class MainWindow(FluentWindow):
         """将当前预处理应用到所有文件"""
         if self._current_preprocessor and self._current_pdf:
             params = self._current_preprocessor.get_params()
-            # 应用到所有已加载的PDF文件
+            # 应用到所有已加载的PDF文件（跳过当前文件，因其已应用）
             for pdf_path in self.file_panel.files:
+                if pdf_path == self._current_pdf:
+                    continue
                 self._pdf_preprocessors[pdf_path] = params.copy()
             InfoBar.success(
                 title="成功",
@@ -1229,12 +1263,33 @@ class MainWindow(FluentWindow):
             )
             return
         self.status_label.setText("正在试识别...")
-        result = self.processor.process_one(current_pdf, template)
-        self.field_panel.show_preview_result(result)
-        self._current_preview_result = result
-        # 保存到持久化存储
-        self._pdf_preview_results[current_pdf] = result
-        self.status_label.setText(f"试识别完成 - 共 {len(template.regions)} 个字段")
+        import threading
+
+        def _do_try_ocr():
+            try:
+                result = self.processor.process_one(current_pdf, template)
+                def _on_done():
+                    self.field_panel.show_preview_result(result)
+                    self._current_preview_result = result
+                    # 保存到持久化存储
+                    self._pdf_preview_results[current_pdf] = result
+                    self.status_label.setText(f"试识别完成 - 共 {len(template.regions)} 个字段")
+                QTimer.singleShot(0, _on_done)
+            except Exception as e:
+                def _on_error():
+                    InfoBar.error(
+                        title="试识别失败",
+                        content=str(e),
+                        orient=Qt.Orientation.Horizontal,
+                        isClosable=True,
+                        position=InfoBarPosition.TOP,
+                        duration=5000,
+                        parent=self
+                    )
+                    self.status_label.setText("试识别失败")
+                QTimer.singleShot(0, _on_error)
+
+        threading.Thread(target=_do_try_ocr, daemon=True, name="TryOCR").start()
 
     def on_batch_run(self):
         # 防止重复点击启动多个 Worker
@@ -1281,6 +1336,9 @@ class MainWindow(FluentWindow):
                 parent=self
             )
             return
+
+        # 显示进度条
+        self.progress_widget.setVisible(True)
 
         # 为每个文件准备对应的模板
         templates = []
@@ -1493,18 +1551,30 @@ class MainWindow(FluentWindow):
         path, _ = QFileDialog.getSaveFileName(self, "导出Excel", "result.xlsx", "Excel (*.xlsx)")
         if path:
             # 如用户在表格里手动编辑过，需同步回 self.results
-            self.results = self.result_table.collect_results()
+            collected = self.result_table.collect_results()
             include_conf = self.config["export"]["include_confidence"]
-            self.exporter.to_excel(self.results, path, include_conf)
-            InfoBar.success(
-                title="成功",
-                content=f"已导出到 {path}",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=3000,
-                parent=self
-            )
+            try:
+                self.exporter.to_excel(collected, path, include_conf)
+                self.results = collected
+                InfoBar.success(
+                    title="成功",
+                    content=f"已导出到 {path}",
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=3000,
+                    parent=self
+                )
+            except Exception as e:
+                InfoBar.error(
+                    title="导出失败",
+                    content=f"导出Excel时出错: {e}",
+                    orient=Qt.Orientation.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=5000,
+                    parent=self
+                )
 
     def on_save_template(self):
         path, _ = QFileDialog.getSaveFileName(self, "保存模板", "", "JSON (*.json)")
@@ -1753,6 +1823,12 @@ class MainWindow(FluentWindow):
         # 清空旧结果（BatchProcessor 和 GpuStatus 由 _on_ocr_ready 统一更新）
         self._current_preview_result = None
         self._pdf_preview_results.clear()
+        self.results = []
+        self.result_table.load_results([])
+        # 更新统计信息
+        self.stat_total.setText("共 0 个文件")
+        self.stat_success.setText("成功: 0")
+        self.stat_fail.setText("失败: 0")
 
         InfoBar.success(
             title="引擎已切换",
@@ -1765,7 +1841,38 @@ class MainWindow(FluentWindow):
         """窗口关闭时确保 worker 线程安全终止"""
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
-            self.worker.wait(3000)  # 等待最多3秒
+            # 保存待处理任务以便下次恢复
+            if self.results:
+                try:
+                    all_files = self.file_panel.all_files()
+                    completed = len(self.results)
+                    remaining_files = all_files[completed:] if completed < len(all_files) else []
+                    if remaining_files:
+                        from app.ui.widgets.cancel_result_dialog import CancelResultDialog
+                        import json
+                        from datetime import datetime
+                        CancelResultDialog.PENDING_TASK_FILE.parent.mkdir(parents=True, exist_ok=True)
+                        task_data = {
+                            "timestamp": datetime.now().isoformat(),
+                            "completed": completed,
+                            "total": len(all_files),
+                            "success": sum(1 for r in self.results if r.success),
+                            "failed": completed - sum(1 for r in self.results if r.success),
+                            "pending_files": remaining_files,
+                            "results": [
+                                {
+                                    "source_file": r.source_file,
+                                    "fields": {k: {"text": v.text, "confidence": v.confidence}
+                                               for k, v in r.fields.items()}
+                                }
+                                for r in self.results
+                            ]
+                        }
+                        with open(CancelResultDialog.PENDING_TASK_FILE, 'w', encoding='utf-8') as f:
+                            json.dump(task_data, f, indent=2, ensure_ascii=False)
+                except Exception:
+                    pass
+            self.worker.wait(10000)  # 等待最多10秒
 
         # 关闭进度对话框（如果存在）
         if hasattr(self, 'progress_dialog') and self.progress_dialog:

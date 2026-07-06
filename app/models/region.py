@@ -5,10 +5,11 @@ from typing import Literal, List
 @dataclass
 class Region:
     def __post_init__(self):
-        assert 0 <= self.x <= 1, f"x must be in [0,1], got {self.x}"
-        assert 0 <= self.y <= 1, f"y must be in [0,1], got {self.y}"
-        assert 0 < self.w <= 1, f"w must be in (0,1], got {self.w}"
-        assert 0 < self.h <= 1, f"h must be in (0,1], got {self.h}"
+        # 钳制坐标到合法范围，避免浮点边界值导致崩溃
+        self.x = max(0.0, min(1.0, self.x))
+        self.y = max(0.0, min(1.0, self.y))
+        self.w = max(0.001, min(1.0, self.w))
+        self.h = max(0.001, min(1.0, self.h))
 
     """框选区域数据模型（坐标使用归一化 0~1 比例）"""
     id: str                            # 唯一标识

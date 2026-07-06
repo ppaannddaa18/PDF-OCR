@@ -165,7 +165,15 @@ class FileListPanel(QWidget):
             batch = remaining[i:i+self.BATCH_SIZE]
             timer = QTimer()
             timer.setSingleShot(True)
-            timer.timeout.connect(lambda b=batch, s=processed_count + i: process_batch(b, s))
+
+            def make_callback(b=batch, s=processed_count + i, t=timer):
+                def cb():
+                    process_batch(b, s)
+                    if t in self._pending_timers:
+                        self._pending_timers.remove(t)
+                return cb
+
+            timer.timeout.connect(make_callback())
             timer.start(self.BATCH_DELAY * (i // self.BATCH_SIZE + 1))
             self._pending_timers.append(timer)
 

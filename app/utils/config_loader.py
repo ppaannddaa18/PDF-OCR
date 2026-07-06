@@ -47,12 +47,35 @@ def load_config(path: str = None) -> dict:
         if config is None:
             config = {}
 
+    _validate_config(config)
+
     # 启动器环境变量覆盖（优先级高于配置文件）
     env_engine = os.environ.get("PDFOCR_ENGINE", "")
     if env_engine in ("paddleocr_vl", "rapidocr"):
         config.setdefault("ocr", {})["engine"] = env_engine
 
     return config
+
+
+def _validate_config(config: dict) -> None:
+    """验证配置文件的必要键和类型，缺失时用默认值填充"""
+    required_keys = {
+        "app": dict,
+        "pdf": dict,
+        "ocr": dict,
+        "batch": dict,
+        "export": dict,
+    }
+    defaults = get_default_config()
+    for key, expected_type in required_keys.items():
+        if key not in config:
+            config[key] = defaults.get(key, {})
+        elif not isinstance(config[key], expected_type):
+            raise ValueError(f"配置项 '{key}' 应为 {expected_type.__name__} 类型，实际为 {type(config[key]).__name__}")
+
+    # 检查必要子键
+    if "engine" not in config.get("ocr", {}):
+        config.setdefault("ocr", {})["engine"] = "paddleocr_vl"
 
 
 def get_default_config() -> dict:
