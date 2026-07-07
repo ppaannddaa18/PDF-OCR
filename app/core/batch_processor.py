@@ -89,12 +89,13 @@ class BatchProcessor:
                         text, conf, match_level, _ = page_results.get(
                             region.id, ("", 0.0, 0, None)
                         )
-                        fields[region.field_name] = FieldResult(
+                        fields[region.id] = FieldResult(
                             field_name=region.field_name,
                             text=text,
                             confidence=conf,
                             match_level=match_level,
                             engine=self.ocr.engine_name,
+                            region_id=region.id,
                         )
                 else:
                     # RapidOCR: 逐区域裁剪识别
@@ -109,11 +110,12 @@ class BatchProcessor:
                         else:
                             crop = rendered_image.crop((left, top, right, bottom))
                         text, conf = self.ocr.recognize(crop, region.ocr_mode)
-                        fields[region.field_name] = FieldResult(
+                        fields[region.id] = FieldResult(
                             field_name=region.field_name,
                             text=text,
                             confidence=conf,
                             engine="rapidocr",
+                            region_id=region.id,
                         )
 
             return FileResult(source_file=pdf_path, fields=fields, success=True)

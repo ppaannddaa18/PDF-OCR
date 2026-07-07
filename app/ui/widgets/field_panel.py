@@ -334,12 +334,9 @@ class FieldPanel(QWidget):
             rid = item.data(Qt.ItemDataRole.UserRole)
             if rid not in self.regions:
                 continue
-            region = self.regions[rid]
-            # 使用 region_id 对应的 field_name 查找结果
-            field_name = region.field_name
-            if field_name in file_result.fields:
-                fr = file_result.fields[field_name]
-                # 使用 region_id 作为 key 存储结果，便于后续查找
+            # 使用 region_id 直接查找结果（B4 修复后 FileResult.fields key=region_id）
+            if rid in file_result.fields:
+                fr = file_result.fields[rid]
                 self._preview_results[rid] = fr
 
                 # 根据字段类型进行验证和标准化
