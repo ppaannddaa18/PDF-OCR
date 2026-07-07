@@ -93,8 +93,8 @@ class BatchProcessor:
                         key = region.field_name
                         suffix = 1
                         while key in fields:
-                            suffix += 1
                             key = f"{region.field_name}_{suffix}"
+                            suffix += 1
                         fields[key] = FieldResult(
                             field_name=region.field_name,
                             text=text,
@@ -120,8 +120,8 @@ class BatchProcessor:
                         key = region.field_name
                         suffix = 1
                         while key in fields:
-                            suffix += 1
                             key = f"{region.field_name}_{suffix}"
+                            suffix += 1
                         fields[key] = FieldResult(
                             field_name=region.field_name,
                             text=text,
