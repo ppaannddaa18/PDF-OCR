@@ -84,11 +84,6 @@ class GpuStatusWidget(QWidget):
         """停止定时器"""
         self._timer.stop()
 
-    def closeEvent(self, event):
-        """关闭时停止定时器"""
-        self._timer.stop()
-        super().closeEvent(event)
-
     def hideEvent(self, event):
         """隐藏时停止定时器"""
         self._timer.stop()
