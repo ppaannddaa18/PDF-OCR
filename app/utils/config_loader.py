@@ -102,7 +102,7 @@ def get_default_config() -> dict:
                 "vl_rec_model_name": "PaddleOCR-VL-1.6-0.9B",
                 "device": "gpu:0",
                 "precision": "fp16",
-                "use_layout_detection": True,  # 与 config.yaml 对齐
+                "use_layout_detection": False,  # 默认关闭，VLM自带版面理解，省~3GB显存
                 "warmup_on_startup": False,  # 8GB显卡建议关闭
                 "use_tensorrt": False,
                 "enable_hpi": False,

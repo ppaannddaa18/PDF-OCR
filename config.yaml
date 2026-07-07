@@ -18,13 +18,36 @@ ocr:
     vl_rec_model_name: PaddleOCR-VL-1.6-0.9B
     device: gpu:0
     precision: fp16
+    engine: paddle_dynamic
     use_layout_detection: false
     warmup_on_startup: false
+    use_tensorrt: false
+    enable_hpi: false
+    max_new_tokens: 2048
+    min_pixels: 262144
     idle_unload_seconds: 300
     page_dpi: 200
     high_quality_dpi: 300
     match_iou_threshold: 0.5
     match_neighbor_radius: 50
+    max_vram_gb: 7.8
+    min_free_vram_gb: 0.1
+    vlm_resolution:
+      text:
+        min_pixels: 262144
+        max_pixels: 1048576
+      table:
+        min_pixels: 524288
+        max_pixels: 4194304
+      formula:
+        min_pixels: 524288
+        max_pixels: 4194304
+      chart:
+        min_pixels: 524288
+        max_pixels: 4194304
+      seal:
+        min_pixels: 65536
+        max_pixels: 262144
   rapidocr:
     use_gpu: false
     lang: ch

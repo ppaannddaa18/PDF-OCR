@@ -27,7 +27,7 @@ ocr:
     min_free_vram_gb: 0.1
     page_dpi: 200
     precision: fp32
-    use_layout_detection: true
+    use_layout_detection: false
     vl_rec_model_name: PaddleOCR-VL-1.6-0.9B
     warmup_on_startup: false
     use_tensorrt: false

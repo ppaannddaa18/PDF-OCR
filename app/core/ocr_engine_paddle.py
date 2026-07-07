@@ -113,6 +113,42 @@ class PaddleOCREngine(OCREngineBase):
             self._nvml_handle = None
             self._initialized_flag = True
 
+    def _build_paddlex_config(self):
+        """
+        构建 PaddleX 配置，控制模型加载。
+
+        关键: PaddleOCRVL.__init__ 的 use_layout_detection 参数不会阻止模型加载，
+        PP-DocLayoutV3 (~2.5GB) 始终被加载。通过 paddlex_config 传入修改后的
+        完整配置，从 SubModules 中移除 LayoutDetection 才能省下这 2.5GB。
+        """
+        try:
+            from paddlex.inference import load_pipeline_config
+
+            config = load_pipeline_config("PaddleOCR-VL-1.6")
+            # AttrDict → 普通 dict，递归转换
+            def _to_dict(obj):
+                if hasattr(obj, "items"):
+                    return {k: _to_dict(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [_to_dict(v) for v in obj]
+                return obj
+
+            config = _to_dict(config)
+            config["use_layout_detection"] = self._use_layout_detection
+
+            if not self._use_layout_detection:
+                submodules = config.get("SubModules", {})
+                submodules.pop("LayoutDetection", None)
+                if submodules:
+                    config["SubModules"] = submodules
+                else:
+                    config.pop("SubModules", None)
+                logger.info("LayoutDetection 模型已从 pipeline 配置中移除，省 ~2.5GB 显存")
+            return config
+        except Exception as e:
+            logger.warning(f"构建 paddlex_config 失败，使用默认配置: {e}")
+            return None
+
     def initialize(self) -> None:
         """同步初始化（在后台线程中调用，不阻塞GUI）"""
         if self._initialized:
@@ -125,6 +161,15 @@ class PaddleOCREngine(OCREngineBase):
                 from paddleocr import PaddleOCRVL
                 import paddle
                 paddle.set_device(self._device)
+                # GPU显存优化: auto_growth 按需分配（env vars 可能未生效时兜底）
+                if self._device != "cpu":
+                    try:
+                        paddle.device.cuda.set_allocator_strategy("auto_growth")
+                        logger.info("PaddlePaddle CUDA allocator: auto_growth")
+                    except Exception:
+                        pass  # 旧版 PaddlePaddle 不支持，依赖环境变量 FLAGS_allocator_strategy
+                # 构建 paddlex_config，控制子模块加载
+                paddlex_config = self._build_paddlex_config()
                 self._pipeline = PaddleOCRVL(
                     vl_rec_model_name=self._model_name,
                     device=self._device,
@@ -133,6 +178,7 @@ class PaddleOCREngine(OCREngineBase):
                     use_layout_detection=self._use_layout_detection,
                     use_tensorrt=self._use_tensorrt,
                     enable_hpi=self._enable_hpi,
+                    paddlex_config=paddlex_config,  # 传入修改后的配置控制模型加载
                 )
                 logger.info("PaddleOCR-VL pipeline 创建完成")
                 self._initialized = True

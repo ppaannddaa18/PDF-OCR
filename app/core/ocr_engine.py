@@ -20,6 +20,16 @@ def get_ocr_engine(config: dict) -> OCREngineBase:
 
     if engine_type in ("paddleocr_vl", "paddleocr_vl_cpu"):
         try:
+            # 在 PaddlePaddle 导入前设置内存分配策略（进程级，必须在首次 import paddle 之前）
+            import os
+            if engine_type == "paddleocr_vl":
+                os.environ.setdefault("FLAGS_allocator_strategy", "auto_growth")
+                # 显存上限 = max_vram_gb，留 10% 余量给其他进程
+                vl_cfg_pre = config.get("ocr", {}).get("paddleocr_vl", {})
+                max_vram = vl_cfg_pre.get("max_vram_gb", 7.8)
+                memory_limit_mb = int(max_vram * 1024 * 0.9)
+                os.environ.setdefault("FLAGS_gpu_memory_limit_mb", str(memory_limit_mb))
+
             # 预检：确认 PaddleOCR 实际可导入
             import paddleocr  # noqa: F401
             from app.core.ocr_engine_paddle import PaddleOCREngine
