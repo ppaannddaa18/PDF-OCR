@@ -78,19 +78,16 @@ class SelectableRectItem(QGraphicsRectItem):
         self.setZValue(10)
 
     def _create_handles(self):
-        """创建调整手柄"""
-        # 清除旧手柄防止泄漏
-        for h in self.handles:
-            if h.scene():
-                h.scene().removeItem(h)
-        self.handles.clear()
+        """创建或更新调整手柄的位置（首次创建，后续仅移动）"""
+        if self.handles:
+            # handles 已存在：仅更新位置
+            self.update_handle_positions()
+            return
         rect = self.rect()
-        # 四个角
         self.handles.append(ResizeHandle(rect.left(), rect.top(), HANDLE_SIZE, 'tl', self))
         self.handles.append(ResizeHandle(rect.right(), rect.top(), HANDLE_SIZE, 'tr', self))
         self.handles.append(ResizeHandle(rect.left(), rect.bottom(), HANDLE_SIZE, 'bl', self))
         self.handles.append(ResizeHandle(rect.right(), rect.bottom(), HANDLE_SIZE, 'br', self))
-        # 移动手柄（中心点）
         self.handles.append(ResizeHandle(rect.center().x(), rect.center().y(), HANDLE_SIZE, 'move', self))
         self._update_handles_visibility(False)
 
@@ -583,7 +580,7 @@ class PdfCanvas(QGraphicsView):
                          region.w * self.img_w, region.h * self.img_h)
             item.setRect(rect)
             # 更新手柄位置
-            item._create_handles()
+            item.update_handle_positions()
             item._update_handles_visibility(item.isSelected())
             self.regions_data[region_id] = region
         else:
