@@ -30,6 +30,26 @@ ocr:
     use_layout_detection: true
     vl_rec_model_name: PaddleOCR-VL-1.6-0.9B
     warmup_on_startup: false
+    use_tensorrt: false
+    enable_hpi: false
+    max_new_tokens: 2048
+    min_pixels: 262144
+    vlm_resolution:
+      text:
+        min_pixels: 262144
+        max_pixels: 1048576
+      table:
+        min_pixels: 524288
+        max_pixels: 4194304
+      formula:
+        min_pixels: 524288
+        max_pixels: 4194304
+      chart:
+        min_pixels: 524288
+        max_pixels: 4194304
+      seal:
+        min_pixels: 65536
+        max_pixels: 262144
   rapidocr:
     det_db_box_thresh: 0.3
     drop_score: 0.5
