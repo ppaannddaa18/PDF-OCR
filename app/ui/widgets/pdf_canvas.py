@@ -159,6 +159,9 @@ class PdfCanvas(QGraphicsView):
         self.right_dragging = False
         self.last_mouse_pos = None
 
+        # VLM模式下禁用框选
+        self._drawing_enabled = True
+
         # 空状态提示
         self.empty_text = None
         self._show_empty_state()
@@ -204,6 +207,16 @@ class PdfCanvas(QGraphicsView):
         if self.empty_text:
             self.scene_.removeItem(self.empty_text)
             self.empty_text = None
+
+    def set_drawing_enabled(self, enabled: bool):
+        """启用/禁用框选功能（VLM模式下禁用）"""
+        self._drawing_enabled = enabled
+        if not enabled:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _is_drawing_blocked(self) -> bool:
+        """检查框选是否被VLM模式禁用，若禁用则调用super()并返回True"""
+        return not self._drawing_enabled
 
     def clear(self):
         """清空画布，恢复到初始状态"""
@@ -265,6 +278,9 @@ class PdfCanvas(QGraphicsView):
         return None
 
     def mousePressEvent(self, event):
+        if self._is_drawing_blocked():
+            super().mousePressEvent(event)
+            return
         scene_pos = self.mapToScene(event.pos())
 
         # 右键拖动
@@ -341,6 +357,9 @@ class PdfCanvas(QGraphicsView):
         self.selected_region_id = None
 
     def mouseMoveEvent(self, event):
+        if self._is_drawing_blocked():
+            super().mouseMoveEvent(event)
+            return
         scene_pos = self.mapToScene(event.pos())
 
         # 移动区域
@@ -422,6 +441,10 @@ class PdfCanvas(QGraphicsView):
         return QRectF(left, top, right - left, bottom - top)
 
     def mouseReleaseEvent(self, event):
+        if self._is_drawing_blocked():
+            super().mouseReleaseEvent(event)
+            return
+
         scene_pos = self.mapToScene(event.pos())
 
         # 结束移动
@@ -474,7 +497,6 @@ class PdfCanvas(QGraphicsView):
                 new_rect = self.moved_item.rect()
                 if (abs(new_rect.x() - self.move_start_rect.x()) > 2 or
                     abs(new_rect.y() - self.move_start_rect.y()) > 2):
-                    from app.models.region import Region
                     old_data = self.regions_data.get(self.moved_item.region_id)
                     if old_data:
                         new_region = Region(

@@ -1,0 +1,59 @@
+
+app:
+  name: PDF OCR Tool
+  version: 2.0.0
+  window_size:
+  - 1600
+  - 1000
+batch:
+  max_workers: 4
+  retry_times: 2
+export:
+  default_format: xlsx
+  include_confidence: true
+ocr:
+  det_db_box_thresh: 0.5
+  drop_score: 0.5
+  engine: paddleocr_vl
+  lang: ch
+  paddleocr_vl:
+    device: gpu:0
+    engine: paddle_dynamic
+    high_quality_dpi: 300
+    idle_unload_seconds: 300
+    match_iou_threshold: 0.5
+    match_neighbor_radius: 50
+    max_vram_gb: 7.8
+    min_free_vram_gb: 0.1
+    page_dpi: 200
+    precision: fp32
+    use_layout_detection: true
+    vl_rec_model_name: PaddleOCR-VL-1.6-0.9B
+    warmup_on_startup: false
+  rapidocr:
+    det_db_box_thresh: 0.3
+    drop_score: 0.5
+    lang: ch
+    use_gpu: false
+  use_angle_cls: true
+  use_gpu: true
+pdf:
+  max_preview_size: 2000
+  render_dpi: 200
+
+layout_visualization:
+  enabled: true
+  colors:
+    text: "#4A90D9"
+    table: "#27AE60"
+    formula: "#E67E22"
+    chart: "#8E44AD"
+    seal: "#E74C3C"
+
+finance:
+  enabled: false
+  invoice:
+    keywords: ["发票号码", "开票日期", "价税合计", "购买方", "销售方"]
+  validation:
+    amount_tolerance: 0.01
+    tax_rate: 0.13
