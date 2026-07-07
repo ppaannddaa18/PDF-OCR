@@ -194,6 +194,13 @@ class MainWindow(FluentWindow):
         # 初始模式同步（引擎切换触发 UI 模式调整）
         QTimer.singleShot(100, lambda: self._switch_ui_mode(self._current_mode))
 
+        # 财务字段处理器（引擎无关，复用实例）
+        try:
+            from app.core.finance_processor import FinanceProcessor
+            self._finance_processor = FinanceProcessor(self.config)
+        except ImportError:
+            self._finance_processor = None
+
     def _setup_shortcuts(self):
         """设置快捷键"""
         from PyQt6.QtGui import QShortcut, QKeySequence
@@ -2173,9 +2180,8 @@ class MainWindow(FluentWindow):
         finance_result = None
         if result.blocks:
             try:
-                from app.core.finance_processor import FinanceProcessor
-                processor = FinanceProcessor(self.config)
-                finance_result = processor.process(result.blocks)
+                if self._finance_processor is not None:
+                    finance_result = self._finance_processor.process(result.blocks)
             except Exception:
                 pass
 
