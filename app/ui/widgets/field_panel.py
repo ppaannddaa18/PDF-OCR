@@ -335,10 +335,9 @@ class FieldPanel(QWidget):
             if rid not in self.regions:
                 continue
             region = self.regions[rid]
-            # B4: fields key=field_name (with _1/_2 suffix for dedup), lookup by field_name
-            field_name = region.field_name
-            if field_name in file_result.fields:
-                fr = file_result.fields[field_name]
+            # 使用 region_id 遍历查找结果（B4 兼容：同名区域 key 可能带 _1 后缀）
+            fr = next((f for f in file_result.fields.values() if f.region_id == rid), None)
+            if fr is not None:
                 self._preview_results[rid] = fr
 
                 # 根据字段类型进行验证和标准化

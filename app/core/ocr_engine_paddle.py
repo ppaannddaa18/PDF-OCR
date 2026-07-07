@@ -315,30 +315,6 @@ class PaddleOCREngine(OCREngineBase):
         except (OSError, RuntimeError, AttributeError):
             pass  # CPU 模式或 Paddle 未加载时安全跳过
 
-    def _extract_elements(self, output) -> List[dict]:
-        """从 VLM Result 提取 elements 列表（委托给 LayoutExtractor 的 extract_blocks）"""
-        blocks = extract_blocks(output)
-        return [
-            {
-                "type": b.block_type,
-                "text": b.content,
-                "confidence": b.confidence,
-                "bbox": b.bbox if b.bbox != [0, 0, 0, 0] else None,
-            }
-            for b in blocks
-        ]
-
-    def _extract_markdown(self, output) -> str:
-        """从 PaddleOCR-VL Result 对象提取 markdown 文本"""
-        try:
-            md = output.markdown if hasattr(output, 'markdown') else {}
-            if isinstance(md, dict):
-                texts = md.get("markdown_texts", [])
-                return "\n\n".join(texts) if texts else ""
-            return str(md) if md else ""
-        except Exception:
-            return ""
-
     def _init_nvml(self) -> None:
         """惰性初始化NVML并查找最大显存的GPU（I2+I3）"""
         if self._nvml_initialized:

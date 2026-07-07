@@ -65,6 +65,8 @@ def _find_neighbor(blocks: List[Block], anchor: Block, direction: str = 'right')
     heights = [(b.bbox[3] - b.bbox[1]) for b in blocks if b.bbox is not None and (b.bbox[3] - b.bbox[1]) > 0]
     median_h = sorted(heights)[len(heights)//2] if heights else 0
     y_tolerance = max(30, int(median_h * 1.5))
+    # Use same median-based tolerance for below direction
+    x_tolerance = max(30, int(median_h * 1.5))
 
     candidates = []
     for b in blocks:
@@ -73,7 +75,7 @@ def _find_neighbor(blocks: List[Block], anchor: Block, direction: str = 'right')
         bx1, by1 = b.bbox[0], b.bbox[1]
         if direction == 'right' and abs(by1 - ay1) < y_tolerance and bx1 >= ax2:
             candidates.append((bx1, b))
-        elif direction == 'below' and abs(bx1 - ax1) < 30 and by1 >= ay2:
+        elif direction == 'below' and abs(bx1 - ax1) < x_tolerance and by1 >= ay2:
             candidates.append((by1, b))
     if candidates:
         candidates.sort(key=lambda x: x[0])
