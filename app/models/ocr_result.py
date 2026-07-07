@@ -16,6 +16,6 @@ class FieldResult:
 @dataclass
 class FileResult:
     source_file: str
-    fields: Dict[str, FieldResult]  # key=region_id (不再是 field_name)
+    fields: Dict[str, FieldResult]  # key=field_name（同名加 _1/_2 后缀去重）
     success: bool = True
     error_msg: str = ""
