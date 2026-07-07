@@ -17,6 +17,19 @@ from app.models.page_result import PageResult, Block
 logger = logging.getLogger("PDFOCR")
 
 
+def _blocks_to_elements(blocks: List[Block]) -> List[dict]:
+    """将 Block[] 转换为 FieldMatcher 兼容的 elements dict 格式"""
+    return [
+        {
+            "type": b.block_type,
+            "text": b.content,
+            "confidence": b.confidence,
+            "bbox": b.bbox if b.bbox != [0, 0, 0, 0] else None,
+        }
+        for b in blocks
+    ]
+
+
 class _DummyRegion:
     """虚拟Region用于单图识别（recognize方法）"""
     __slots__ = ('id', 'field_name', 'x', 'y', 'w', 'h',
@@ -72,6 +85,24 @@ class PaddleOCREngine(OCREngineBase):
             self._precision = vl_cfg.get("precision", "fp16")
             self._use_layout_detection = vl_cfg.get("use_layout_detection", True)
             self._warmup_on_startup = vl_cfg.get("warmup_on_startup", True)
+            self._max_new_tokens = vl_cfg.get("max_new_tokens", 2048)
+            self._min_pixels = vl_cfg.get("min_pixels", 512 * 512)
+            self._use_tensorrt = vl_cfg.get("use_tensorrt", False)
+            self._enable_hpi = vl_cfg.get("enable_hpi", False)
+            # vlm_extra_args: 按元素类型分级分辨率
+            vlm_res_cfg = vl_cfg.get("vlm_resolution", {})
+            self._vlm_extra_args = {
+                "ocr_min_pixels": vlm_res_cfg.get("text", {}).get("min_pixels", 262144),
+                "ocr_max_pixels": vlm_res_cfg.get("text", {}).get("max_pixels", 1048576),
+                "table_min_pixels": vlm_res_cfg.get("table", {}).get("min_pixels", 524288),
+                "table_max_pixels": vlm_res_cfg.get("table", {}).get("max_pixels", 4194304),
+                "formula_min_pixels": vlm_res_cfg.get("formula", {}).get("min_pixels", 524288),
+                "formula_max_pixels": vlm_res_cfg.get("formula", {}).get("max_pixels", 4194304),
+                "chart_min_pixels": vlm_res_cfg.get("chart", {}).get("min_pixels", 524288),
+                "chart_max_pixels": vlm_res_cfg.get("chart", {}).get("max_pixels", 4194304),
+                "seal_min_pixels": vlm_res_cfg.get("seal", {}).get("min_pixels", 65536),
+                "seal_max_pixels": vlm_res_cfg.get("seal", {}).get("max_pixels", 262144),
+            }
             self._idle_unload_seconds = vl_cfg.get("idle_unload_seconds", 300)
             self._page_dpi = vl_cfg.get("page_dpi", 200)
             self._max_vram_gb = vl_cfg.get("max_vram_gb", 7.0)    # VRAM用量上限
@@ -100,6 +131,8 @@ class PaddleOCREngine(OCREngineBase):
                     precision=self._precision,
                     engine="paddle_dynamic",       # 跳过@to_static编译，修复int(Variable)崩溃
                     use_layout_detection=self._use_layout_detection,
+                    use_tensorrt=self._use_tensorrt,
+                    enable_hpi=self._enable_hpi,
                 )
                 logger.info("PaddleOCR-VL pipeline 创建完成")
                 self._initialized = True
@@ -185,6 +218,9 @@ class PaddleOCREngine(OCREngineBase):
                     arr,
                     temperature=0,
                     max_pixels=max_px,
+                    min_pixels=self._min_pixels,
+                    max_new_tokens=self._max_new_tokens,
+                    vlm_extra_args=self._vlm_extra_args,
                 ))
                 self._last_used_time = time.monotonic()
             self._post_inference_cleanup()
@@ -217,10 +253,12 @@ class PaddleOCREngine(OCREngineBase):
         self, image: Image.Image, regions: List[Any], page_dpi: float = 200
     ) -> Dict[str, Tuple[str, float, int, Any]]:
         """
-        整页识别 — PaddleOCR-VL一次推理，FieldMatcher匹配到各region
+        整页识别 — 委托给 recognize_page_auto，从 PageResult.blocks 做 FieldMatcher 匹配。
+        保留三级匹配（IoU/就近/关键词）行为不变。
         """
-        # 为每个region计算像素坐标（不修改原region对象，避免多线程竞态）
         W, H = image.size
+
+        # 为每个 region 计算像素坐标
         pixel_bboxes = {}
         for region in regions:
             left = max(0, int(region.x * W))
@@ -229,40 +267,18 @@ class PaddleOCREngine(OCREngineBase):
             bottom = min(H, int((region.y + region.h) * H))
             pixel_bboxes[region.id] = [left, top, right, bottom]
 
-        # VRAM守卫
-        max_px = self._vram_guard(image.size)
-        if max_px < 0:
+        # 调用 auto 路径获取统一的 Block[] + Markdown（复用一次推理）
+        page_result = self.recognize_page_auto(image)
+
+        if not page_result.blocks:
             return {r.id: ("", 0.0, 0, None) for r in regions}
 
-        try:
-            arr = np.array(image) if isinstance(image, Image.Image) else image
-            with self._pipeline_lock:
-                self._ensure_loaded()
-                if self._pipeline is None:
-                    raise RuntimeError("Pipeline was unloaded after initialization")
-                outputs = list(self._pipeline.predict(
-                    arr,
-                    temperature=0,
-                    max_pixels=max_px,
-                ))
-                self._last_used_time = time.monotonic()
-            self._post_inference_cleanup()
-        except Exception as e:
-            logger.error(f"PaddleOCR-VL推理失败: {e}")
-            return {r.id: ("", 0.0, 0, None) for r in regions}
+        # Block → elements dict 格式（供 FieldMatcher 消费）
+        elements = _blocks_to_elements(page_result.blocks)
 
-        if not outputs:
-            return {r.id: ("", 0.0, 0, None) for r in regions}
+        # 三级匹配
+        match_results = self._matcher.match(elements, regions, page_result.markdown, pixel_bboxes)
 
-        # 提取elements和markdown
-        output = outputs[0] if isinstance(outputs, list) else outputs
-        elements = self._extract_elements(output)
-        markdown_text = self._extract_markdown(output)
-
-        # 三级匹配（传入像素坐标字典，避免修改共享region对象）
-        match_results = self._matcher.match(elements, regions, markdown_text, pixel_bboxes)
-
-        # 转换为统一格式
         results = {}
         for region in regions:
             mr = match_results.get(region.id)
@@ -300,71 +316,17 @@ class PaddleOCREngine(OCREngineBase):
             pass  # CPU 模式或 Paddle 未加载时安全跳过
 
     def _extract_elements(self, output) -> List[dict]:
-        """从 PaddleOCR-VL Result 对象提取 elements 列表
-
-        官方 Result 对象结构:
-        - .json -> dict 含 overall_ocr_res (dt_polys, rec_texts, rec_scores)
-                            + parsing_res_list (block_bbox, block_label, block_content)
-        - .markdown -> dict 含 markdown_texts
-        """
-        elements = []
-        try:
-            data = output.json if hasattr(output, 'json') else (output if isinstance(output, dict) else {})
-
-            # 从 overall_ocr_res 提取文字 + 四点坐标 + 置信度
-            ocr_res = data.get("overall_ocr_res", {})
-            rec_texts = ocr_res.get("rec_texts", [])
-            rec_scores = ocr_res.get("rec_scores", [])
-            dt_polys = ocr_res.get("dt_polys", [])
-
-            for i, text in enumerate(rec_texts):
-                if not text or not text.strip():
-                    continue
-                bbox = None
-                if i < len(dt_polys):
-                    poly = dt_polys[i]
-                    # dt_polys = [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-                    if len(poly) >= 4:
-                        xs = [p[0] for p in poly]
-                        ys = [p[1] for p in poly]
-                        bbox = [min(xs), min(ys), max(xs), max(ys)]
-
-                confidence = rec_scores[i] if i < len(rec_scores) else 0.0
-                elements.append({
-                    "type": "text",
-                    "text": text,
-                    "confidence": float(confidence),
-                    "bbox": bbox,
-                })
-
-            # 从 parsing_res_list 提取表格/公式等结构化元素
-            for item in data.get("parsing_res_list", []):
-                block_label = item.get("block_label", "")
-                if block_label in ("table", "formula"):
-                    content = item.get("block_content", "")
-                    coord = item.get("block_bbox", None)
-                    if coord and isinstance(coord, list) and len(coord) >= 4:
-                        if isinstance(coord[0], (list, tuple)):
-                            # nested list of points -> extract min/max
-                            xs = [p[0] for p in coord]
-                            ys = [p[1] for p in coord]
-                            bbox = [min(xs), min(ys), max(xs), max(ys)]
-                        elif len(coord) == 4 and all(isinstance(v, (int, float)) for v in coord):
-                            bbox = coord
-                        else:
-                            bbox = None
-                    else:
-                        bbox = None
-                    elements.append({
-                        "type": block_label,
-                        "text": content if isinstance(content, str) else str(content),
-                        "confidence": 0.95,
-                        "bbox": bbox,
-                    })
-
-        except Exception as e:
-            logger.warning(f"PaddleOCR-VL element extraction failed: {e}")
-        return elements
+        """从 VLM Result 提取 elements 列表（委托给 LayoutExtractor 的 extract_blocks）"""
+        blocks = extract_blocks(output)
+        return [
+            {
+                "type": b.block_type,
+                "text": b.content,
+                "confidence": b.confidence,
+                "bbox": b.bbox if b.bbox != [0, 0, 0, 0] else None,
+            }
+            for b in blocks
+        ]
 
     def _extract_markdown(self, output) -> str:
         """从 PaddleOCR-VL Result 对象提取 markdown 文本"""
