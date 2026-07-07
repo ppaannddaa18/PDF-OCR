@@ -10,11 +10,12 @@ class FinanceProcessor:
 
     def __init__(self, config: Optional[dict] = None):
         cfg = config or {}
-        self._keywords: List[str] = cfg.get("invoice", {}).get("keywords", [
+        finance_cfg = cfg.get("finance", {})
+        self._keywords: List[str] = finance_cfg.get("invoice", {}).get("keywords", [
             "发票号码", "开票日期", "价税合计", "购买方", "销售方"
         ])
-        self._amount_tolerance: float = cfg.get("validation", {}).get("amount_tolerance", 0.01)
-        self._tax_rate: float = cfg.get("validation", {}).get("tax_rate", 0.13)
+        self._amount_tolerance: float = finance_cfg.get("validation", {}).get("amount_tolerance", 0.01)
+        self._tax_rate: float = finance_cfg.get("validation", {}).get("tax_rate", 0.13)
 
     def process(self, blocks: List[Block]) -> FinanceResult:
         """从 blocks 中抽取财务字段并校验"""
@@ -32,7 +33,9 @@ class FinanceProcessor:
                 continue
             value = _find_neighbor(blocks, anchor, direction='right')
             if not value:
-                value = anchor.content  # 退步：取anchor自身的content
+                # 从anchor.content中提取关键词后的值部分（如"发票号码：12345678" → "12345678"）
+                parts = re.split(r'[：:]\s*', anchor.content, maxsplit=1)
+                value = parts[1].strip() if len(parts) > 1 else ""
             fields.append(FinanceField(label=kw, value=value))
 
         # 校验
@@ -57,12 +60,18 @@ def _find_neighbor(blocks: List[Block], anchor: Block, direction: str = 'right')
     if anchor.bbox is None:
         return ""
     ax1, ay1, ax2, ay2 = anchor.bbox
+
+    # 从中位 block 高度计算行高阈值，下限 30px
+    heights = [(b.bbox[3] - b.bbox[1]) for b in blocks if b.bbox is not None and (b.bbox[3] - b.bbox[1]) > 0]
+    median_h = sorted(heights)[len(heights)//2] if heights else 0
+    y_tolerance = max(30, int(median_h * 1.5))
+
     candidates = []
     for b in blocks:
         if b is anchor or b.bbox is None:
             continue
         bx1, by1 = b.bbox[0], b.bbox[1]
-        if direction == 'right' and abs(by1 - ay1) < 30 and bx1 >= ax2:
+        if direction == 'right' and abs(by1 - ay1) < y_tolerance and bx1 >= ax2:
             candidates.append((bx1, b))
         elif direction == 'below' and abs(bx1 - ax1) < 30 and by1 >= ay2:
             candidates.append((by1, b))
