@@ -33,6 +33,7 @@ def _get_ui_components():
         from app.ui.widgets.history_panel import HistoryPanel
         from app.ui.widgets.preprocess_toolbar import ImagePreprocessToolbar
         from app.ui.widgets.loading_overlay import LoadingOverlay
+        from app.ui.widgets.result_panel import ResultPanel
         from app.workers.batch_worker import BatchWorker
         from app.utils.command_history import AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
 
@@ -44,6 +45,7 @@ def _get_ui_components():
             'HistoryPanel': HistoryPanel,
             'ImagePreprocessToolbar': ImagePreprocessToolbar,
             'LoadingOverlay': LoadingOverlay,
+            'ResultPanel': ResultPanel,
             'BatchWorker': BatchWorker,
             'AddRegionCommand': AddRegionCommand,
             'RemoveRegionCommand': RemoveRegionCommand,
@@ -95,7 +97,7 @@ class MainWindow(FluentWindow):
         self._paddle_was_unloaded = False
 
         # 双模式状态
-        self._current_mode = "auto" if self._config.get("ocr", {}).get("engine") in ("paddleocr_vl", "paddleocr_vl_cpu") else "manual"
+        self._current_mode = "auto" if self.config.get("ocr", {}).get("engine") in ("paddleocr_vl", "paddleocr_vl_cpu") else "manual"
         # 中面板（版面可视化）— VLM模式下显示
         self._layout_view = None  # QGraphicsView，延迟创建
         # 右面板 StackedWidget — 根据模式切换子面板
@@ -489,18 +491,19 @@ class MainWindow(FluentWindow):
             self.pdf_canvas.verticalScrollBar().setValue
         )
 
-        # 右栏：字段配置（包含标题）
+        # 右栏：字段配置 / 解析结果（根据模式动态切换）
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
 
-        field_title = SubtitleLabel("字段配置")
-        right_layout.addWidget(field_title)
+        # 标题（根据模式动态切换）
+        self._right_title = SubtitleLabel("字段配置")
+        right_layout.addWidget(self._right_title)
 
-        # 模板信息区域（移到字段配置标题下方）
-        template_info_widget = QWidget()
-        template_info_layout = QVBoxLayout(template_info_widget)
+        # 模板信息区域（仅手动模式显示）
+        self._template_info_widget = QWidget()
+        template_info_layout = QVBoxLayout(self._template_info_widget)
         template_info_layout.setContentsMargins(8, 8, 8, 8)
         template_info_layout.setSpacing(4)
 
@@ -520,12 +523,22 @@ class MainWindow(FluentWindow):
         line = HorizontalSeparator(self)
         template_info_layout.addWidget(line)
 
-        right_layout.addWidget(template_info_widget)
+        right_layout.addWidget(self._template_info_widget)
 
+        # 使用 QStackedWidget 切换手动/自动面板
+        self._right_content_stack = QStackedWidget()
+
+        # 页0：字段面板（手动模式）
         self.field_panel = ui.FieldPanel()
         self.field_panel.setMinimumWidth(320)
         self.field_panel.setMaximumWidth(450)
-        right_layout.addWidget(self.field_panel, 1)
+        self._right_content_stack.addWidget(self.field_panel)
+
+        # 页1：结果面板（自动模式）
+        self._result_panel = ui.ResultPanel()
+        self._right_content_stack.addWidget(self._result_panel)
+
+        right_layout.addWidget(self._right_content_stack, 1)
 
         # 添加到 splitter
         splitter.addWidget(left_panel)
@@ -2037,16 +2050,22 @@ class MainWindow(FluentWindow):
     def _switch_ui_mode(self, mode: str):
         """切换 UI 模式：auto(VLM) ↔ manual(RapidOCR)"""
         if mode == "auto":
-            # 隐藏手动框选工具栏
-            if hasattr(self, '_field_panel') and self._field_panel:
-                self._field_panel.hide()
-            # 显示版面可视化面板（Task 9 实现）
+            # 切换到结果面板
+            if hasattr(self, '_right_content_stack') and self._right_content_stack is not None:
+                self._right_content_stack.setCurrentIndex(1)
+            # 更新标题
+            if hasattr(self, '_right_title'):
+                self._right_title.setText("解析结果")
+            # 隐藏模板信息
+            if hasattr(self, '_template_info_widget'):
+                self._template_info_widget.hide()
+            # 显示版面可视化面板
             if self._layout_view is not None:
                 self._layout_view.show()
-            # 禁用 PDF canvas 的框选功能（Task 11 实现 set_drawing_enabled）
-            if hasattr(self, '_pdf_canvas') and self._pdf_canvas:
-                if hasattr(self._pdf_canvas, 'set_drawing_enabled'):
-                    self._pdf_canvas.set_drawing_enabled(False)
+            # 禁用 PDF canvas 的框选功能
+            if hasattr(self, 'pdf_canvas') and self.pdf_canvas:
+                if hasattr(self.pdf_canvas, 'set_drawing_enabled'):
+                    self.pdf_canvas.set_drawing_enabled(False)
             # 工具栏切换：隐藏手动OCR按钮，显示解析按钮
             if hasattr(self, '_btn_try'):
                 self._btn_try.hide()
@@ -2055,16 +2074,22 @@ class MainWindow(FluentWindow):
             if hasattr(self, '_btn_parse'):
                 self._btn_parse.show()
         else:
-            # 显示手动框选工具栏
-            if hasattr(self, '_field_panel') and self._field_panel:
-                self._field_panel.show()
+            # 切换到字段面板
+            if hasattr(self, '_right_content_stack') and self._right_content_stack is not None:
+                self._right_content_stack.setCurrentIndex(0)
+            # 更新标题
+            if hasattr(self, '_right_title'):
+                self._right_title.setText("字段配置")
+            # 显示模板信息
+            if hasattr(self, '_template_info_widget'):
+                self._template_info_widget.show()
             # 隐藏版面可视化
             if self._layout_view is not None:
                 self._layout_view.hide()
             # 启用框选
-            if hasattr(self, '_pdf_canvas') and self._pdf_canvas:
-                if hasattr(self._pdf_canvas, 'set_drawing_enabled'):
-                    self._pdf_canvas.set_drawing_enabled(True)
+            if hasattr(self, 'pdf_canvas') and self.pdf_canvas:
+                if hasattr(self.pdf_canvas, 'set_drawing_enabled'):
+                    self.pdf_canvas.set_drawing_enabled(True)
             # 工具栏切换：显示手动OCR按钮，隐藏解析按钮
             if hasattr(self, '_btn_try'):
                 self._btn_try.show()
@@ -2139,12 +2164,25 @@ class MainWindow(FluentWindow):
 
     def _on_page_parsed(self, result):
         """解析完成回调"""
-        # 更新版面可视化（Task 9 实现 layout_view.update_blocks）
+        # 更新版面可视化
         if self._layout_view is not None:
             if hasattr(self._layout_view, 'update_blocks'):
                 self._layout_view.update_blocks(result.blocks)
 
-        # 更新结果面板（Task 10 实现详细内容）
+        # 财务字段提取
+        finance_result = None
+        if result.blocks:
+            try:
+                from app.core.finance_processor import FinanceProcessor
+                processor = FinanceProcessor(self.config)
+                finance_result = processor.process(result.blocks)
+            except Exception:
+                pass
+
+        # 更新结果面板
+        if hasattr(self, '_result_panel') and self._result_panel is not None:
+            self._result_panel.load_result(result, finance_result)
+
         self.status_label.setText(
             f"解析完成 — 识别 {len(result.blocks)} 个元素, "
             f"耗时 {result.inference_time_ms:.0f}ms"
