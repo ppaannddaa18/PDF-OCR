@@ -132,7 +132,7 @@ class TestPaddleOCREngine:
         from app.core.ocr_engine_paddle import PaddleOCREngine
         config = get_default_config()
         e = PaddleOCREngine(config)
-        # 小图：至少1M
-        assert e._calc_max_pixels((100, 100)) >= 1024 * 1024
-        # 大图：上限16M
-        assert e._calc_max_pixels((5000, 5000)) <= 16 * 1024 * 1024
+        # 小图：至少0.5M
+        assert e._calc_max_pixels((100, 100)) >= 512 * 1024
+        # 大图：上限8M
+        assert e._calc_max_pixels((5000, 5000)) <= 8 * 1024 * 1024

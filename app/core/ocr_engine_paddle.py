@@ -120,6 +120,7 @@ class PaddleOCREngine(OCREngineBase):
         try:
             dummy = np.zeros((64, 64, 3), dtype=np.uint8)
             list(self._pipeline.predict(dummy, temperature=0))
+            self._post_inference_cleanup()
         except Exception:
             pass  # 预热失败不影响正常使用
 
@@ -170,30 +171,23 @@ class PaddleOCREngine(OCREngineBase):
         W, H = image.size
 
         # VRAM守卫
-        max_px = self._calc_max_pixels(image.size)
-        free_vram = self._get_free_vram_gb()
-        if free_vram < self._min_free_vram_gb:
-            logger.warning(f"VRAM不足 ({free_vram:.2f}GB < {self._min_free_vram_gb}GB)，跳过推理")
+        max_px = self._vram_guard(image.size)
+        if max_px < 0:
             return PageResult(blocks=[], markdown="", image_size=(W, H))
 
         try:
+            arr = np.array(image) if isinstance(image, Image.Image) else image
             with self._pipeline_lock:
                 self._ensure_loaded()
                 if self._pipeline is None:
                     raise RuntimeError("Pipeline was unloaded after initialization")
-                arr = np.array(image) if isinstance(image, Image.Image) else image
                 outputs = list(self._pipeline.predict(
                     arr,
                     temperature=0,
                     max_pixels=max_px,
                 ))
                 self._last_used_time = time.monotonic()
-            # 推理后释放缓存
-            try:
-                import paddle
-                paddle.device.cuda.empty_cache()
-            except Exception:
-                pass
+            self._post_inference_cleanup()
         except Exception as e:
             logger.error(f"PaddleOCR-VL推理失败: {e}")
             return PageResult(blocks=[], markdown="", image_size=(W, H))
@@ -235,36 +229,24 @@ class PaddleOCREngine(OCREngineBase):
             bottom = min(H, int((region.y + region.h) * H))
             pixel_bboxes[region.id] = [left, top, right, bottom]
 
-        # VRAM守卫：检查可用显存是否足够（低于阈值时降低分辨率或拒绝推理）
-        max_px = self._calc_max_pixels(image.size)
-        free_vram = self._get_free_vram_gb()
-        if free_vram < self._min_free_vram_gb:
-            # 显存极度紧张：跳过此页，返回空结果
-            logger.warning(f"VRAM不足 ({free_vram:.2f}GB < {self._min_free_vram_gb}GB)，跳过推理")
+        # VRAM守卫
+        max_px = self._vram_guard(image.size)
+        if max_px < 0:
             return {r.id: ("", 0.0, 0, None) for r in regions}
-        elif free_vram < 1.0:
-            # 显存紧张：降低分辨率上限
-            max_px = min(max_px, 2 * 1024 * 1024)  # 限制到 2M 像素
-            logger.info(f"VRAM紧张 ({free_vram:.2f}GB)，降低分辨率到 {max_px/1e6:.1f}M 像素")
 
         try:
+            arr = np.array(image) if isinstance(image, Image.Image) else image
             with self._pipeline_lock:
                 self._ensure_loaded()
                 if self._pipeline is None:
                     raise RuntimeError("Pipeline was unloaded after initialization")
-                arr = np.array(image) if isinstance(image, Image.Image) else image
                 outputs = list(self._pipeline.predict(
                     arr,
                     temperature=0,
                     max_pixels=max_px,
                 ))
                 self._last_used_time = time.monotonic()
-            # 推理后释放缓存（锁外，避免阻塞）
-            try:
-                import paddle
-                paddle.device.cuda.empty_cache()
-            except Exception:
-                pass
+            self._post_inference_cleanup()
         except Exception as e:
             logger.error(f"PaddleOCR-VL推理失败: {e}")
             return {r.id: ("", 0.0, 0, None) for r in regions}
@@ -292,11 +274,30 @@ class PaddleOCREngine(OCREngineBase):
         return results
 
     def _calc_max_pixels(self, image_size: Tuple[int, int]) -> int:
-        """根据图片尺寸计算 max_pixels，防止高DPI导致GPU OOM"""
+        """根据图片尺寸计算 max_pixels，上限 8M（8GB 显卡安全），下限 0.5M"""
         w, h = image_size
         actual_pixels = w * h
-        # 上限 16M 像素（约 4000x4000），防止 GPU OOM；下限 1M
-        return max(min(actual_pixels, 16 * 1024 * 1024), 1024 * 1024)
+        return max(min(actual_pixels, 8 * 1024 * 1024), 512 * 1024)
+
+    def _vram_guard(self, image_size: Tuple[int, int]) -> int:
+        """VRAM守卫：返回安全的 max_pixels，-1 表示应跳过推理"""
+        max_px = self._calc_max_pixels(image_size)
+        free_vram = self._get_free_vram_gb()
+        if free_vram < self._min_free_vram_gb:
+            logger.warning(f"VRAM不足 ({free_vram:.2f}GB < {self._min_free_vram_gb}GB)，跳过推理")
+            return -1
+        elif free_vram < 1.0:
+            max_px = min(max_px, 2 * 1024 * 1024)
+            logger.info(f"VRAM紧张 ({free_vram:.2f}GB)，降低分辨率到 {max_px/1e6:.1f}M 像素")
+        return max_px
+
+    def _post_inference_cleanup(self) -> None:
+        """推理后释放 CUDA 临时缓存（CPU 模式下安全跳过）"""
+        try:
+            import paddle
+            paddle.device.cuda.empty_cache()
+        except (OSError, RuntimeError, AttributeError):
+            pass  # CPU 模式或 Paddle 未加载时安全跳过
 
     def _extract_elements(self, output) -> List[dict]:
         """从 PaddleOCR-VL Result 对象提取 elements 列表
