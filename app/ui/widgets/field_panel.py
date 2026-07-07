@@ -325,7 +325,7 @@ class FieldPanel(QWidget):
         self.region_changed.emit(list(self.regions.values()))
 
     def show_preview_result(self, file_result):
-        """显示试识别结果 - 使用 region_id 匹配确保准确性，并进行字段类型验证"""
+        """显示试识别结果 - 使用 field_name 匹配确保准确性，并进行字段类型验证"""
         self._preview_results.clear()
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
@@ -334,9 +334,11 @@ class FieldPanel(QWidget):
             rid = item.data(Qt.ItemDataRole.UserRole)
             if rid not in self.regions:
                 continue
-            # 使用 region_id 直接查找结果（B4 修复后 FileResult.fields key=region_id）
-            if rid in file_result.fields:
-                fr = file_result.fields[rid]
+            region = self.regions[rid]
+            # B4: fields key=field_name (with _1/_2 suffix for dedup), lookup by field_name
+            field_name = region.field_name
+            if field_name in file_result.fields:
+                fr = file_result.fields[field_name]
                 self._preview_results[rid] = fr
 
                 # 根据字段类型进行验证和标准化

@@ -89,7 +89,13 @@ class BatchProcessor:
                         text, conf, match_level, _ = page_results.get(
                             region.id, ("", 0.0, 0, None)
                         )
-                        fields[region.id] = FieldResult(
+                        # B4: use field_name as key, dedup with _1/_2 suffix
+                        key = region.field_name
+                        suffix = 1
+                        while key in fields:
+                            suffix += 1
+                            key = f"{region.field_name}_{suffix}"
+                        fields[key] = FieldResult(
                             field_name=region.field_name,
                             text=text,
                             confidence=conf,
@@ -110,7 +116,13 @@ class BatchProcessor:
                         else:
                             crop = rendered_image.crop((left, top, right, bottom))
                         text, conf = self.ocr.recognize(crop, region.ocr_mode)
-                        fields[region.id] = FieldResult(
+                        # B4: use field_name as key, dedup with _1/_2 suffix
+                        key = region.field_name
+                        suffix = 1
+                        while key in fields:
+                            suffix += 1
+                            key = f"{region.field_name}_{suffix}"
+                        fields[key] = FieldResult(
                             field_name=region.field_name,
                             text=text,
                             confidence=conf,
