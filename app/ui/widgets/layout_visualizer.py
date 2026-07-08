@@ -44,6 +44,7 @@ class LayoutVisualizer(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self._scale = 1.0
+        self._is_syncing = False  # 防振荡标志
 
     def set_page_image(self, pixmap: QPixmap):
         """设置当前页图片（与PDF预览同步）"""
@@ -78,10 +79,15 @@ class LayoutVisualizer(QGraphicsView):
             self._block_items.append(item)
 
     def scroll_to(self, value: int):
-        """外部同步滚动"""
+        """外部同步滚动（防振荡）"""
+        if self._is_syncing:
+            return
+        self._is_syncing = True
         self.verticalScrollBar().setValue(value)
+        self._is_syncing = False
 
     def wheelEvent(self, event):
-        """转发滚动事件"""
+        """转发滚动事件（防振荡）"""
         super().wheelEvent(event)
-        self.scrolled.emit(self.verticalScrollBar().value())
+        if not self._is_syncing:
+            self.scrolled.emit(self.verticalScrollBar().value())

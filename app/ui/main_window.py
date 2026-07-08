@@ -281,6 +281,7 @@ class MainWindow(FluentWindow):
             # 初始化失败，显示错误面板
             error_msg = self.ocr_engine.init_error or "未知错误"
             self.loading_overlay.show_error(error_msg)
+            self.gpu_status.set_engine(self.ocr_engine)  # 更新GPU状态为加载失败
 
     def _on_ocr_retry(self):
         """OCR引擎重试初始化"""
@@ -1461,6 +1462,9 @@ class MainWindow(FluentWindow):
         self.worker.cancelled.connect(self._on_batch_cancelled)
         self.worker.start()
         self.status_label.setText("批量识别进行中...")
+        # 批量识别完成后清理 worker 引用
+        self.worker.finished_all.connect(self._clear_worker)
+        self.worker.cancelled.connect(self._clear_worker)
 
     def _create_progress_dialog(self, files):
         """创建批量识别进度对话框"""
@@ -1521,6 +1525,10 @@ class MainWindow(FluentWindow):
 
         # 隐藏进度条
         self.progress_widget.setVisible(False)
+
+        # 从 worker 获取已完成的结果（如果 results 为空）
+        if not self.results and self.worker and hasattr(self.worker, '_completed_results'):
+            self.results = self.worker._completed_results
 
         # 显示取消结果对话框
         if self.results:
@@ -1584,6 +1592,10 @@ class MainWindow(FluentWindow):
             self.progress_bar_dialog.setValue(done)
             self.progress_status_label.setText(f"正在处理: {done}/{total}")
             self.progress_file_label.setText(f"当前文件: {Path(current_file).name}")
+
+    def _clear_worker(self):
+        """清理 worker 引用，避免内存泄漏"""
+        self.worker = None
 
     def _on_batch_done(self, results):
         # 隐藏进度条
@@ -2032,6 +2044,15 @@ class MainWindow(FluentWindow):
             self._current_mode = new_mode
             self._switch_ui_mode(new_mode)
 
+        # 热切换成功后写入配置文件
+        try:
+            import yaml
+            config_path = self.config.get("_config_path", "config.yaml")
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False)
+        except Exception as e:
+            _logger.warning(f"写入配置文件失败: {e}")
+
     def _restart_with_engine(self, engine_type: str):
         """写入配置并重启程序切换到指定引擎"""
         import subprocess
@@ -2251,5 +2272,8 @@ class MainWindow(FluentWindow):
 
         # 关闭 PDF 加载器（释放文件句柄和线程池）
         self.pdf_loader.shutdown()
+
+        # 保存当前 PDF 配置
+        self._save_current_pdf_config()
 
         event.accept()

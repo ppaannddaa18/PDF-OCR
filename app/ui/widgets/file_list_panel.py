@@ -244,6 +244,7 @@ class FileListPanel(QWidget):
         # 清理待处理的定时器
         for timer in self._pending_timers:
             timer.stop()
+            timer.deleteLater()
         self._pending_timers.clear()
         self.progress_label.setVisible(False)
         self.files_cleared.emit()  # 发送清空信号
@@ -257,6 +258,7 @@ class FileListPanel(QWidget):
         """组件关闭时清理定时器"""
         for timer in self._pending_timers:
             timer.stop()
+            timer.deleteLater()
         self._pending_timers.clear()
         super().closeEvent(event)
 

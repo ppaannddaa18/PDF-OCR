@@ -49,43 +49,43 @@ class ResultTable(QTableWidget):
         # [修复] 临时阻塞信号，避免批量操作触发itemChanged
         self.blockSignals(True)
 
-        self.clear()
-        if not self._results:
+        try:
+            self.clear()
+            if not self._results:
+                return
+
+            # 收集所有字段名
+            self._field_names = []
+            for r in self._results:
+                for fn in r.fields:
+                    if fn not in self._field_names:
+                        self._field_names.append(fn)
+
+            headers = ["源文件"] + self._field_names + ["状态", "操作"]
+            self.setColumnCount(len(headers))
+            self.setHorizontalHeaderLabels(headers)
+            self.setRowCount(len(self._results))
+
+            for row, r in enumerate(self._results):
+                self._populate_row(row, r)
+
+            # 调整列宽 - 自适应布局
+            header = self.horizontalHeader()
+            total_cols = len(headers)
+
+            # 源文件列: 固定宽度
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+            self.setColumnWidth(0, 150)
+
+            # 字段数据列: 自动拉伸分配剩余空间
+            for col in range(1, total_cols - 2):
+                header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+
+            # 状态列: 按内容自适应
+            header.setSectionResizeMode(total_cols - 2, QHeaderView.ResizeMode.ResizeToContents)
+        finally:
+            # [修复] 恢复信号
             self.blockSignals(False)
-            return
-
-        # 收集所有字段名
-        self._field_names = []
-        for r in self._results:
-            for fn in r.fields:
-                if fn not in self._field_names:
-                    self._field_names.append(fn)
-
-        headers = ["源文件"] + self._field_names + ["状态", "操作"]
-        self.setColumnCount(len(headers))
-        self.setHorizontalHeaderLabels(headers)
-        self.setRowCount(len(self._results))
-
-        for row, r in enumerate(self._results):
-            self._populate_row(row, r)
-
-        # [修复] 恢复信号
-        self.blockSignals(False)
-
-        # 调整列宽 - 自适应布局
-        header = self.horizontalHeader()
-        total_cols = len(headers)
-
-        # 源文件列: 固定宽度
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(0, 150)
-
-        # 字段数据列: 自动拉伸分配剩余空间
-        for col in range(1, total_cols - 2):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
-
-        # 状态列: 按内容自适应
-        header.setSectionResizeMode(total_cols - 2, QHeaderView.ResizeMode.ResizeToContents)
 
         # 操作列: 交互式宽度
         header.setSectionResizeMode(total_cols - 1, QHeaderView.ResizeMode.Interactive)

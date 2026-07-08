@@ -252,9 +252,11 @@ class FieldPanel(QWidget):
         self._update_empty_state()
 
     def _on_field_type_changed(self, region_id: str, new_type: str):
-        """[修复] 字段类型变更事件 - 同步更新region"""
+        """[修复] 字段类型变更事件 - 同步更新region并持久化"""
         if region_id in self.regions:
             self.regions[region_id].field_type = new_type
+            # 发射信号通知主窗口保存配置
+            self.region_changed.emit(list(self.regions.values()))
 
     def _delete(self, region_id):
         if region_id in self.regions:
@@ -327,41 +329,46 @@ class FieldPanel(QWidget):
     def show_preview_result(self, file_result):
         """显示试识别结果 - 使用 field_name 匹配确保准确性，并进行字段类型验证"""
         self._preview_results.clear()
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item is None:
-                continue
-            rid = item.data(Qt.ItemDataRole.UserRole)
-            if rid not in self.regions:
-                continue
-            region = self.regions[rid]
-            # 使用 region_id 遍历查找结果（B4 兼容：同名区域 key 可能带 _1 后缀）
-            fr = next((f for f in file_result.fields.values() if f.region_id == rid), None)
-            if fr is not None:
-                self._preview_results[rid] = fr
+        # 临时阻塞信号，避免 setItem 触发 itemChanged
+        self.table.blockSignals(True)
+        try:
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item is None:
+                    continue
+                rid = item.data(Qt.ItemDataRole.UserRole)
+                if rid not in self.regions:
+                    continue
+                region = self.regions[rid]
+                # 使用 region_id 遍历查找结果（B4 兼容：同名区域 key 可能带 _1 后缀）
+                fr = next((f for f in file_result.fields.values() if f.region_id == rid), None)
+                if fr is not None:
+                    self._preview_results[rid] = fr
 
-                # 根据字段类型进行验证和标准化
-                is_valid, error_msg = validate_with_error(fr.text, region.field_type)
-                normalized_text = normalize_by_type(fr.text, region.field_type)
+                    # 根据字段类型进行验证和标准化
+                    is_valid, error_msg = validate_with_error(fr.text, region.field_type)
+                    normalized_text = normalize_by_type(fr.text, region.field_type)
 
-                result_item = QTableWidgetItem(normalized_text)
+                    result_item = QTableWidgetItem(normalized_text)
 
-                # 设置 Tooltip 显示完整内容和置信度
-                tooltip = f"内容: {fr.text}\n置信度: {fr.confidence:.2%}"
+                    # 设置 Tooltip 显示完整内容和置信度
+                    tooltip = f"内容: {fr.text}\n置信度: {fr.confidence:.2%}"
 
-                # 根据验证结果设置样式
-                if not is_valid:
-                    # 验证失败 - 红色背景
-                    result_item.setBackground(QColor("#FFE5E5"))
-                    result_item.setForeground(QBrush(QColor("#d13438")))
-                    tooltip += f"\n⚠ 格式错误: {error_msg}"
-                elif fr.confidence < 0.7:
-                    # 置信度低 - 黄色背景
-                    result_item.setBackground(QColor("#FFF4E5"))
-                    tooltip += "\n(置信度较低，建议核对)"
+                    # 根据验证结果设置样式
+                    if not is_valid:
+                        # 验证失败 - 红色背景
+                        result_item.setBackground(QColor("#FFE5E5"))
+                        result_item.setForeground(QBrush(QColor("#d13438")))
+                        tooltip += f"\n⚠ 格式错误: {error_msg}"
+                    elif fr.confidence < 0.7:
+                        # 置信度低 - 黄色背景
+                        result_item.setBackground(QColor("#FFF4E5"))
+                        tooltip += "\n(置信度较低，建议核对)"
 
-                result_item.setToolTip(tooltip)
-                self.table.setItem(row, 2, result_item)
+                    result_item.setToolTip(tooltip)
+                    self.table.setItem(row, 2, result_item)
+        finally:
+            self.table.blockSignals(False)
         # 隐藏详情区域
         self.detail_widget.setVisible(False)
 
