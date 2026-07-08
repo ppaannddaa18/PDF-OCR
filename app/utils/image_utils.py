@@ -72,7 +72,7 @@ def preprocess_batch(images: list, mode: str = "general") -> list:
 
 
 # 缓存常用尺寸的放大结果（可选，用于极端性能场景）
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=128)
 def _get_resize_target_size(original_size: Tuple[int, int]) -> Tuple[int, int]:
     """计算放大后的目标尺寸（带缓存）"""
     return (original_size[0] * 3, original_size[1] * 3)

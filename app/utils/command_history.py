@@ -115,6 +115,8 @@ class ClearAllCommand(Command):
 class CommandHistory:
     """命令历史管理器"""
     def __init__(self, max_size: int = 20):
+        if max_size < 1:
+            raise ValueError("max_size must be >= 1")
         self.commands: List[Command] = []
         self.current_index = -1
         self.max_size = max_size

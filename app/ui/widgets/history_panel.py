@@ -96,6 +96,7 @@ class HistoryPanel(QWidget):
 
     def _on_item_clicked(self, item):
         """列表项点击"""
+        self.detail_widget.setVisible(True)  # 确保详情面板可见
         record_id = item.data(Qt.ItemDataRole.UserRole)
         if not record_id:
             return

@@ -4,14 +4,14 @@ from typing import Literal, List
 
 @dataclass
 class Region:
+    """框选区域数据模型（坐标使用归一化 0~1 比例）"""
+
     def __post_init__(self):
         # 钳制坐标到合法范围，避免浮点边界值导致崩溃
         self.x = max(0.0, min(1.0, self.x))
         self.y = max(0.0, min(1.0, self.y))
         self.w = max(0.001, min(1.0, self.w))
         self.h = max(0.001, min(1.0, self.h))
-
-    """框选区域数据模型（坐标使用归一化 0~1 比例）"""
     id: str                            # 唯一标识
     field_name: str                    # 字段名（如"姓名"）
     x: float                           # 左上角 x 比例

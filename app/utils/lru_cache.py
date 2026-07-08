@@ -132,27 +132,45 @@ class LRUCache:
             if self._ttl is not None:
                 access_time = self._timestamps.get(key, 0)
                 if time.time() - access_time > self._ttl:
+                    self._remove_internal(key)
                     return False
             return True
+
+    def _evict_expired(self):
+        """清理所有过期的条目"""
+        if self._ttl is None:
+            return
+        now = time.time()
+        expired = [k for k, t in self._timestamps.items() if now - t > self._ttl]
+        for k in expired:
+            self._remove_internal(k)
 
     def size(self) -> int:
         """返回当前缓存大小"""
         with self._lock:
+            if self._ttl is not None:
+                self._evict_expired()
             return len(self._cache)
 
     def keys(self):
         """返回所有键"""
         with self._lock:
+            if self._ttl is not None:
+                self._evict_expired()
             return list(self._cache.keys())
 
     def values(self):
         """返回所有值"""
         with self._lock:
+            if self._ttl is not None:
+                self._evict_expired()
             return list(self._cache.values())
 
     def items(self):
         """返回所有键值对"""
         with self._lock:
+            if self._ttl is not None:
+                self._evict_expired()
             return list(self._cache.items())
 
     def __len__(self):

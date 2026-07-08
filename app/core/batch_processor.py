@@ -221,7 +221,15 @@ class BatchProcessor:
             }
 
             for future in as_completed(futures):
-                idx, result = future.result()
+                try:
+                    idx, result = future.result()
+                except Exception as e:
+                    # 单个任务异常不中断整个批次
+                    idx = futures[future]
+                    result = FileResult(
+                        source_file=pdf_paths[idx] if idx < len(pdf_paths) else "",
+                        fields={}, success=False, error_msg=str(e)
+                    )
                 with lock:
                     results[idx] = result
                     completed_count += 1

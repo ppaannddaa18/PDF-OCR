@@ -24,6 +24,9 @@ class BatchWorker(QThread):
         self._is_cancelled = True
 
     def run(self):
+        # 每次启动时清空上一次的累积结果
+        self._completed_results.clear()
+
         def throttled_cb(done, total, current):
             if self._is_cancelled:
                 raise InterruptedError("用户取消")
@@ -41,6 +44,5 @@ class BatchWorker(QThread):
             )
             self.finished_all.emit(results)
         except InterruptedError:
-            # 取消时发送已完成的结果
+            # 取消时只发送 cancelled 信号，让调用方决定如何处理部分结果
             self.cancelled.emit()
-            self.finished_all.emit(self._completed_results)

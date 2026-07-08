@@ -74,12 +74,19 @@ def validate_with_error(text: str, field_type: str) -> Tuple[bool, Optional[str]
 def parse_date(text: str) -> Optional[datetime]:
     """尝试解析日期字符串"""
     text = text.strip()
-    # 清理常见的变体
-    text = text.replace("年", "-").replace("月", "-").replace("日", "").replace("/", "-")
 
+    # 先尝试原格式解析
     for fmt in DATE_FORMATS:
         try:
             return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+
+    # 归一化后再试
+    normalized = text.replace("年", "-").replace("月", "-").replace("日", "").replace("/", "-")
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(normalized, fmt)
         except ValueError:
             continue
     return None

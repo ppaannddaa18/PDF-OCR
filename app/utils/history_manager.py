@@ -4,6 +4,8 @@
 import json
 import os
 import logging
+import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -34,6 +36,7 @@ class HistoryManager:
             storage_dir = os.path.expanduser("~/.pdf_ocr_tool")
         self.storage_dir = storage_dir
         self.history_file = os.path.join(storage_dir, self.HISTORY_FILE)
+        self._lock = threading.RLock()
         self._cached_history: Optional[List[HistoryRecord]] = None
         self._dirty = False
         self._ensure_storage()
@@ -44,35 +47,43 @@ class HistoryManager:
 
     def _load_history(self) -> List[HistoryRecord]:
         """加载历史记录到内存缓存"""
-        if self._cached_history is not None:
-            return self._cached_history
-
-        if not os.path.exists(self.history_file):
-            self._cached_history = []
-            return self._cached_history
-
-        try:
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                self._cached_history = [HistoryRecord(**item) for item in data]
+        with self._lock:
+            if self._cached_history is not None:
                 return self._cached_history
-        except Exception:
-            self._cached_history = []
-            return self._cached_history
+
+            if not os.path.exists(self.history_file):
+                self._cached_history = []
+                return self._cached_history
+
+            try:
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._cached_history = [HistoryRecord(**item) for item in data]
+                    return self._cached_history
+            except Exception as e:
+                logger = logging.getLogger("PDFOCR")
+                logger.warning(f"HistoryManager: 历史文件加载失败 ({e})，备份到 .bak")
+                try:
+                    shutil.copy2(self.history_file, self.history_file + ".bak")
+                except Exception:
+                    pass
+                self._cached_history = []
+                return self._cached_history
 
     def _save_history(self, history: List[HistoryRecord]):
         """保存历史记录到文件"""
-        self._cached_history = history
-        self._dirty = True
-        self._flush_to_disk()
+        with self._lock:
+            self._cached_history = history
+            self._dirty = True
+            self._flush_to_disk()
 
     def _flush_to_disk(self):
         """将缓存写入磁盘（原子写入）"""
         if not self._dirty or self._cached_history is None:
             return
+        tmp_file = self.history_file + ".tmp"
         try:
             data = [asdict(record) for record in self._cached_history]
-            tmp_file = self.history_file + ".tmp"
             with open(tmp_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_file, self.history_file)
@@ -80,82 +91,93 @@ class HistoryManager:
         except Exception as e:
             logger = logging.getLogger("PDFOCR")
             logger.exception(f"HistoryManager: failed to flush to disk: {e}")
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
 
     def add_record(self, results: List[FileResult], export_path: str = None) -> HistoryRecord:
         """添加新的历史记录"""
-        # 序列化结果
-        results_data = []
-        field_names = set()
-        for r in results:
-            result_dict = {
-                "source_file": r.source_file,
-                "success": r.success,
-                "error_msg": r.error_msg,
-                "fields": {}
-            }
-            for fn, fr in r.fields.items():
-                field_names.add(fn)
-                result_dict["fields"][fn] = {
-                    "text": fr.text,
-                    "confidence": fr.confidence,
-                    "manually_edited": fr.manually_edited,
-                    "match_level": fr.match_level,
-                    "engine": fr.engine
+        with self._lock:
+            # 序列化结果
+            results_data = []
+            field_names = set()
+            for r in results:
+                result_dict = {
+                    "source_file": r.source_file,
+                    "success": r.success,
+                    "error_msg": r.error_msg,
+                    "fields": {}
                 }
-            results_data.append(result_dict)
+                for fn, fr in r.fields.items():
+                    field_names.add(fn)
+                    result_dict["fields"][fn] = {
+                        "text": fr.text,
+                        "confidence": fr.confidence,
+                        "manually_edited": fr.manually_edited,
+                        "match_level": fr.match_level,
+                        "engine": fr.engine,
+                        "region_id": fr.region_id
+                    }
+                results_data.append(result_dict)
 
-        # 使用微秒级时间戳避免ID冲突
-        from time import time
-        timestamp = datetime.now()
-        record_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{int(time() * 1000) % 1000}"
+            # 使用微秒级时间戳避免ID冲突
+            from time import time
+            timestamp = datetime.now()
+            record_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{int(time() * 1000) % 1000}"
 
-        record = HistoryRecord(
-            id=record_id,
-            timestamp=timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-            file_count=len(results),
-            success_count=sum(1 for r in results if r.success),
-            field_names=list(field_names),
-            export_path=export_path,
-            results_data=results_data
-        )
+            record = HistoryRecord(
+                id=record_id,
+                timestamp=timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                file_count=len(results),
+                success_count=sum(1 for r in results if r.success),
+                field_names=list(field_names),
+                export_path=export_path,
+                results_data=results_data
+            )
 
-        # 读取现有历史（使用缓存）
-        history = self._load_history()
+            # 读取现有历史（使用缓存）
+            history = self._load_history()
 
-        # 添加新记录到开头
-        history.insert(0, record)
+            # 添加新记录到开头
+            history.insert(0, record)
 
-        # 限制记录数量
-        if len(history) > self.MAX_RECORDS:
-            history = history[:self.MAX_RECORDS]
+            # 限制记录数量
+            if len(history) > self.MAX_RECORDS:
+                history = history[:self.MAX_RECORDS]
 
-        # 保存
-        self._save_history(history)
+            # 保存
+            self._save_history(history)
 
-        return record
+            return record
 
     def get_history(self) -> List[HistoryRecord]:
         """获取所有历史记录"""
-        return self._load_history()
+        with self._lock:
+            return list(self._load_history())
 
     def get_record(self, record_id: str) -> Optional[HistoryRecord]:
         """获取指定记录"""
-        history = self._load_history()
-        for record in history:
-            if record.id == record_id:
-                return record
-        return None
+        with self._lock:
+            history = self._load_history()
+            for record in history:
+                if record.id == record_id:
+                    return record
+            return None
 
     def delete_record(self, record_id: str) -> bool:
         """删除指定记录"""
-        history = self._load_history()
-        history = [r for r in history if r.id != record_id]
-        self._save_history(history)
-        return True
+        with self._lock:
+            history = self._load_history()
+            history = [r for r in history if r.id != record_id]
+            self._save_history(history)
+            return True
 
     def clear_history(self):
         """清空所有历史"""
-        self._save_history([])
+        with self._lock:
+            self._save_history([])
 
     def restore_results(self, record_id: str) -> Optional[List[FileResult]]:
         """从历史记录恢复结果"""
@@ -172,10 +194,11 @@ class HistoryManager:
             for fn, fd in data["fields"].items():
                 field_result = FieldResult(
                     field_name=fn,
-                    text=fd["text"],
-                    confidence=fd["confidence"],
+                    text=fd.get("text", ""),
+                    confidence=fd.get("confidence", 0.0),
                     match_level=fd.get("match_level", 0),
-                    engine=fd.get("engine", "")
+                    engine=fd.get("engine", ""),
+                    region_id=fd.get("region_id", ""),
                 )
                 field_result.manually_edited = fd.get("manually_edited", False)
                 fields[fn] = field_result

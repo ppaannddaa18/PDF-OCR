@@ -40,16 +40,18 @@ class PdfLoader:
 
     def _estimate_doc_size(self, doc: fitz.Document) -> float:
         """估算文档内存占用（MB）"""
-        # 基于页面数量和DPI估算
         page_count = len(doc)
-        # 单页渲染大小估算：DPI=200时约11MB
-        single_page_size = (self.dpi / 72) ** 2 * 0.05  # MB
-        return page_count * single_page_size
+        # 基于实际页面尺寸和DPI估算
+        total_pixels = 0
+        for page in doc:
+            rect = page.rect
+            total_pixels += rect.width * rect.height * (self.dpi / 72) ** 2
+        return total_pixels * 3 / (1024 * 1024)  # 3 bytes per pixel (RGB)
 
     def _get_document(self, pdf_path: str) -> fitz.Document:
         """获取或打开PDF文档（带LRU缓存和内存感知淘汰）"""
+        # 先查缓存（无锁快速判断）
         with self._lock:
-            # 检查缓存
             if pdf_path in self._doc_cache:
                 doc, _, size = self._doc_cache[pdf_path]
                 # 更新访问时间并移到末尾（最近使用）
@@ -58,9 +60,20 @@ class PdfLoader:
                     self._doc_refcount[pdf_path] = self._doc_refcount.get(pdf_path, 0) + 1
                 return doc
 
-            # 打开新文档
-            doc = fitz.open(pdf_path)
-            size = self._estimate_doc_size(doc)
+        # 锁外打开文件
+        doc = fitz.open(pdf_path)
+        size = self._estimate_doc_size(doc)
+
+        # 加锁后缓存
+        with self._lock:
+            # 双重检查
+            if pdf_path in self._doc_cache:
+                doc.close()
+                doc, _, size = self._doc_cache[pdf_path]
+                self._doc_cache.move_to_end(pdf_path)
+                with self._doc_refcount_lock:
+                    self._doc_refcount[pdf_path] = self._doc_refcount.get(pdf_path, 0) + 1
+                return doc
 
             # 内存感知淘汰（跳过正在使用的文档）
             while (len(self._doc_cache) >= self._max_cached or
@@ -106,8 +119,9 @@ class PdfLoader:
 
     def shutdown(self):
         """关闭所有资源（应用退出时调用）"""
-        self._async_executor.shutdown(wait=True)
         self.clear_cache()
+        self._async_executor.shutdown(wait=True)
+        self._async_executor = None
 
     def clear_cache(self):
         """清空所有缓存的文档（跳过仍在使用的文档）"""
@@ -126,9 +140,6 @@ class PdfLoader:
                 if path in self._doc_cache:
                     _, _, size = self._doc_cache.pop(path)
                     self._total_cache_size -= size
-        # 清理异步执行器并重建
-        self._async_executor.shutdown(wait=False)
-        self._async_executor = ThreadPoolExecutor(max_workers=2)
 
     def _get_doc_lock(self, pdf_path: str) -> threading.Lock:
         """获取文档级别的锁，保护单个 fitz.Document 的并发访问"""
@@ -178,7 +189,7 @@ class PdfLoader:
         self,
         pdf_path: str,
         page_num: int = 0,
-        callback: Optional[callable] = None
+        callback: Optional['Callable'] = None
     ) -> None:
         """
         异步渲染页面

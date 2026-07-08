@@ -96,7 +96,7 @@ class TestFieldMatcherLevel3:
         results = matcher.match(elements, [region], markdown, pixel_bboxes)
         assert results['r1'].level == 3
         assert results['r1'].text == '12345678'
-        assert results['r1'].confidence == 0.5
+        assert results['r1'].confidence > 0.5  # 动态置信度，基于匹配质量
 
     def test_keyword_markdown_bold(self, matcher):
         from app.models.region import Region

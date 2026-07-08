@@ -53,6 +53,9 @@ def load_config(path: str = None) -> dict:
     env_engine = os.environ.get("PDFOCR_ENGINE", "")
     if env_engine in ("paddleocr_vl", "paddleocr_vl_cpu", "rapidocr"):
         config.setdefault("ocr", {})["engine"] = env_engine
+        if env_engine == "paddleocr_vl_cpu":
+            config.setdefault("ocr", {}).setdefault("paddleocr_vl", {})["device"] = "cpu"
+            config.setdefault("ocr", {}).setdefault("paddleocr_vl", {})["precision"] = "fp32"
 
     return config
 

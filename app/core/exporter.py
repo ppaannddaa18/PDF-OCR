@@ -1,10 +1,11 @@
 import pandas as pd
-from typing import List
+from typing import List, Dict
 from app.models.ocr_result import FileResult
 
 
 class Exporter:
-    def to_excel(self, results: List[FileResult], output_path: str, include_confidence: bool = True):
+    def _build_rows(self, results: List[FileResult], include_confidence: bool = True) -> List[Dict]:
+        """构建统一的行数据（供 Excel/CSV 共用）"""
         rows = []
         for r in results:
             row = {"源文件": r.source_file, "状态": "成功" if r.success else f"失败：{r.error_msg}"}
@@ -16,6 +17,10 @@ class Exporter:
                 row[f"{field_name}_匹配级别"] = fr.match_level
                 row[f"{field_name}_人工修正"] = "是" if fr.manually_edited else "否"
             rows.append(row)
+        return rows
+
+    def to_excel(self, results: List[FileResult], output_path: str, include_confidence: bool = True):
+        rows = self._build_rows(results, include_confidence)
         df = pd.DataFrame(rows)
         try:
             df.to_excel(output_path, index=False, engine="openpyxl")
@@ -23,17 +28,7 @@ class Exporter:
             raise IOError(f"Failed to write Excel file: {e}")
 
     def to_csv(self, results: List[FileResult], output_path: str, include_confidence: bool = True):
-        rows = []
-        for r in results:
-            row = {"源文件": r.source_file, "状态": "成功" if r.success else f"失败：{r.error_msg}"}
-            for field_name, fr in r.fields.items():
-                row[field_name] = fr.text
-                if include_confidence:
-                    row[f"{field_name}_置信度"] = round(fr.confidence, 3)
-                row[f"{field_name}_引擎"] = fr.engine
-                row[f"{field_name}_匹配级别"] = fr.match_level
-                row[f"{field_name}_人工修正"] = "是" if fr.manually_edited else "否"
-            rows.append(row)
+        rows = self._build_rows(results, include_confidence)
         df = pd.DataFrame(rows)
         try:
             df.to_csv(output_path, index=False, encoding="utf-8-sig")

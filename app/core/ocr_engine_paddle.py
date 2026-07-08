@@ -83,8 +83,8 @@ class PaddleOCREngine(OCREngineBase):
             self._model_name = vl_cfg.get("vl_rec_model_name", "PaddleOCR-VL-1.6-0.9B")
             self._device = vl_cfg.get("device", "gpu:0")
             self._precision = vl_cfg.get("precision", "fp16")
-            self._use_layout_detection = vl_cfg.get("use_layout_detection", True)
-            self._warmup_on_startup = vl_cfg.get("warmup_on_startup", True)
+            self._use_layout_detection = vl_cfg.get("use_layout_detection", False)
+            self._warmup_on_startup = vl_cfg.get("warmup_on_startup", False)
             self._max_new_tokens = vl_cfg.get("max_new_tokens", 2048)
             self._min_pixels = vl_cfg.get("min_pixels", 512 * 512)
             self._use_tensorrt = vl_cfg.get("use_tensorrt", False)
@@ -105,13 +105,21 @@ class PaddleOCREngine(OCREngineBase):
             }
             self._idle_unload_seconds = vl_cfg.get("idle_unload_seconds", 300)
             self._page_dpi = vl_cfg.get("page_dpi", 200)
-            self._max_vram_gb = vl_cfg.get("max_vram_gb", 7.0)    # VRAM用量上限
-            self._min_free_vram_gb = vl_cfg.get("min_free_vram_gb", 0.5)  # 最小保留显存
+            self._max_vram_gb = vl_cfg.get("max_vram_gb", 7.8)    # VRAM用量上限
+            self._min_free_vram_gb = vl_cfg.get("min_free_vram_gb", 0.1)  # 最小保留显存
             self._matcher = FieldMatcher(config)
             self._last_used_time = time.monotonic()
             self._nvml_initialized = False
             self._nvml_handle = None
             self._initialized_flag = True
+
+    # 模型名到 pipeline 配置名的映射
+    _MODEL_TO_PIPELINE = {
+        "PaddleOCR-VL-1.6-0.9B": "PaddleOCR-VL-1.6",
+        "PaddleOCR-VL-1.6-7B": "PaddleOCR-VL-1.6",
+        "PaddleOCR-VL-1.5": "PaddleOCR-VL-1.5",
+        "PaddleOCR-VL-1.0": "PaddleOCR-VL",
+    }
 
     def _build_paddlex_config(self):
         """
@@ -124,7 +132,8 @@ class PaddleOCREngine(OCREngineBase):
         try:
             from paddlex.inference import load_pipeline_config
 
-            config = load_pipeline_config("PaddleOCR-VL-1.6")
+            pipeline_name = self._MODEL_TO_PIPELINE.get(self._model_name, "PaddleOCR-VL-1.6")
+            config = load_pipeline_config(pipeline_name)
             # AttrDict → 普通 dict，递归转换
             def _to_dict(obj):
                 if hasattr(obj, "items"):
@@ -255,7 +264,7 @@ class PaddleOCREngine(OCREngineBase):
             return PageResult(blocks=[], markdown="", image_size=(W, H))
 
         try:
-            arr = np.array(image) if isinstance(image, Image.Image) else image
+            arr = np.array(image)
             with self._pipeline_lock:
                 self._ensure_loaded()
                 if self._pipeline is None:
@@ -269,7 +278,6 @@ class PaddleOCREngine(OCREngineBase):
                     vlm_extra_args=self._vlm_extra_args,
                 ))
                 self._last_used_time = time.monotonic()
-            self._post_inference_cleanup()
         except Exception as e:
             logger.error(f"PaddleOCR-VL推理失败: {e}")
             return PageResult(blocks=[], markdown="", image_size=(W, H))
@@ -336,10 +344,12 @@ class PaddleOCREngine(OCREngineBase):
         return results
 
     def _calc_max_pixels(self, image_size: Tuple[int, int]) -> int:
-        """根据图片尺寸计算 max_pixels，上限 8M（8GB 显卡安全），下限 0.5M"""
+        """根据图片尺寸和 VRAM 预算计算 max_pixels"""
         w, h = image_size
         actual_pixels = w * h
-        return max(min(actual_pixels, 8 * 1024 * 1024), 512 * 1024)
+        # 根据 VRAM 预算计算: 每 GB 约 1M 像素（保守估计）
+        budget_pixels = int(self._max_vram_gb * 1_000_000)
+        return max(min(actual_pixels, budget_pixels), 512 * 1024)
 
     def _vram_guard(self, image_size: Tuple[int, int]) -> int:
         """VRAM守卫：返回安全的 max_pixels，-1 表示应跳过推理"""
@@ -416,6 +426,7 @@ class PaddleOCREngine(OCREngineBase):
                 return
             elapsed = time.monotonic() - self._last_used_time
             if elapsed > self._idle_unload_seconds:
+                self._post_inference_cleanup()  # unload 前清理 CUDA 缓存
                 self.unload()
 
     @classmethod

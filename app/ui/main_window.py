@@ -113,7 +113,7 @@ class MainWindow(FluentWindow):
         self._create_loading_overlay()
 
         # 核心组件
-        self.pdf_loader = PdfLoader(dpi=config["pdf"]["render_dpi"])
+        self.pdf_loader = PdfLoader(dpi=config.get("pdf", {}).get("render_dpi", 200))
         self.ocr_engine = get_ocr_engine(self.config)
         self.processor = None  # 将在OCR引擎就绪后创建
         self._init_gen = 0  # 初始化世代计数器，防止竞态条件
@@ -2141,8 +2141,10 @@ class MainWindow(FluentWindow):
         import threading
 
         def _do_parse():
+            # 复制图像，防止主线程修改导致竞态
+            page_image = self._current_page_image.copy() if self._current_page_image else None
             try:
-                result = engine.recognize_page_auto(self._current_page_image)
+                result = engine.recognize_page_auto(page_image)
                 self._current_page_result = result
 
                 def _on_done():

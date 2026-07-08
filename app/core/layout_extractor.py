@@ -34,7 +34,10 @@ def extract_blocks(output) -> List[Block]:
                     xs = [p[0] for p in poly]
                     ys = [p[1] for p in poly]
                     bbox = [min(xs), min(ys), max(xs), max(ys)]
-            confidence = float(rec_scores[i]) if i < len(rec_scores) else 0.0
+            try:
+                confidence = float(rec_scores[i]) if i < len(rec_scores) else 0.0
+            except (TypeError, ValueError):
+                confidence = 0.0
             blocks.append(Block(
                 block_type="text",
                 content=text,
@@ -62,7 +65,13 @@ def extract_blocks(output) -> List[Block]:
                     ys = [p[1] for p in coord]
                     bbox = [min(xs), min(ys), max(xs), max(ys)]
                 elif all(isinstance(v, (int, float)) for v in coord):
-                    bbox = list(coord)
+                    if len(coord) > 4:
+                        # 多边形坐标 [x1,y1,x2,y2,...] → bbox [min_x, min_y, max_x, max_y]
+                        xs = coord[0::2]
+                        ys = coord[1::2]
+                        bbox = [min(xs), min(ys), max(xs), max(ys)]
+                    else:
+                        bbox = list(coord)
             blocks.append(Block(
                 block_type=mapped,
                 content=content if isinstance(content, str) else str(content),

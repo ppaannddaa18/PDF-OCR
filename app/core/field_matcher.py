@@ -142,11 +142,13 @@ class FieldMatcher:
                 best_elem = elem
         return best_elem
 
-    def _merge_adjacent(self, best: dict, remaining: List[dict]) -> Tuple[str, List[dict]]:
+    def _merge_adjacent(self, best: dict, remaining: List[dict], page_height: int = 1000) -> Tuple[str, List[dict]]:
         """合并与best相邻的同一行elements，返回(merged_text, consumed_elements)"""
         best_bbox = best.get("bbox", [0, 0, 0, 0])
         by_mid = (best_bbox[1] + best_bbox[3]) / 2
         consumed = []
+        # Y 轴容差按页面高度比例计算（下限 20px）
+        y_tolerance = max(20, page_height * 0.02)
 
         # 第一遍：收集右侧相邻元素
         for elem in list(remaining):
@@ -154,7 +156,7 @@ class FieldMatcher:
             if not bbox or len(bbox) != 4:
                 continue
             ey_mid = (bbox[1] + bbox[3]) / 2
-            if abs(ey_mid - by_mid) < 20:
+            if abs(ey_mid - by_mid) < y_tolerance:
                 h_dist = bbox[0] - best_bbox[2]
                 if 0 < h_dist < self.neighbor_radius * 2:
                     consumed.append(elem)
@@ -165,7 +167,7 @@ class FieldMatcher:
             if not bbox or len(bbox) != 4 or elem in consumed:
                 continue
             ey_mid = (bbox[1] + bbox[3]) / 2
-            if abs(ey_mid - by_mid) < 20:
+            if abs(ey_mid - by_mid) < y_tolerance:
                 h_dist = best_bbox[0] - bbox[2]
                 if 0 < h_dist < self.neighbor_radius * 2:
                     consumed.append(elem)
@@ -181,11 +183,18 @@ class FieldMatcher:
             return "", 0.0
 
         for kw in region.match_keywords:
+            if not kw or not kw.strip():
+                continue
             # 匹配 "关键词：值"、"**关键词**: 值" 等格式
             # 支持markdown粗体标记（**关键词**）以及多种分隔符
             pattern = r'\*{0,2}' + re.escape(kw) + r'\*{0,2}[：:\s]*([^\n]+)'
             m = re.search(pattern, markdown_text)
             if m:
-                return m.group(1).strip(), 0.5  # 关键词兜底置信度设为0.5
+                matched_text = m.group(1).strip()
+                # 置信度基于匹配文本长度与关键词长度的比例
+                kw_len = len(kw)
+                text_len = len(matched_text)
+                confidence = min(0.5 + text_len / max(100, kw_len * 2), 0.95) if text_len > 0 else 0.5
+                return matched_text, confidence
 
         return "", 0.0

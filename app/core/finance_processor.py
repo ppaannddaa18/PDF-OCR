@@ -26,7 +26,8 @@ class FinanceProcessor:
         for kw in self._keywords:
             anchor = None
             for b in blocks:
-                if kw in b.content:
+                # 使用词边界匹配，避免"日期"匹配"出生日期"
+                if re.search(r'(?<!\w)' + re.escape(kw) + r'(?!\w)', b.content):
                     anchor = b
                     break
             if anchor is None:
@@ -63,7 +64,8 @@ def _find_neighbor(blocks: List[Block], anchor: Block, direction: str = 'right')
 
     # 从中位 block 高度计算行高阈值，下限 30px
     heights = [(b.bbox[3] - b.bbox[1]) for b in blocks if b.bbox is not None and (b.bbox[3] - b.bbox[1]) > 0]
-    median_h = sorted(heights)[len(heights)//2] if heights else 0
+    import statistics
+    median_h = statistics.median(heights) if heights else 0
     y_tolerance = max(30, int(median_h * 1.5))
     # Use same median-based tolerance for below direction
     x_tolerance = max(30, int(median_h * 1.5))

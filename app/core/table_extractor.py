@@ -54,8 +54,12 @@ def extract_tables(markdown: str) -> List[pd.DataFrame]:
             # 清洗并解析
             cleaned = '\n'.join(data_lines)
             df = pd.read_csv(StringIO(cleaned), sep='|', engine='python')
-            # 去掉边框产生的空列
-            df = df.dropna(axis=1, how='all')
+            # 去掉边框产生的空列（仅首尾空列，保留中间可能为空的列）
+            if df.shape[1] >= 3:
+                # 首列和末列是管道表的外边框，总是空的
+                df = df.iloc[:, 1:-1]
+            elif df.shape[1] == 2:
+                df = df.iloc[:, 1:]
             if not df.empty:
                 df.columns = [str(c).strip() for c in df.columns]
                 tables.append(df)

@@ -45,7 +45,7 @@ def main():
     config = load_config()
 
     # CPU VLM模式: 必须在导入paddle之前设置，否则PaddlePaddle内部Place(undefined:0)崩溃
-    engine_type = config.get("ocr", {}).get("engine", "rapidocr")
+    engine_type = config.get("ocr", {}).get("engine", "paddleocr_vl")
     if engine_type == "paddleocr_vl_cpu":
         import os
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
