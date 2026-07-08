@@ -179,6 +179,10 @@ class PaddleOCREngine(OCREngineBase):
                         pass  # 旧版 PaddlePaddle 不支持，依赖环境变量 FLAGS_allocator_strategy
                 # 构建 paddlex_config，控制子模块加载
                 paddlex_config = self._build_paddlex_config()
+                # 强制使用动态图模式，避免 int(Tensor) 静态图崩溃
+                # engine="paddle_dynamic" 参数不会通过 kwargs 传给父类，
+                # 需要通过 engine_config 显式指定动态图模式
+                engine_config = {"paddle_static": {"run_mode": "paddle"}}
                 self._pipeline = PaddleOCRVL(
                     vl_rec_model_name=self._model_name,
                     device=self._device,
@@ -188,6 +192,7 @@ class PaddleOCREngine(OCREngineBase):
                     use_tensorrt=self._use_tensorrt,
                     enable_hpi=self._enable_hpi,
                     paddlex_config=paddlex_config,  # 传入修改后的配置控制模型加载
+                    engine_config=engine_config,    # 强制动态图模式
                 )
                 logger.info("PaddleOCR-VL pipeline 创建完成")
                 self._initialized = True
