@@ -88,16 +88,14 @@ class MainWindow(FluentWindow):
         self.setWindowTitle(config["app"]["name"])
         self.resize(*config["app"]["window_size"])
 
-        # PaddlePaddle 设备在首次导入时确定，运行时不可变
-        # 用于判断 GPU/CPU VLM 切换是否需要重启
-        engine_type = config.get("ocr", {}).get("engine", "paddleocr_vl")
-        self._paddle_init_device = "cpu" if engine_type == "paddleocr_vl_cpu" else "gpu"
-        # PaddlePaddle 的 C++ 设备注册表在进程内只初始化一次；pipeline创建再销毁后
-        # 内部Place对象损坏，无法重新加载 → 必须重启。此标志追踪是否发生过卸载。
-        self._paddle_was_unloaded = False
+        # 引擎类型检测
+        engine_type = config.get("ocr", {}).get("engine", "gguf")
+        self._gguf_device = config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
+        # GGUF 引擎支持热切换 GPU/CPU，不需要重启
+        self._gguf_was_unloaded = False
 
         # 双模式状态
-        self._current_mode = "auto" if self.config.get("ocr", {}).get("engine") in ("paddleocr_vl", "paddleocr_vl_cpu") else "manual"
+        self._current_mode = "auto" if self.config.get("ocr", {}).get("engine") == "gguf" else "manual"
         # 中面板（版面可视化）— VLM模式下显示
         self._layout_view = None  # QGraphicsView，延迟创建
         # 右面板 StackedWidget — 根据模式切换子面板
@@ -118,6 +116,8 @@ class MainWindow(FluentWindow):
         self.processor = None  # 将在OCR引擎就绪后创建
         self._init_gen = 0  # 初始化世代计数器，防止竞态条件
         self._ready_gen = -1  # 当前就绪回调的世代号，-1=未初始化
+        self._is_shutting_down = False  # 关闭中标志，防止重复触发
+        self._shutdown_cleanup_thread = None  # 后台清理线程引用
 
         # 在后台线程中同步初始化（不阻塞UI）
         import threading
@@ -864,14 +864,20 @@ class MainWindow(FluentWindow):
         self.engine_combo = ComboBox()
         self.engine_combo.blockSignals(True)  # 防止初始化时触发切换
         self.engine_combo.addItems([
-            "PaddleOCR-VL (GPU)",
-            "PaddleOCR-VL (CPU)",
+            "GGUF (GPU)",
+            "GGUF (CPU)",
             "RapidOCR (CPU)",
         ])
         # 根据当前引擎设置默认选项
-        current_engine = self.config.get("ocr", {}).get("engine", "paddleocr_vl")
-        idx_map = {"paddleocr_vl": 0, "paddleocr_vl_cpu": 1, "rapidocr": 2}
-        self.engine_combo.setCurrentIndex(idx_map.get(current_engine, 0))
+        current_engine = self.config.get("ocr", {}).get("engine", "gguf")
+        current_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
+        if current_engine == "gguf" and current_device == "gpu":
+            current_idx = 0
+        elif current_engine == "gguf" and current_device == "cpu":
+            current_idx = 1
+        else:
+            current_idx = 2
+        self.engine_combo.setCurrentIndex(current_idx)
         self.engine_combo.blockSignals(False)
         self.engine_combo.currentIndexChanged.connect(self._on_engine_switched)
         self.engine_combo.setMinimumWidth(170)
@@ -879,24 +885,14 @@ class MainWindow(FluentWindow):
 
         toolbar_layout.addSpacing(4)
 
-        # 版面检测开关（仅PaddleOCR-VL模式，关闭可省~3GB显存）
-        from qfluentwidgets import SwitchButton, BodyLabel
-        layout_label = BodyLabel("版面检测")
-        layout_label.setStyleSheet("font-size: 11px; color: #666;")
-        toolbar_layout.addWidget(layout_label)
-        self.layout_detection_switch = SwitchButton()
-        use_layout = self.config.get("ocr", {}).get("paddleocr_vl", {}).get("use_layout_detection", False)
-        self.layout_detection_switch.setChecked(use_layout)
-        self.layout_detection_switch.setOnText("开")
-        self.layout_detection_switch.setOffText("关")
-        self.layout_detection_switch.setToolTip(
-            "开启: 加载版面检测模型(~3GB显存), 适合极复杂版面\n"
-            "关闭: VLM自带版面理解, 显存更省(推荐)"
-        )
-        self.layout_detection_switch.checkedChanged.connect(self._on_layout_detection_toggled)
+        # 设置按钮
+        self.settings_btn = PushButton("⚙️ 设置")
+        self.settings_btn.setFixedWidth(80)
+        self.settings_btn.setToolTip("打开 OCR 引擎设置")
+        self.settings_btn.clicked.connect(self._on_settings_clicked)
+        toolbar_layout.addWidget(self.settings_btn)
 
-        toolbar_layout.addWidget(self.layout_detection_switch)
-        toolbar_layout.addSpacing(8)
+        toolbar_layout.addSpacing(4)
 
         # GPU 状态指示器
         from app.ui.widgets.gpu_status import GpuStatusWidget
@@ -1878,30 +1874,25 @@ class MainWindow(FluentWindow):
 
         self.status_label.setText(f"字段名已更新: {old_name} -> {new_name}")
 
-    def _on_layout_detection_toggled(self, checked: bool):
-        """版面检测开关 — 切换后需重启引擎生效"""
-        self.config.setdefault("ocr", {}).setdefault("paddleocr_vl", {})["use_layout_detection"] = checked
-        mode = "开启" if checked else "关闭"
-        from qfluentwidgets import InfoBar, InfoBarPosition
-        InfoBar.info(
-            title="版面检测已" + mode,
-            content="此设置将在下次启动或切换引擎时生效" if not checked else
-                    "已开启版面检测模型，将占用额外~3GB显存",
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self
-        )
-
     def _on_engine_switched(self, index: int):
-        """引擎切换处理: RapidOCR 热切换, GPU↔CPU_VLM 需重启"""
-        engine_names = ["paddleocr_vl", "paddleocr_vl_cpu", "rapidocr"]
-        engine_labels = ["PaddleOCR-VL (GPU)", "PaddleOCR-VL (CPU)", "RapidOCR (CPU)"]
+        """引擎切换处理: RapidOCR 热切换, GGUF GPU↔CPU 需重启"""
+        engine_names = ["gguf", "gguf", "rapidocr"]
+        engine_devices = ["gpu", "cpu", None]
+        engine_labels = ["GGUF (GPU)", "GGUF (CPU)", "RapidOCR (CPU)"]
         new_engine_type = engine_names[index]
-        current_engine = self.config.get("ocr", {}).get("engine", "paddleocr_vl")
-        current_idx = engine_names.index(current_engine) if current_engine in engine_names else 0
-        if new_engine_type == current_engine:
+        new_device = engine_devices[index]
+        current_engine = self.config.get("ocr", {}).get("engine", "gguf")
+        current_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
+
+        # 计算当前索引
+        if current_engine == "gguf" and current_device == "gpu":
+            current_idx = 0
+        elif current_engine == "gguf" and current_device == "cpu":
+            current_idx = 1
+        else:
+            current_idx = 2
+
+        if new_engine_type == current_engine and new_device == current_device:
             return
 
         # 防止批量识别进行中切换引擎
@@ -1919,33 +1910,25 @@ class MainWindow(FluentWindow):
             self.engine_combo.setCurrentIndex(current_idx)
             self.engine_combo.blockSignals(False)
 
-        # PaddlePaddle 设备在首次导入时确定(gpu/cpu)，运行时不可切换
-        # 目标VL引擎与当前PaddlePaddle初始化设备不一致 → 需要重启
-        # PaddlePaddle 一旦被卸载，内部 Place 对象损坏，无法重新加载 → 必须重启
+        # GGUF GPU↔CPU 切换需要重启（llama-server 参数不同）
         needs_restart = (
-            (new_engine_type == "paddleocr_vl_cpu" and self._paddle_init_device == "gpu") or
-            (new_engine_type == "paddleocr_vl" and self._paddle_init_device == "cpu") or
-            (new_engine_type in ("paddleocr_vl", "paddleocr_vl_cpu") and self._paddle_was_unloaded)
+            new_engine_type == "gguf" and
+            new_device != current_device and
+            current_engine == "gguf"
         )
         if needs_restart:
             from qfluentwidgets import MessageBox
             extra_info = ""
-            if new_engine_type == "paddleocr_vl_cpu":
+            if new_device == "cpu":
                 extra_info = "\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，0显存占用"
-            elif new_engine_type == "paddleocr_vl":
-                extra_info = "\nGPU模式: 速度快(~0.6s/页)，需约4-7GB显存"
-
-            # 根据具体原因显示不同说明
-            if self._paddle_was_unloaded and self._paddle_init_device == ("cpu" if new_engine_type == "paddleocr_vl_cpu" else "gpu"):
-                reason = "PaddleOCR-VL 引擎在此会话中已被加载并卸载，PaddlePaddle 内部状态无法恢复，需重启进程。"
             else:
-                reason = "PaddleOCR-VL 的设备模式(GPU/CPU)只能在启动时确定。"
+                extra_info = "\nGPU模式: 速度快(~2s/页)，需约6GB显存"
 
             msg = MessageBox(
                 "重启切换引擎",
                 f"切换到 {engine_labels[index]} 需要重启程序。"
                 f"{extra_info}\n\n"
-                f"原因: {reason}\n\n"
+                "原因: GGUF 的 GPU/CPU 模式需要在启动时确定。\n\n"
                 "是否立即重启？",
                 self
             )
@@ -1956,17 +1939,21 @@ class MainWindow(FluentWindow):
                 return
 
             # 保存配置并重启
-            self._restart_with_engine(new_engine_type)
+            self.config["ocr"]["engine"] = new_engine_type
+            self.config["ocr"]["gguf"]["device"] = new_device
+            self._restart_with_engine(new_engine_type, new_device)
             return
 
-        # ── 以下为热切换路径 (RapidOCR ↔ VL 引擎) ──
+        # ── 以下为热切换路径 (RapidOCR ↔ GGUF 引擎) ──
 
-        # RapidOCR → VL引擎时确认提示
-        if new_engine_type != "rapidocr":
+        # RapidOCR → GGUF 引擎时确认提示
+        if new_engine_type == "gguf":
             from qfluentwidgets import MessageBox
             extra = ""
-            if new_engine_type == "paddleocr_vl_cpu":
+            if new_device == "cpu":
                 extra = "\n\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，但0显存占用"
+            else:
+                extra = "\n\nGPU模式: 速度快(~2s/页)，需约6GB显存"
             msg = MessageBox(
                 "切换OCR引擎",
                 f"切换到 {engine_labels[index]}？{extra}\n\n"
@@ -1981,15 +1968,17 @@ class MainWindow(FluentWindow):
 
         # 更新配置
         self.config["ocr"]["engine"] = new_engine_type
+        if new_device:
+            self.config["ocr"]["gguf"]["device"] = new_device
 
         # 重新创建引擎（先卸载旧引擎+重置单例，确保新配置生效）
         if hasattr(self.ocr_engine, 'unload'):
             self.ocr_engine.unload()
         if hasattr(type(self.ocr_engine), 'reset_instance'):
             type(self.ocr_engine).reset_instance()
-        # PaddlePaddle 被卸载后无法在同一进程中重新初始化，标记后如需切回则重启
-        if current_engine in ("paddleocr_vl", "paddleocr_vl_cpu"):
-            self._paddle_was_unloaded = True
+        # GGUF 被卸载后可以在同一进程中重新初始化
+        if current_engine == "gguf":
+            self._gguf_was_unloaded = True
         self.ocr_engine = get_ocr_engine(self.config)
 
         # 立即更新GPU状态组件（避免旧引擎僵尸引用导致一直"加载中"）
@@ -2030,7 +2019,7 @@ class MainWindow(FluentWindow):
         self.stat_success.setText("成功: 0")
         self.stat_fail.setText("失败: 0")
 
-        engine_labels_short = ["PaddleOCR-VL (GPU)", "PaddleOCR-VL (CPU)", "RapidOCR (CPU)"]
+        engine_labels_short = ["GGUF (GPU)", "GGUF (CPU)", "RapidOCR (CPU)"]
         InfoBar.success(
             title="引擎已切换",
             content=f"当前引擎: {engine_labels_short[index]}",
@@ -2039,7 +2028,7 @@ class MainWindow(FluentWindow):
         )
 
         # 判断新模式并切换UI
-        new_mode = "auto" if new_engine_type in ("paddleocr_vl", "paddleocr_vl_cpu") else "manual"
+        new_mode = "auto" if new_engine_type == "gguf" else "manual"
         if new_mode != self._current_mode:
             self._current_mode = new_mode
             self._switch_ui_mode(new_mode)
@@ -2053,15 +2042,60 @@ class MainWindow(FluentWindow):
         except Exception as e:
             _logger.warning(f"写入配置文件失败: {e}")
 
-    def _restart_with_engine(self, engine_type: str):
+    def _on_settings_clicked(self):
+        """打开 OCR 设置对话框"""
+        from app.ui.widgets.ocr_settings_dialog import OcrSettingsDialog
+
+        dialog = OcrSettingsDialog(self.config, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # 获取设置补丁
+            patch = dialog.get_config_patch()
+
+            # 合并到当前配置
+            self._merge_config_patch(self.config, patch)
+
+            # 保存配置
+            try:
+                import yaml
+                from pathlib import Path
+                config_path = Path(__file__).parent.parent / "config.yaml"
+                with open(config_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False)
+
+                InfoBar.success(
+                    title="设置已保存",
+                    content="配置已更新，下次启动时生效",
+                    duration=3000,
+                    parent=self
+                )
+            except Exception as e:
+                _logger.error(f"保存设置失败: {e}")
+                InfoBar.error(
+                    title="保存失败",
+                    content=f"无法保存设置: {e}",
+                    duration=5000,
+                    parent=self
+                )
+
+    def _merge_config_patch(self, config: dict, patch: dict):
+        """递归合并配置补丁"""
+        for key, value in patch.items():
+            if isinstance(value, dict) and key in config and isinstance(config[key], dict):
+                self._merge_config_patch(config[key], value)
+            else:
+                config[key] = value
+
+    def _restart_with_engine(self, engine_type: str, device: str = None):
         """写入配置并重启程序切换到指定引擎"""
         import subprocess
         import yaml
         from pathlib import Path
 
-        # 写入 config.yaml
+        # 写入 config.yaml（使用 app/config.yaml，与 load_config 一致）
         config_path = Path(__file__).parent.parent / "config.yaml"
         self.config["ocr"]["engine"] = engine_type
+        if device and "gguf" in self.config.get("ocr", {}):
+            self.config["ocr"]["gguf"]["device"] = device
         try:
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False)
@@ -2227,10 +2261,35 @@ class MainWindow(FluentWindow):
         )
 
     def closeEvent(self, event):
-        """窗口关闭时确保 worker 线程安全终止"""
+        """窗口关闭时异步执行清理，避免UI冻结"""
+        # 防止重复触发
+        if self._is_shutting_down:
+            event.accept()
+            return
+
+        self._is_shutting_down = True
+
+        # 1. 立即接受关闭事件，隐藏窗口
+        event.accept()
+        self.hide()
+
+        # 2. 显示关闭中的遮罩层
+        if hasattr(self, 'loading_overlay') and self.loading_overlay:
+            try:
+                self.loading_overlay.status_label.setText("正在关闭应用，请稍候...")
+                self.loading_overlay.desc_label.setText("正在停止 OCR 引擎...")
+                self.loading_overlay.dots_label.setVisible(True)
+                self.loading_overlay.progress_ring.setVisible(True)
+                self.loading_overlay.error_widget.setVisible(False)
+                self.loading_overlay.setVisible(True)
+                self.loading_overlay.raise_()
+                self.loading_overlay._animation_timer.start(300)
+            except Exception:
+                pass
+
+        # 3. 取消运行中的worker（最多等3秒）
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
-            # 保存待处理任务以便下次恢复
             if self.results:
                 try:
                     all_files = self.file_panel.all_files()
@@ -2261,19 +2320,55 @@ class MainWindow(FluentWindow):
                             json.dump(task_data, f, indent=2, ensure_ascii=False)
                 except Exception:
                     pass
-            self.worker.wait(10000)  # 等待最多10秒
+            self.worker.wait(3000)
 
-        # 关闭进度对话框（如果存在）
+        # 4. 关闭进度对话框
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
             self.progress_dialog.close()
 
-        # I4: clean up GPU status widget timer
+        # 5. 轻量级清理
         self.gpu_status.cleanup()
-
-        # 关闭 PDF 加载器（释放文件句柄和线程池）
         self.pdf_loader.shutdown()
-
-        # 保存当前 PDF 配置
         self._save_current_pdf_config()
 
-        event.accept()
+        # 6. 异步卸载OCR引擎（重量级操作，非daemon线程确保完成）
+        def _on_cleanup_done():
+            """清理完成后从主线程退出应用"""
+            from PyQt6.QtWidgets import QApplication
+            QApplication.quit()
+
+        def _do_cleanup():
+            """在后台线程中执行重量级清理"""
+            import logging
+            _logger = logging.getLogger("PDFOCR")
+            try:
+                if hasattr(self, 'ocr_engine') and self.ocr_engine:
+                    _logger.info("[Shutdown] 开始卸载 OCR 引擎...")
+                    try:
+                        if hasattr(self.ocr_engine, 'terminate_async'):
+                            import threading
+                            done_event = threading.Event()
+                            def _callback():
+                                done_event.set()
+                            self.ocr_engine.terminate_async(_callback)
+                            done_event.wait(timeout=8)
+                            if not done_event.is_set():
+                                _logger.warning("[Shutdown] OCR引擎终止超时，强制退出")
+                        else:
+                            self.ocr_engine.unload()
+                    except Exception as e:
+                        _logger.warning(f"[Shutdown] OCR引擎卸载异常: {e}")
+                _logger.info("[Shutdown] 清理完成")
+            except Exception as e:
+                _logger.error(f"[Shutdown] 清理过程异常: {e}")
+            finally:
+                # 确保在主线程中调用quit
+                QTimer.singleShot(0, _on_cleanup_done)
+
+        import threading
+        self._shutdown_cleanup_thread = threading.Thread(
+            target=_do_cleanup,
+            daemon=False,  # 非daemon线程确保清理完成
+            name="Shutdown-Cleanup"
+        )
+        self._shutdown_cleanup_thread.start()
