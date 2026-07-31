@@ -1,6 +1,7 @@
 # app/ui/widgets/slidable_panel.py
-from PyQt6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QEasingCurve, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from app.ui.animation_manager import AnimationManager
 from app.ui.theme_manager import ThemeManager
 
 
@@ -113,12 +114,9 @@ class SlidablePanel(QWidget):
             start_x = parent.width()
             self.move(start_x, self.y())
 
-            self._animation = QPropertyAnimation(self, b"pos")
-            self._animation.setDuration(250)
-            self._animation.setStartValue(self.pos())
-            self._animation.setEndValue(self.pos() + QPoint(end_x - start_x, 0))
-            self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self._animation.start()
+            self._animation = AnimationManager.animate(
+                self, b"pos", self.pos(), self.pos() + QPoint(end_x - start_x, 0),
+                duration=250, easing=QEasingCurve.Type.OutCubic)
 
         self.visible_changed.emit(True)
 
@@ -133,13 +131,14 @@ class SlidablePanel(QWidget):
         if parent:
             end_x = parent.width()
 
-            self._animation = QPropertyAnimation(self, b"pos")
-            self._animation.setDuration(250)
-            self._animation.setStartValue(self.pos())
-            self._animation.setEndValue(self.pos() + QPoint(end_x - self.x(), 0))
-            self._animation.setEasingCurve(QEasingCurve.Type.InCubic)
-            self._animation.finished.connect(lambda: self.setVisible(False))
-            self._animation.start()
+            self._animation = AnimationManager.animate(
+                self, b"pos", self.pos(), self.pos() + QPoint(end_x - self.x(), 0),
+                duration=250, easing=QEasingCurve.Type.InCubic)
+            if self._animation is not None:
+                self._animation.finished.connect(lambda: self.setVisible(False))
+            else:
+                # 动画禁用时 animate 直接设置最终值并返回 None，立即隐藏
+                self.setVisible(False)
         else:
             self.setVisible(False)
 

@@ -1,6 +1,7 @@
 # app/ui/widgets/collapsible_panel.py
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from app.ui.animation_manager import AnimationManager
 from app.ui.theme_manager import ThemeManager
 
 
@@ -134,11 +135,8 @@ class CollapsiblePanel(QWidget):
             anim.stop()
         self._animations = []
 
+        # 经 AnimationManager 统一创建（禁用时直接设置最终值并返回 None，无需保留引用）
         for prop in (b"minimumWidth", b"maximumWidth"):
-            anim = QPropertyAnimation(self, prop)
-            anim.setDuration(300)
-            anim.setStartValue(start_width)
-            anim.setEndValue(end_width)
-            anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-            self._animations.append(anim)
-            anim.start()
+            anim = AnimationManager.animate(self, prop, start_width, end_width)
+            if anim is not None:
+                self._animations.append(anim)

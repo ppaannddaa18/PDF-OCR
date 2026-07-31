@@ -16,10 +16,11 @@
 3. apply_auto_contrast / apply_sharpen 信号用于实际处理
 """
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QSlider, QPushButton
-from PyQt6.QtCore import Qt, pyqtSignal as Signal, QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import Qt, pyqtSignal as Signal, QEasingCurve
 from qfluentwidgets import (
     TransparentToolButton, BodyLabel, PushButton, ComboBox,
 )
+from app.ui.animation_manager import AnimationManager
 from app.ui.theme_manager import ThemeManager
 
 # 延迟导入qtawesome，避免字体警告
@@ -254,20 +255,22 @@ class ImagePreprocessToolbar(QWidget):
         return max(self.COLLAPSED_HEIGHT, min(self.EXPANDED_HEIGHT, self.height()))
 
     def _animate_height(self, start: int, end: int):
-        """200ms 高度动画：minimumHeight 与 maximumHeight 同步动画（Task 4 模式）"""
+        """200ms 高度动画：minimumHeight 与 maximumHeight 同步动画（Task 4 模式）
+
+        经 AnimationManager 统一创建（禁用时直接设置最终值并返回 None，无需保留引用）
+        """
         # 停止可能仍在运行的旧动画，避免新旧动画相互覆盖属性值
         for anim in self._animations:
             anim.stop()
         self._animations = []
 
         for prop in (b"minimumHeight", b"maximumHeight"):
-            anim = QPropertyAnimation(self, prop)
-            anim.setDuration(self.ANIMATION_DURATION)
-            anim.setStartValue(start)
-            anim.setEndValue(end)
-            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self._animations.append(anim)
-            anim.start()
+            anim = AnimationManager.animate(
+                self, prop, start, end,
+                duration=self.ANIMATION_DURATION,
+                easing=QEasingCurve.Type.OutCubic)
+            if anim is not None:
+                self._animations.append(anim)
 
     # ---- 图标按钮快捷操作（仅触发操作，不切换展开状态） ----
 
