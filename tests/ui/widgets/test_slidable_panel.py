@@ -45,6 +45,22 @@ class TestSlidablePanel:
         assert panel._min_width == 360
         assert panel._max_width == 600
 
+    def test_panel_width_param_effective(self, qapp):
+        """回归：panel_width 构造参数必须真实生效（曾被后续 min/max 覆盖失效）
+
+        不能只靠构造后先 resize 再断言——resize 值在 [min, max] 范围内会被约束
+        合法化，区分不出参数是否生效。修复前 setFixedWidth(panel_width) 的固定
+        约束在 show 前被后续 min/max 覆盖，show() 触发布局激活后宽度塌缩到
+        minimumWidth（280）；修复后初始宽度显式设为 panel_width，show 后保持。
+        """
+        panel = SlidablePanel(panel_width=300)
+        panel.show()
+        assert panel.width() == 300
+
+        default_panel = SlidablePanel()
+        default_panel.show()
+        assert default_panel.width() == 320
+
     def test_slide_animation_moves_panel_in_and_out(self, qapp):
         """动画验证：滑出后移出右边界并隐藏，滑入后回到右边缘内侧"""
         parent = QWidget()

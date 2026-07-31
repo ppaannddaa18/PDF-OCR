@@ -21,9 +21,12 @@ class SlidablePanel(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
-        self.setFixedWidth(self._panel_width)
         self.setMinimumWidth(self._min_width)
         self.setMaximumWidth(self._max_width)
+        # 显式设置初始宽度为 panel_width（在 [min, max] 范围内合法）。
+        # 不能用 setFixedWidth：其固定约束会被后续 min/max 覆盖，show 时
+        # 布局激活会把宽度塌缩回 minimumWidth，导致 panel_width 参数失效。
+        self.resize(self._panel_width, self.height())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
