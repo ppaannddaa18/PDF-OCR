@@ -14,6 +14,13 @@ class TestThemeManager:
         assert ThemeManager.get_color('primary') == '#3b82f6'
         assert ThemeManager.get_color('bg_primary') == '#111827'
 
+    def test_get_color_white(self):
+        # white 角色为跨主题通用颜色（组件按钮文字使用，禁止硬编码）
+        ThemeManager.set_theme('light')
+        assert ThemeManager.get_color('white') == '#ffffff'
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('white') == '#ffffff'
+
     def test_get_color_unknown_role(self):
         with pytest.raises(ValueError, match="Unknown color role"):
             ThemeManager.get_color('nonexistent')

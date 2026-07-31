@@ -35,3 +35,18 @@ class TestEmptyState:
     def test_unknown_variant(self, qapp):
         with pytest.raises(ValueError, match="Unknown variant"):
             EmptyState('unknown')
+
+    def test_action_button_uses_theme_white_color(self, qapp):
+        # 按钮文字颜色必须通过 ThemeManager 获取，禁止硬编码 color: white
+        state = EmptyState('no_files')
+        stylesheet = state.action_button.styleSheet()
+        assert 'color: #ffffff' in stylesheet
+        assert 'color: white' not in stylesheet
+
+    def test_switch_variant_hides_action_button(self, qapp):
+        # 从有按钮的变体切到 action 为 None 的变体时按钮必须隐藏
+        state = EmptyState('no_files')
+        state.show()
+        assert state.action_button.isVisible()
+        state.apply_variant('no_preview')
+        assert not state.action_button.isVisible()

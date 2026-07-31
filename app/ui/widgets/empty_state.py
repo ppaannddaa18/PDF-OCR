@@ -80,7 +80,7 @@ class EmptyState(QWidget):
         self.action_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {ThemeManager.get_color('primary')};
-                color: white;
+                color: {ThemeManager.get_color('white')};
                 border: none;
                 border-radius: {ThemeManager.get_radius('md')}px;
                 padding: {ThemeManager.get_spacing('sm')}px {ThemeManager.get_spacing('lg')}px;
@@ -107,6 +107,8 @@ class EmptyState(QWidget):
         self.set_description(config['description'])
         if config['action']:
             self.set_action(config['action'], lambda: None)
+        else:
+            self.action_button.setVisible(False)
 
     def set_icon(self, icon_name: str):
         """设置图标"""
