@@ -282,7 +282,11 @@ class MainWindow(FluentWindow):
             self.right_panel.slide_in()
 
     def _on_new_template(self):
-        """Ctrl+Shift+N: 新建模板（清空当前字段配置，支持撤销）"""
+        """Ctrl+Shift+N: 新建模板（清空当前字段配置，支持撤销）
+
+        [I-1 修复] 与 on_clear_current_pdf_fields 一致：清空默认模板，并为当前
+        PDF 写入空覆盖配置占位，防止切换文件再切回时旧区域/旧默认模板静默复活。
+        """
         regions = list(self.field_panel.regions.values())
         ui = _get_ui_components()
 
@@ -299,6 +303,12 @@ class MainWindow(FluentWindow):
         command = ui.ClearAllCommand(regions, clear_regions, restore_regions)
         self.command_history.execute(command)
         self._current_preview_result = None
+        # 清空默认模板，并写入空覆盖配置占位（与 on_clear_current_pdf_fields 一致的持久化）
+        self._default_template = None
+        if self._current_pdf:
+            from app.models.template import Template
+            self._pdf_overrides[self._current_pdf] = Template(name="empty", regions=[])
+        self._update_file_list_status()
         self._set_template_name("未配置", is_default=False)
         self.status_label.setText("已新建空白模板 - 在画布上拖拽框选区域")
         InfoBar.success(
