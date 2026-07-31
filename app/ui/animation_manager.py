@@ -14,7 +14,7 @@
     任何动画相关 API，经验证 dir() 无 animationsEnabled/hasFeature/Feature）
     或检测失败时 try/except 保护并默认启用动画（_enabled = True）
 """
-from PyQt6.QtCore import QObject, QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import QObject, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 
 
 def _detect_system_animations_enabled() -> bool:
@@ -103,9 +103,17 @@ class AnimationManager(QObject):
             except ValueError:
                 pass  # 已被 stop_all 等移除，容忍重复清理
 
-        # 注意：只连接 finished，不连接 destroyed —— PyQt 在 C++ 对象析构期间
-        # 回调 Python 槽可能导致进程级崩溃（无 Python 异常直接退出），实测验证
-        animation.finished.connect(_cleanup)
+        def _on_state_changed(state, _old_state):
+            # Stopped 状态覆盖两条结束路径：自然完成（finished）与显式 stop()
+            # （stop() 不发射 finished；组件快速折叠/展开时 stop 旧动画，若不在此
+            # 清理会永久滞留在注册表造成内存泄漏，见 I-1）
+            if state == QAbstractAnimation.State.Stopped:
+                _cleanup()
+
+        # 注意：只连接 stateChanged，不连接 destroyed —— PyQt 在 C++ 对象析构期间
+        # 回调 Python 槽可能导致进程级崩溃（无 Python 异常直接退出），实测验证；
+        # 动画目标销毁导致的失效对象由 stop_all 的 RuntimeError 守卫兜底
+        animation.stateChanged.connect(_on_state_changed)
 
         return animation
 
@@ -116,5 +124,8 @@ class AnimationManager(QObject):
             try:
                 anim.stop()
             except RuntimeError:
-                pass  # 动画对象已随目标销毁而失效（无 finished 信号），跳过
-            cls._animations.remove(anim)
+                pass  # 动画对象已随目标销毁而失效，跳过
+            try:
+                cls._animations.remove(anim)
+            except ValueError:
+                pass  # stop() 同步触发 stateChanged 清理时已被移除

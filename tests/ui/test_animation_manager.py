@@ -78,6 +78,33 @@ class TestAnimationManager:
         assert AnimationManager._animations == []
         assert widget.minimumWidth() == 100  # 立即停止，未完成则停留在起始值
 
+    def test_explicit_stop_removes_animation_from_registry(self, qapp):
+        """I-1 回归：显式 stop()（不发射 finished）后动画仍从注册表移除
+
+        组件快速折叠/展开时 stop 旧动画，若不清理将永久滞留注册表造成内存泄漏
+        """
+        AnimationManager.set_enabled(True)
+        widget = QWidget()
+        anim = AnimationManager.animate(widget, b"minimumWidth", 100, 300, duration=5000)
+        assert anim in AnimationManager._animations  # 运行中保留
+
+        anim.stop()
+        assert anim.state() == QAbstractAnimation.State.Stopped
+        assert anim not in AnimationManager._animations  # stop 后立即清理
+
+    def test_rapid_toggle_no_registry_leak(self, qapp):
+        """I-1 触发路径回归：快速折叠/展开（每轮 stop 旧动画）后注册表无残留"""
+        from PyQt6.QtTest import QTest
+        from app.ui.widgets.collapsible_panel import CollapsiblePanel
+
+        AnimationManager.set_enabled(True)
+        panel = CollapsiblePanel()
+        for _ in range(5):
+            panel.collapse()
+            panel.expand()
+        QTest.qWait(400)  # 等待最后一轮 300ms 动画自然结束
+        assert AnimationManager._animations == []
+
     def test_animate_disabled_then_enabled_recovers_animation(self, qapp):
         """禁用时 setProperty 直接生效后，重新启用动画仍可正常运行"""
         AnimationManager.set_enabled(False)
