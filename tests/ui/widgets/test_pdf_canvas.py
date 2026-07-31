@@ -114,6 +114,7 @@ class TestGridSnap:
         assert canvas._snap_to_grid(QPointF(-4, -7)) == QPointF(0, 0)
 
     def test_drawing_snaps_start_and_end(self, qapp):
+        """大尺寸拖拽（≥10px）：起止点吸附到 10px 网格"""
         canvas = make_canvas(qapp)
         drawn = []
         canvas.region_drawn.connect(drawn.append)
@@ -124,7 +125,8 @@ class TestGridSnap:
             Qt.KeyboardModifier.NoModifier)
         canvas.mousePressEvent(press)
         assert canvas.drawing
-        assert canvas.start_pt == QPointF(110, 60)  # 105→110, 55→60
+        assert canvas.raw_start_pt == QPointF(105, 55)  # 原始点保留
+        assert canvas.start_pt == QPointF(105, 55)  # 吸附在移动时按尺寸决定
 
         move = QMouseEvent(
             QEvent.Type.MouseMove, QPointF(163, 84),
@@ -142,6 +144,51 @@ class TestGridSnap:
         region = drawn[0]
         assert region.w == pytest.approx(50 / 200)
         assert region.h == pytest.approx(20 / 100)
+
+    def test_small_drawing_keeps_exact_position(self, qapp):
+        """微小区域（起止点 <10px）：保持精确，不吸附网格"""
+        canvas = make_canvas(qapp)
+        drawn = []
+        canvas.region_drawn.connect(drawn.append)
+
+        press = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(103, 57),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mousePressEvent(press)
+        move = QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(109, 66),
+            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mouseMoveEvent(move)
+        # 原始 6×9px，未吸附（若吸附则为 100,60,10,10）
+        assert canvas.temp_rect.rect() == QRectF(103, 57, 6, 9)
+
+        release = QMouseEvent(
+            QEvent.Type.MouseButtonRelease, QPointF(109, 66),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mouseReleaseEvent(release)
+        assert len(drawn) == 1
+        region = drawn[0]
+        assert region.w == pytest.approx(6 / 200)
+        assert region.h == pytest.approx(9 / 100)
+
+    def test_drawing_snaps_at_10px_boundary(self, qapp):
+        """拖拽达到 10px：开始吸附网格"""
+        canvas = make_canvas(qapp)
+        press = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(103, 57),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mousePressEvent(press)
+        move = QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(113, 67),  # 原始恰好 10×10
+            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mouseMoveEvent(move)
+        # 103→100, 57→60；113→110, 67→70
+        assert canvas.temp_rect.rect() == QRectF(100, 60, 10, 10)
 
 
 class TestRegionSizeHint:
@@ -215,20 +262,49 @@ class TestRegionSizeHint:
 
 
 class TestFloatingToolbar:
+    """浮动工具栏仅在鼠标悬停画布顶部边缘条带（y <= 60px）时显示"""
+
     def test_toolbar_not_shown_without_pdf(self, qapp):
         canvas = PdfCanvas()
         canvas.show()
-        canvas._on_viewport_enter()
+        canvas._on_viewport_hover(QPoint(10, 10))
         assert not canvas.floating_toolbar.isVisible()
 
-    def test_toolbar_shows_on_viewport_enter(self, qapp):
+    def test_toolbar_shows_when_hovering_top_edge(self, qapp):
         canvas = make_canvas(qapp)
-        canvas._on_viewport_enter()
+        canvas._on_viewport_hover(QPoint(10, 10))
         assert canvas.floating_toolbar.isVisible()
+
+    def test_toolbar_hidden_when_hovering_below_edge(self, qapp):
+        canvas = make_canvas(qapp)
+        canvas._on_viewport_hover(QPoint(10, 100))  # 顶部条带之外
+        assert not canvas.floating_toolbar.isVisible()
+
+    def test_toolbar_hides_after_moving_out_of_edge(self, qapp):
+        canvas = make_canvas(qapp)
+        canvas._on_viewport_hover(QPoint(10, 10))
+        assert canvas.floating_toolbar.isVisible()
+        canvas._on_viewport_hover(QPoint(10, 100))  # 移出条带 -> 延迟隐藏
+        QTest.qWait(300)
+        assert not canvas.floating_toolbar.isVisible()
+
+    def test_toolbar_hidden_during_drawing(self, qapp):
+        """按下开始框选时工具栏立即隐藏，拖拽期间悬停边缘也不显示（不遮挡框选）"""
+        canvas = make_canvas(qapp)
+        canvas._on_viewport_hover(QPoint(10, 10))
+        assert canvas.floating_toolbar.isVisible()
+        press = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(105, 55),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mousePressEvent(press)
+        assert not canvas.floating_toolbar.isVisible()
+        canvas._on_viewport_hover(QPoint(10, 10))  # 拖拽中悬停边缘
+        assert not canvas.floating_toolbar.isVisible()
 
     def test_toolbar_hides_after_viewport_leave(self, qapp):
         canvas = make_canvas(qapp)
-        canvas._on_viewport_enter()
+        canvas._on_viewport_hover(QPoint(10, 10))
         assert canvas.floating_toolbar.isVisible()
         canvas._on_viewport_leave()
         QTest.qWait(300)
@@ -236,7 +312,7 @@ class TestFloatingToolbar:
 
     def test_toolbar_zoom_in_button_zooms(self, qapp):
         canvas = make_canvas(qapp)
-        canvas._on_viewport_enter()
+        canvas._on_viewport_hover(QPoint(10, 10))
         before = canvas.transform().m11()
         QTest.mouseClick(canvas._btn_zoom_in, Qt.MouseButton.LeftButton)
         after = canvas.transform().m11()
@@ -245,7 +321,7 @@ class TestFloatingToolbar:
 
     def test_toolbar_fit_button_fits_view(self, qapp):
         canvas = make_canvas(qapp)
-        canvas._on_viewport_enter()
+        canvas._on_viewport_hover(QPoint(10, 10))
         QTest.mouseClick(canvas._btn_fit, Qt.MouseButton.LeftButton)
         scale = canvas.transform().m11()
         # 适应窗口后的实际缩放与标签一致
@@ -253,7 +329,7 @@ class TestFloatingToolbar:
 
     def test_toolbar_reset_button_restores_100_percent(self, qapp):
         canvas = make_canvas(qapp)
-        canvas._on_viewport_enter()
+        canvas._on_viewport_hover(QPoint(10, 10))
         canvas._zoom_by(1.5)
         QTest.mouseClick(canvas._btn_reset, Qt.MouseButton.LeftButton)
         assert canvas.zoom_label.text() == '100%'

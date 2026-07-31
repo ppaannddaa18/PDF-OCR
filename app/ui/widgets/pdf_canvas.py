@@ -4,9 +4,10 @@ Task 9 增强内容：
 - 背景色/控件配色统一走 ThemeManager（支持暗色主题，去除硬编码 #fafafa 等）
 - 空状态集成统一 EmptyState 组件（'no_preview' 变体）
 - 右下角缩放比例标签（点击恢复 100%）
-- 悬停显示的浮动工具栏（放大 / 缩小 / 适应窗口 / 100%）
+- 悬停顶部边缘条带显示的浮动工具栏（放大 / 缩小 / 适应窗口 / 100%）
 - 框选/调整大小时显示区域尺寸提示（宽×高 px）
-- 框选起始/结束点 10px 网格吸附（仅新建区域，移动/调整既有区域保持精确行为）
+- 框选起始/结束点 10px 网格吸附（微小区域 <10px 保持精确不吸附；
+  移动/调整既有区域保持精确行为）
 
 对外接口保持不变：region_drawn / region_updated / region_selected 信号，
 load_image / clear / update_regions / update_region / remove_region / get_region /
@@ -51,6 +52,9 @@ GRID_SIZE = 10
 
 # 浮动工具栏隐藏延迟（鼠标移出画布/工具栏后毫秒）
 FLOATING_TOOLBAR_HIDE_DELAY_MS = 200
+
+# 浮动工具栏显示触发区：鼠标悬停画布顶部边缘条带高度（像素）
+FLOATING_TOOLBAR_EDGE_HEIGHT = 60
 
 
 def get_random_color(used_colors: set = None) -> str:
@@ -178,6 +182,7 @@ class PdfCanvas(QGraphicsView):
         # 框选状态
         self.drawing = False
         self.start_pt = None
+        self.raw_start_pt = None
         self.temp_rect = None
 
         # 区域管理
@@ -281,7 +286,8 @@ class PdfCanvas(QGraphicsView):
             Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._size_label.setVisible(False)
 
-        # 视口鼠标进入/离开事件过滤（用于浮动工具栏显隐）
+        # 视口鼠标事件过滤（浮动工具栏边缘悬停显隐/缩放标签点击）
+        self.viewport().setMouseTracking(True)
         self.viewport().installEventFilter(self)
 
     def _style_toolbar_button(self, btn: QPushButton):
@@ -304,7 +310,7 @@ class PdfCanvas(QGraphicsView):
         """)
 
     def eventFilter(self, watched, event):
-        """视口鼠标进入/离开 -> 浮动工具栏显隐；缩放标签点击 -> 恢复 100%
+        """视口鼠标悬停 -> 浮动工具栏边缘显隐；缩放标签点击 -> 恢复 100%
 
         注意：QAbstractScrollArea 会把自己注册为滚动条/视口的事件过滤器，
         setStyleSheet 触发的 polish 事件也会经过本方法（此时 zoom_label 等
@@ -312,9 +318,11 @@ class PdfCanvas(QGraphicsView):
         调用栈内抛异常导致死锁。
         """
         if watched is self.viewport():
-            if event.type() == QEvent.Type.Enter:
-                self._on_viewport_enter()
-            elif event.type() == QEvent.Type.Leave:
+            etype = event.type()
+            if etype in (QEvent.Type.Enter, QEvent.Type.MouseMove):
+                # QEnterEvent/QMouseEvent 均提供 position()（QPointF，视口坐标）
+                self._on_viewport_hover(event.position())
+            elif etype == QEvent.Type.Leave:
                 self._on_viewport_leave()
         elif watched is getattr(self, 'zoom_label', None) \
                 and event.type() == QEvent.Type.MouseButtonPress:
@@ -394,7 +402,7 @@ class PdfCanvas(QGraphicsView):
             self._update_zoom_label()
 
     # ------------------------------------------------------------------
-    # 浮动工具栏显隐（悬停显示）
+    # 浮动工具栏显隐（悬停顶部边缘条带显示）
     # ------------------------------------------------------------------
     def _show_floating_toolbar(self):
         """显示浮动工具栏（仅在有 PDF 时）"""
@@ -414,26 +422,36 @@ class PdfCanvas(QGraphicsView):
         if timer is not None:
             timer.stop()
 
-    def _on_viewport_enter(self):
-        """鼠标进入画布视口 -> 显示浮动工具栏"""
-        self._stop_toolbar_hide_timer()
-        if getattr(self, 'pixmap_item', None) is not None:
-            self.floating_toolbar.setVisible(True)
-
-    def _on_viewport_leave(self):
-        """鼠标离开画布视口 -> 延迟隐藏浮动工具栏"""
+    def _start_toolbar_hide_delay(self):
+        """启动浮动工具栏延迟隐藏定时器（控件未创建时安全跳过）"""
         timer = getattr(self, '_toolbar_hide_timer', None)
         if timer is not None:
             timer.start(FLOATING_TOOLBAR_HIDE_DELAY_MS)
+
+    def _on_viewport_hover(self, pos: QPointF):
+        """鼠标在画布视口内移动/进入（pos 为视口坐标）
+
+        仅当悬停在顶部边缘条带（y <= FLOATING_TOOLBAR_EDGE_HEIGHT）时显示
+        浮动工具栏，移出条带延迟隐藏——平时不显示，不遮挡框选区域。
+        """
+        # 拖拽/框选期间不显示，避免遮挡正在进行的操作
+        if self.drawing or self.resizing or self.moving or self.right_dragging:
+            return
+        if pos.y() <= FLOATING_TOOLBAR_EDGE_HEIGHT:
+            self._show_floating_toolbar()
+        else:
+            self._start_toolbar_hide_delay()
+
+    def _on_viewport_leave(self):
+        """鼠标离开画布视口 -> 延迟隐藏浮动工具栏"""
+        self._start_toolbar_hide_delay()
 
     def _on_toolbar_hovered(self, entered: bool):
         """鼠标进入/离开浮动工具栏 -> 取消/启动隐藏定时器"""
         if entered:
             self._stop_toolbar_hide_timer()
         else:
-            timer = getattr(self, '_toolbar_hide_timer', None)
-            if timer is not None:
-                timer.start(FLOATING_TOOLBAR_HIDE_DELAY_MS)
+            self._start_toolbar_hide_delay()
 
     # ------------------------------------------------------------------
     # 区域尺寸提示
@@ -500,6 +518,7 @@ class PdfCanvas(QGraphicsView):
         self.selected_region_id = None
         self.drawing = False
         self.start_pt = None
+        self.raw_start_pt = None
         self.temp_rect = None
         self.resizing = False
         self.moving = False
@@ -556,6 +575,8 @@ class PdfCanvas(QGraphicsView):
         if self._is_drawing_blocked():
             super().mousePressEvent(event)
             return
+        # 按下开始交互时隐藏浮动工具栏（避免遮挡正在进行的选择/调整）
+        self._hide_floating_toolbar()
         scene_pos = self.mapToScene(event.pos())
 
         # 右键拖动
@@ -600,9 +621,10 @@ class PdfCanvas(QGraphicsView):
             # 点击在空白处，取消选中
             self._deselect_all()
 
-            # 开始框选（起始点吸附到 10px 网格）
+            # 开始框选（保留原始点；是否吸附 10px 网格在拖拽时按尺寸决定）
             self.drawing = True
-            self.start_pt = self._snap_to_grid(scene_pos)
+            self.raw_start_pt = scene_pos
+            self.start_pt = scene_pos
             self.temp_rect = QGraphicsRectItem()
             # [修复] 获取已使用的颜色，避免重复
             used_colors = {r.color for r in self.regions_data.values()}
@@ -695,10 +717,16 @@ class PdfCanvas(QGraphicsView):
             v_bar.setValue(v_bar.value() - delta.y())
             return
 
-        # 框选中（结束点吸附到 10px 网格）
+        # 框选中（微小区域保持精确；任一轴 ≥10px 时起止点吸附 10px 网格）
         if self.drawing and self.temp_rect:
-            cur = self._snap_to_grid(scene_pos)
-            rect = QRectF(self.start_pt, cur).normalized()
+            raw_rect = QRectF(self.raw_start_pt, scene_pos).normalized()
+            if raw_rect.width() < GRID_SIZE or raw_rect.height() < GRID_SIZE:
+                # 微小区域：不吸附，保持精确（避免破坏小字段框选）
+                rect = raw_rect
+            else:
+                start = self._snap_to_grid(self.raw_start_pt)
+                cur = self._snap_to_grid(scene_pos)
+                rect = QRectF(start, cur).normalized()
             self.temp_rect.setRect(rect)
             self._show_region_size(rect)
 
