@@ -164,6 +164,53 @@ class TestSettingsDialogTheme:
             dlg.close()
 
 
+class TestDialogComponentsTheme:
+    """修复 I-1：三个对话框组件硬编码浅色适配（暗色模式无浅色残留）"""
+
+    def test_cancel_result_dialog_dark(self, qapp):
+        from app.ui.widgets.cancel_result_dialog import CancelResultDialog
+        ThemeManager.set_theme('dark')
+        dlg = CancelResultDialog(completed=5, success=4, failed=1, total=10)
+        try:
+            # 统计卡片背景为暗色 bg_hover
+            assert ThemeManager.get_color('bg_hover') in dlg.stats_widget.styleSheet()
+            # 富文本统计颜色为暗色角色色
+            assert ThemeManager.get_color('success') in dlg.stats_widget.text()
+            assert ThemeManager.get_color('error') in dlg.stats_widget.text()
+            assert ThemeManager.get_color('text_secondary') in dlg.stats_widget.text()
+        finally:
+            dlg.close()
+
+    def test_template_preview_dialog_dark(self, qapp):
+        from app.ui.widgets.template_preview_dialog import TemplatePreviewDialog
+        ThemeManager.set_theme('dark')
+        data = {
+            'regions': [{'field_name': '金额', 'field_type': 'number'}],
+            'created_at': '2026-01-01',
+            'description': '测试模板',
+        }
+        dlg = TemplatePreviewDialog('tpl', data)
+        try:
+            ss = dlg.table.styleSheet()
+            assert ThemeManager.get_color('border') in ss    # 暗色边框
+            assert ThemeManager.get_color('bg_hover') in ss  # 暗色交替行
+        finally:
+            dlg.close()
+
+    def test_history_panel_refreshes_on_theme_change(self, qapp):
+        from app.ui.widgets.history_panel import HistoryPanel
+
+        class _StubManager:
+            def get_history(self):
+                return []
+
+        ThemeManager.set_theme('light')
+        panel = HistoryPanel(_StubManager())
+        assert '#6b7280' in panel.desc.styleSheet()   # light text_secondary
+        ThemeManager.set_theme('dark')
+        assert '#d1d5db' in panel.desc.styleSheet()   # dark text_secondary
+
+
 class TestStartupWiring:
     """MainWindow 启动接线：appearance.theme / animations_enabled"""
 

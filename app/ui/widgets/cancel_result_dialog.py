@@ -11,6 +11,8 @@ import json
 import logging
 from datetime import datetime
 
+from app.ui.theme_manager import ThemeManager
+
 logger = logging.getLogger("PDFOCR")
 
 
@@ -60,10 +62,11 @@ class CancelResultDialog(QDialog):
         title_layout.addStretch()
         layout.addLayout(title_layout)
 
-        # 统计信息
-        stats_widget = QLabel()
-        stats_widget.setStyleSheet("""
-            background: #f5f5f5;
+        # 统计信息（Task 15：背景/富文本颜色走 ThemeManager，暗色模式适配；
+        # 模态对话框构造时解析当前主题即可）
+        self.stats_widget = QLabel()
+        self.stats_widget.setStyleSheet(f"""
+            background: {ThemeManager.get_color('bg_hover')};
             border-radius: 8px;
             padding: 12px;
         """)
@@ -71,18 +74,19 @@ class CancelResultDialog(QDialog):
         stats_text = f"""
 <p style="margin: 0; font-size: 13px;">
     <b>已完成:</b> {self.completed}/{self.total} 个文件<br>
-    <span style="color: #107c10;"><b>成功:</b> {self.success} 个</span><br>
-    <span style="color: #d83b01;"><b>失败:</b> {self.failed} 个</span><br>
-    <span style="color: #666;"><b>剩余:</b> {remaining} 个未处理</span>
+    <span style="color: {ThemeManager.get_color('success')};"><b>成功:</b> {self.success} 个</span><br>
+    <span style="color: {ThemeManager.get_color('error')};"><b>失败:</b> {self.failed} 个</span><br>
+    <span style="color: {ThemeManager.get_color('text_secondary')};"><b>剩余:</b> {remaining} 个未处理</span>
 </p>
 """
-        stats_widget.setText(stats_text)
-        stats_widget.setWordWrap(True)
-        layout.addWidget(stats_widget)
+        self.stats_widget.setText(stats_text)
+        self.stats_widget.setWordWrap(True)
+        layout.addWidget(self.stats_widget)
 
         # 提示信息
         tip_label = BodyLabel("已完成的识别结果已保存，您可以:")
-        tip_label.setStyleSheet("color: #666;")
+        tip_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')};")
         layout.addWidget(tip_label)
 
         # 保存进度选项

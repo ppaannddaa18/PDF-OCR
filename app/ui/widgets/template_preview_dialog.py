@@ -7,6 +7,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from qfluentwidgets import BodyLabel, PushButton, SubtitleLabel
 
+from app.ui.theme_manager import ThemeManager
+
 
 class TemplatePreviewDialog(QDialog):
     """模板预览对话框"""
@@ -40,10 +42,11 @@ class TemplatePreviewDialog(QDialog):
         title_layout.addStretch()
         layout.addLayout(title_layout)
 
-        # 模板信息
+        # 模板信息（Task 15：背景走 ThemeManager，暗色模式适配；
+        # 模态对话框构造时解析当前主题即可）
         info_widget = QLabel()
-        info_widget.setStyleSheet("""
-            background: #f5f5f5;
+        info_widget.setStyleSheet(f"""
+            background: {ThemeManager.get_color('bg_hover')};
             border-radius: 8px;
             padding: 12px;
         """)
@@ -72,17 +75,19 @@ class TemplatePreviewDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["字段名", "类型", "OCR模式"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                gridline-color: #e0e0e0;
-                alternate-background-color: #f5f5f5;
-            }
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                gridline-color: {ThemeManager.get_color('border')};
+                alternate-background-color: {ThemeManager.get_color('bg_hover')};
+            }}
         """)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
 
         # 填充字段数据
         self.table.setRowCount(len(regions))
+        # 字段类型语义识别色（与 PdfCanvas 区域色一致：主题无关识别色，明暗均可读）；
+        # 未知类型回退色改用 ThemeManager（原 #333 在暗色下不可读）
         type_colors = {
             "text": "#0078d4",
             "number": "#107c10",
@@ -90,6 +95,7 @@ class TemplatePreviewDialog(QDialog):
             "email": "#008272",
             "phone": "#d83b01",
         }
+        fallback_color = ThemeManager.get_color('text_secondary')
 
         for row, region in enumerate(regions):
             # 字段名
@@ -99,7 +105,7 @@ class TemplatePreviewDialog(QDialog):
             # 类型
             field_type = region.get('field_type', 'text')
             type_item = QTableWidgetItem(field_type)
-            type_item.setForeground(QColor(type_colors.get(field_type, "#333")))
+            type_item.setForeground(QColor(type_colors.get(field_type, fallback_color)))
             self.table.setItem(row, 1, type_item)
 
             # OCR模式
@@ -136,6 +142,7 @@ class TemplatePreviewDialog(QDialog):
         if not regions:
             self.table.setVisible(False)
             empty_label = BodyLabel("此模板没有定义任何字段")
-            empty_label.setStyleSheet("color: #666; padding: 16px;")
+            empty_label.setStyleSheet(
+                f"color: {ThemeManager.get_color('text_secondary')}; padding: 16px;")
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(empty_label)

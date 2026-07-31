@@ -5,6 +5,8 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QLis
 from PyQt6.QtCore import Qt, pyqtSignal as Signal
 from qfluentwidgets import SubtitleLabel, BodyLabel, PushButton, InfoBar, InfoBarPosition
 
+from app.ui.theme_manager import ThemeManager
+
 
 class HistoryPanel(QWidget):
     """历史记录面板"""
@@ -16,6 +18,8 @@ class HistoryPanel(QWidget):
         self.history_manager = history_manager
         self._init_ui()
         self.refresh_list()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -26,10 +30,11 @@ class HistoryPanel(QWidget):
         title = SubtitleLabel("识别历史")
         layout.addWidget(title)
 
-        # 说明文字
-        desc = BodyLabel("最近10次识别任务，点击可查看详情")
-        desc.setStyleSheet("color: #666;")
-        layout.addWidget(desc)
+        # 说明文字（颜色走 ThemeManager，apply_theme 重建）
+        self.desc = BodyLabel("最近10次识别任务，点击可查看详情")
+        self.desc.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')};")
+        layout.addWidget(self.desc)
 
         # 历史列表
         self.list_widget = QListWidget()
@@ -76,6 +81,11 @@ class HistoryPanel(QWidget):
         layout.addLayout(btn_layout)
 
         self._current_record_id = None
+
+    def apply_theme(self):
+        """重建内嵌 QSS（Task 15：ThemeManager.set_theme 后调用）"""
+        self.desc.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')};")
 
     def refresh_list(self):
         """刷新历史列表"""
