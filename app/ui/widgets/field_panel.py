@@ -1,16 +1,44 @@
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QHBoxLayout, QLabel
-)
+# app/ui/widgets/field_panel.py
+"""Task 11 重构版 FieldPanel：紧凑表格 + EmptyState 集成 + 扁平按钮
+
+设计要点：
+- 32px 行高（verticalHeader defaultSectionSize 确定性生效 + QSS 兜底）、紧凑内边距
+- 空状态复用统一 EmptyState 组件（'no_fields' 变体）
+- 全部颜色/字体/间距来自 ThemeManager，禁止硬编码（验证失败/低置信度的
+  浅色背景用主题 error/warning 色的半透明色派生，天然适配暗色模式）
+- 底部清空按钮为扁平样式（与 FileListPanel 一致）；删除按钮为单元格内紧凑按钮
+- 全部既有功能与接口保留（字段添加/更新/删除/清空、试识别结果、详情展示、
+  模板构建/加载、6 个信号），main_window 直接访问的 regions/table/
+  _preview_results 属性保持不变
+"""
 from PyQt6.QtCore import pyqtSignal as Signal, Qt
 from PyQt6.QtGui import QColor, QBrush
-from qfluentwidgets import SubtitleLabel, PushButton, ComboBox, BodyLabel, InfoBar, InfoBarPosition
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView, QPushButton,
+)
+from qfluentwidgets import ComboBox, BodyLabel
+
 from app.models.region import Region
 from app.models.template import Template
+from app.ui.theme_manager import ThemeManager
+from app.ui.widgets.empty_state import EmptyState
 from app.utils.validators import validate_with_error, normalize_by_type
+
+# 表格行高（紧凑设计）
+ROW_HEIGHT = 32
+
+
+def _translucent(role: str, alpha: int) -> QColor:
+    """主题角色色的半透明版本（用于验证失败/低置信度的浅色背景）"""
+    color = QColor(ThemeManager.get_color(role))
+    color.setAlpha(alpha)
+    return color
 
 
 class FieldPanel(QWidget):
+    """字段配置面板：4 列紧凑表格 + 空状态 + 底部清空操作"""
+
     region_changed = Signal(list)          # List[Region]
     region_deleted = Signal(str)           # region_id
     current_cleared = Signal()             # 清空当前字段信号
@@ -18,127 +46,157 @@ class FieldPanel(QWidget):
     field_name_changed = Signal(str, str, str)  # (region_id, old_name, new_name) 字段名变更信号
     set_as_default_template = Signal()     # 设为默认模板信号
 
-    # 字段类型颜色映射
-    TYPE_COLORS = {
-        "text": "#0078d4",
-        "number": "#107c10",
-        "date": "#5c2d91",
-        "email": "#008272",
-        "phone": "#d83b01",
-    }
-
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent: QWidget = None):
+        super().__init__(parent)
         self.regions = {}   # id -> Region
         self._preview_results = {}  # region_id -> FieldResult (存储试识别结果)
         self._current_template_name = "未命名模板"
-        self._init_ui()
+        self._setup_ui()
+        self._update_empty_state()
 
-    def _init_ui(self):
+    # ---------- UI ----------
+
+    def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # 增强的空状态提示
-        self.empty_widget = QWidget()
-        empty_layout = QVBoxLayout(self.empty_widget)
-        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.setSpacing(12)
-
-        # 图标
-        icon_label = QLabel("✏️")
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet("font-size: 48px;")
-        empty_layout.addWidget(icon_label)
-
-        # 主标题
-        title_label = BodyLabel("暂无识别字段")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("font-size: 14px; color: #333; font-weight: bold;")
-        empty_layout.addWidget(title_label)
-
-        # 操作提示
-        action_label = BodyLabel("在PDF预览上拖拽框选区域\n来定义要识别的文字区域")
-        action_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        action_label.setStyleSheet("font-size: 12px; color: #666;")
-        empty_layout.addWidget(action_label)
-
-        # 提示信息
-        tip_label = BodyLabel("💡 提示: 设置字段类型可以\n自动验证识别结果格式")
-        tip_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tip_label.setStyleSheet("font-size: 11px; color: #999;")
-        empty_layout.addWidget(tip_label)
-
-        self.empty_widget.setMinimumHeight(150)
-        layout.addWidget(self.empty_widget)
-
-        # 字段表格
+        # 字段表格（紧凑设计：32px 行高）
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["字段名", "类型", "识别结果", "操作"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                gridline-color: #e0e0e0;
-                alternate-background-color: #f5f5f5;
-            }
+        # 行高：defaultSectionSize 确定性生效（QSS item height 仅作兜底）
+        self.table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
+        self.table.verticalHeader().setVisible(False)  # 紧凑设计：隐藏行号列
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                border: none;
+                outline: none;
+                gridline-color: {ThemeManager.get_color('border')};
+                alternate-background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QTableWidget::item {{
+                height: {ROW_HEIGHT}px;
+                padding: {ThemeManager.get_spacing('xs')}px;
+                color: {ThemeManager.get_color('text_primary')};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {ThemeManager.get_color('bg_selected')};
+            }}
+            QHeaderView::section {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+                color: {ThemeManager.get_color('text_secondary')};
+                padding: {ThemeManager.get_spacing('sm')}px;
+                border: none;
+                border-bottom: 1px solid {ThemeManager.get_color('border')};
+            }}
         """)
         # 字段名列可编辑
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
         # 点击识别结果列显示详情
         self.table.cellClicked.connect(self._on_cell_clicked)
         # 监听字段名编辑完成事件
         self.table.itemChanged.connect(self._on_field_name_changed)
-        layout.addWidget(self.table, 1)
+        layout.addWidget(self.table, stretch=1)
+
+        # 空状态（'no_fields' 变体；无字段时显示）
+        self.empty_state = EmptyState('no_fields')
+        layout.addWidget(self.empty_state, stretch=1)
 
         # 识别结果详情显示区域
         self.detail_widget = QWidget()
         self.detail_widget.setVisible(False)
         detail_layout = QVBoxLayout(self.detail_widget)
-        detail_layout.setContentsMargins(8, 8, 8, 8)
-        detail_layout.setSpacing(4)
+        detail_layout.setContentsMargins(
+            ThemeManager.get_spacing('sm'),
+            ThemeManager.get_spacing('sm'),
+            ThemeManager.get_spacing('sm'),
+            ThemeManager.get_spacing('sm'),
+        )
+        detail_layout.setSpacing(ThemeManager.get_spacing('xs'))
 
         self.detail_title = BodyLabel("识别结果详情")
-        self.detail_title.setStyleSheet("font-weight: bold;")
+        self.detail_title.setFont(ThemeManager.get_font('subheading'))
         detail_layout.addWidget(self.detail_title)
 
         self.detail_content = BodyLabel("")
         self.detail_content.setWordWrap(True)
-        self.detail_content.setStyleSheet("background: #f5f5f5; padding: 8px; border-radius: 4px;")
+        self.detail_content.setFont(ThemeManager.get_font('body'))
+        self.detail_content.setStyleSheet(
+            f"background: {ThemeManager.get_color('bg_hover')};"
+            f"color: {ThemeManager.get_color('text_primary')};"
+            f"padding: {ThemeManager.get_spacing('sm')}px;"
+            f"border-radius: {ThemeManager.get_radius('sm')}px;"
+        )
         detail_layout.addWidget(self.detail_content)
 
         self.detail_confidence = BodyLabel("")
+        self.detail_confidence.setFont(ThemeManager.get_font('body'))
         detail_layout.addWidget(self.detail_confidence)
 
         layout.addWidget(self.detail_widget)
 
-        # 操作按钮区域（水平布局）
-        btn_layout = QHBoxLayout()
+        # 底部操作按钮（水平布局，扁平样式）
+        button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(
+            ThemeManager.get_spacing('sm'),
+            ThemeManager.get_spacing('sm'),
+            ThemeManager.get_spacing('sm'),
+            ThemeManager.get_spacing('sm'),
+        )
 
         # 清空当前字段按钮
-        btn_clear_current = PushButton("清空当前字段")
-        btn_clear_current.setToolTip("仅清空当前选中PDF的字段配置，其他PDF不受影响")
-        btn_clear_current.clicked.connect(self.clear_current)
-        btn_layout.addWidget(btn_clear_current)
+        self.clear_current_btn = QPushButton("清空当前字段")
+        self.clear_current_btn.setToolTip("仅清空当前选中PDF的字段配置，其他PDF不受影响")
+        self.clear_current_btn.clicked.connect(self.clear_current)
+        button_layout.addWidget(self.clear_current_btn)
 
         # 清空所有字段按钮
-        btn_clear_all = PushButton("清空所有字段")
-        btn_clear_all.setToolTip("清空所有PDF的字段配置")
-        btn_clear_all.clicked.connect(self._on_clear_all_clicked)
-        btn_layout.addWidget(btn_clear_all)
+        self.clear_all_btn = QPushButton("清空所有字段")
+        self.clear_all_btn.setToolTip("清空所有PDF的字段配置")
+        self.clear_all_btn.clicked.connect(self._on_clear_all_clicked)
+        button_layout.addWidget(self.clear_all_btn)
 
-        layout.addLayout(btn_layout)
+        self._apply_button_style(self.clear_current_btn)
+        self._apply_button_style(self.clear_all_btn)
+        layout.addLayout(button_layout)
 
-        self._update_empty_state()
+    def _apply_button_style(self, button: QPushButton):
+        """应用 ThemeManager 扁平按钮样式（无硬编码颜色）"""
+        button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                color: {ThemeManager.get_color('text_primary')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: {ThemeManager.get_radius('sm')}px;
+                padding: {ThemeManager.get_spacing('xs')}px
+                         {ThemeManager.get_spacing('md')}px;
+            }}
+            QPushButton:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QPushButton:disabled {{
+                color: {ThemeManager.get_color('text_disabled')};
+            }}
+        """)
+
+    # ---------- 空状态 ----------
+
+    def _update_empty_state(self):
+        has_fields = len(self.regions) > 0
+        self.empty_state.setVisible(not has_fields)
+        self.table.setVisible(has_fields)
 
     def set_template_name(self, name: str, is_default: bool = False):
         """设置当前模板名称（供主窗口调用——实际显示由main_window管理）"""
         pass
 
-    def _update_empty_state(self):
-        has_fields = len(self.regions) > 0
-        self.empty_widget.setVisible(not has_fields)
-        self.table.setVisible(has_fields)
+    # ---------- 字段名编辑 ----------
 
     def _on_field_name_changed(self, item: QTableWidgetItem):
         """字段名编辑完成事件 - 同步更新识别结果"""
@@ -161,7 +219,7 @@ class FieldPanel(QWidget):
         self.regions[region_id].field_name = new_name
 
         # [修复] 使用 region_id 作为 key，而不是字段名
-        # _preview_results 使用 region_id 作为 key（见 show_preview_result 方法第332行）
+        # _preview_results 使用 region_id 作为 key（见 show_preview_result 方法）
         # 所以这里不需要更新 _preview_results 的 key
         # 只需要更新识别结果中存储的字段名即可
         if region_id in self._preview_results:
@@ -188,8 +246,10 @@ class FieldPanel(QWidget):
         fr = self._preview_results[rid]
         if fr.text:
             # 验证字段类型
-            is_valid, error_msg = validate_with_error(fr.text, region.field_type if region else "text")
-            normalized = normalize_by_type(fr.text, region.field_type if region else "text")
+            is_valid, error_msg = validate_with_error(
+                fr.text, region.field_type if region else "text")
+            normalized = normalize_by_type(
+                fr.text, region.field_type if region else "text")
 
             self.detail_content.setText(f"内容：{fr.text}")
 
@@ -200,20 +260,25 @@ class FieldPanel(QWidget):
             conf_text = f"置信度：{fr.confidence:.2%}"
             if fr.confidence < 0.7:
                 conf_text += " (较低)"
-                self.detail_confidence.setStyleSheet("color: #d13438;")
+                self.detail_confidence.setStyleSheet(
+                    f"color: {ThemeManager.get_color('error')};")
             else:
-                self.detail_confidence.setStyleSheet("color: #107c10;")
+                self.detail_confidence.setStyleSheet(
+                    f"color: {ThemeManager.get_color('success')};")
 
             # 显示验证结果
             if not is_valid:
                 self.detail_confidence.setText(f"{conf_text}\n⚠ 格式错误: {error_msg}")
-                self.detail_confidence.setStyleSheet("color: #d13438;")
+                self.detail_confidence.setStyleSheet(
+                    f"color: {ThemeManager.get_color('error')};")
             else:
                 self.detail_confidence.setText(conf_text)
 
             self.detail_widget.setVisible(True)
         else:
             self.detail_widget.setVisible(False)
+
+    # ---------- 字段管理 ----------
 
     def add_region(self, region: Region):
         self.regions[region.id] = region
@@ -235,7 +300,8 @@ class FieldPanel(QWidget):
         type_combo.addItems(["text", "number", "date", "email", "phone"])
         type_combo.setCurrentText(region.field_type)
         # [修复] 连接类型变更信号，同步更新region
-        type_combo.currentTextChanged.connect(lambda text, rid=region.id: self._on_field_type_changed(rid, text))
+        type_combo.currentTextChanged.connect(
+            lambda text, rid=region.id: self._on_field_type_changed(rid, text))
         self.table.setCellWidget(row, 1, type_combo)
 
         # 识别结果（初始为空）
@@ -244,8 +310,22 @@ class FieldPanel(QWidget):
         # [修复] 恢复信号
         self.table.blockSignals(False)
 
-        # Fluent 删除按钮
-        btn = PushButton("删除")
+        # 删除按钮（单元格内紧凑扁平按钮）
+        btn = QPushButton("删除")
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                color: {ThemeManager.get_color('text_secondary')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: {ThemeManager.get_radius('sm')}px;
+                padding: {ThemeManager.get_spacing('xs')}px
+                         {ThemeManager.get_spacing('sm')}px;
+            }}
+            QPushButton:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+                color: {ThemeManager.get_color('error')};
+            }}
+        """)
         btn.clicked.connect(lambda _, rid=region.id: self._delete(rid))
         self.table.setCellWidget(row, 3, btn)
 
@@ -294,6 +374,8 @@ class FieldPanel(QWidget):
         """清空所有字段按钮点击事件"""
         self.all_cleared.emit()
 
+    # ---------- 模板 ----------
+
     def build_template(self) -> Template:
         """[修复] 复制 Region 对象，避免直接修改原始对象"""
         from copy import deepcopy
@@ -326,6 +408,8 @@ class FieldPanel(QWidget):
         # 仅在所有区域添加完毕后触发一次信号
         self.region_changed.emit(list(self.regions.values()))
 
+    # ---------- 试识别结果 ----------
+
     def show_preview_result(self, file_result):
         """显示试识别结果 - 使用 field_name 匹配确保准确性，并进行字段类型验证"""
         self._preview_results.clear()
@@ -341,7 +425,9 @@ class FieldPanel(QWidget):
                     continue
                 region = self.regions[rid]
                 # 使用 region_id 遍历查找结果（B4 兼容：同名区域 key 可能带 _1 后缀）
-                fr = next((f for f in file_result.fields.values() if f.region_id == rid), None)
+                fr = next(
+                    (f for f in file_result.fields.values() if f.region_id == rid),
+                    None)
                 if fr is not None:
                     self._preview_results[rid] = fr
 
@@ -354,15 +440,18 @@ class FieldPanel(QWidget):
                     # 设置 Tooltip 显示完整内容和置信度
                     tooltip = f"内容: {fr.text}\n置信度: {fr.confidence:.2%}"
 
-                    # 根据验证结果设置样式
+                    # 根据验证结果设置样式（半透明主题色，适配暗色模式）
                     if not is_valid:
-                        # 验证失败 - 红色背景
-                        result_item.setBackground(QColor("#FFE5E5"))
-                        result_item.setForeground(QBrush(QColor("#d13438")))
+                        # 验证失败 - 错误色浅底
+                        result_item.setBackground(
+                            _translucent('error', 40))
+                        result_item.setForeground(
+                            QBrush(QColor(ThemeManager.get_color('error'))))
                         tooltip += f"\n⚠ 格式错误: {error_msg}"
                     elif fr.confidence < 0.7:
-                        # 置信度低 - 黄色背景
-                        result_item.setBackground(QColor("#FFF4E5"))
+                        # 置信度低 - 警告色浅底
+                        result_item.setBackground(
+                            _translucent('warning', 40))
                         tooltip += "\n(置信度较低，建议核对)"
 
                     result_item.setToolTip(tooltip)
@@ -371,4 +460,3 @@ class FieldPanel(QWidget):
             self.table.blockSignals(False)
         # 隐藏详情区域
         self.detail_widget.setVisible(False)
-
