@@ -55,6 +55,19 @@ class TestCompactToolbar:
         toolbar.set_engine_status('GGUF', 'ready')
         assert '就绪' in toolbar.engine_status.toolTip() or 'ready' in toolbar.engine_status.toolTip()
 
+    def test_set_engine_status_emits_signal(self, qapp):
+        """外部设置引擎状态时也必须发射 status_changed，保证状态来源一致"""
+        toolbar = CompactToolbar()
+        emitted = []
+        toolbar.engine_status.status_changed.connect(
+            lambda engine, status: emitted.append((engine, status))
+        )
+        toolbar.set_engine_status('GGUF', 'ready')
+        assert emitted == [('GGUF', 'ready')]
+        emitted.clear()
+        toolbar.set_engine_status('RapidOCR', 'cpu_mode')
+        assert emitted == [('RapidOCR', 'cpu_mode')]
+
     def test_engine_status_embeds_gpu_status_widget(self, qapp):
         """引擎状态指示器已集成 GpuStatusWidget（彩色圆点 + 缩写）"""
         toolbar = CompactToolbar()

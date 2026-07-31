@@ -73,6 +73,8 @@ class GpuStatusWidget(QWidget):
         self._set_dot_color(color)
         self.status_label.setText(engine)
         self.setToolTip(f'{engine}: {status}')
+        # 与 _refresh 各分支一致，外部设置路径同样发射状态信号
+        self.status_changed.emit(engine, status)
 
     def _set_dot_color(self, color: str):
         self.status_icon.setStyleSheet(f"font-size: 10px; color: {color};")
