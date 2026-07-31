@@ -217,6 +217,9 @@ class MainWindow(FluentWindow):
 
         self._connect_signals()
 
+        # Task 16: 焦点跟踪接线（状态栏快捷键提示区域跟随焦点切换）
+        self._connect_focus_tracking()
+
         # 设置快捷键
         self._setup_shortcuts()
 
@@ -1043,6 +1046,41 @@ class MainWindow(FluentWindow):
         self.field_panel.all_cleared.connect(self.on_clear_all_pdf_fields)
         self.field_panel.field_name_changed.connect(self.on_field_name_changed)
         self.field_panel.set_as_default_template.connect(self._on_set_as_default_template)
+
+    # ── Task 16: 焦点跟踪（StatusBar.set_focus_area 四档 API 接线，Task 13 遗留） ──
+
+    def _connect_focus_tracking(self):
+        """接线焦点跟踪：文件列表/画布/字段面板获得焦点时更新状态栏快捷键提示
+
+        方案选择：监听 QApplication.focusChanged 应用级信号而非 installEventFilter。
+        focusChanged 携带实际获得焦点的控件（QListWidget / QTableWidget /
+        QGraphicsView viewport 等真正持焦的子控件），按 isAncestorOf 归属判断
+        映射到对应区域——不需要遍历/安装事件过滤器到每个子孙控件，且焦点移到
+        面板之外（工具栏/下拉框等）或窗口失焦时自动回到 'global'。
+        信号连接随接收者销毁自动断开（与 paletteChanged 同生命周期策略）。
+        """
+        from PyQt6.QtWidgets import QApplication
+        app_inst = QApplication.instance()
+        if app_inst is not None:
+            app_inst.focusChanged.connect(self._on_focus_changed)
+
+    def _on_focus_changed(self, _old: QWidget, new: QWidget):
+        """应用焦点变化 → 状态栏快捷键提示区域（无焦点/面板外 → global）
+
+        isAncestorOf 对自身返回 True（Qt 约定），故直接持焦的容器控件
+        （如 canvas 的 viewport）与子孙控件均命中对应区域。
+        """
+        area = 'global'
+        if new is not None:
+            if self.file_panel.isAncestorOf(new):
+                area = 'file_list'
+            elif self.pdf_canvas.isAncestorOf(new):
+                area = 'pdf_preview'
+            elif self.field_panel.isAncestorOf(new):
+                area = 'field_panel'
+        status_bar = getattr(self, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.set_focus_area(area)
 
     def _on_files_cleared(self):
         """文件列表清空时清理预览区域和所有配置"""
@@ -2414,6 +2452,11 @@ class MainWindow(FluentWindow):
         if _app_inst is not None:
             try:
                 _app_inst.paletteChanged.disconnect(self._on_system_palette_changed)
+            except (TypeError, RuntimeError):
+                pass
+            # Task 16: 焦点跟踪连接随窗口销毁自动断开，此处显式断开与主题一致
+            try:
+                _app_inst.focusChanged.disconnect(self._on_focus_changed)
             except (TypeError, RuntimeError):
                 pass
 
