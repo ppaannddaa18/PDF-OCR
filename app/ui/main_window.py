@@ -123,9 +123,12 @@ class MainWindow(FluentWindow):
         if theme_mode not in ('light', 'dark', 'auto'):
             theme_mode = 'auto'
         self._apply_theme_mode(theme_mode)
-        AnimationManager.set_enabled(
-            bool(config.get("appearance", {}).get("animations_enabled", True))
-        )
+        # F-3：仅当 config 显式声明 animations_enabled 时才覆盖系统 reduced-motion
+        # 检测结果（模块级 _detect_system_animations_enabled）；appearance 节缺失或
+        # 无该键时保留系统偏好（键存在性判断与 _on_settings_clicked 一致）
+        appearance = config.get("appearance")
+        if appearance is not None and "animations_enabled" in appearance:
+            AnimationManager.set_enabled(bool(appearance["animations_enabled"]))
         # 跟随系统模式：监听系统主题变化。
         # 用 QApplication.paletteChanged 信号而非 installEventFilter：
         # 应用级事件过滤器挂在窗口上会在窗口中途销毁时悬垂，实测间歇性段错误
@@ -773,9 +776,10 @@ class MainWindow(FluentWindow):
         template_info_layout.setContentsMargins(8, 8, 8, 8)
         template_info_layout.setSpacing(4)
 
-        # 模板名称标签
+        # 模板名称标签（颜色经 ThemeManager 获取，明暗主题一致；Task 15 全局约束）
         self.template_name_label = BodyLabel("当前模板: 未配置")
-        self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")
+        self.template_name_label.setStyleSheet(
+            f"font-weight: bold; color: {ThemeManager.get_color('primary')};")
         template_info_layout.addWidget(self.template_name_label)
 
         # 设为默认模板按钮
@@ -1034,6 +1038,8 @@ class MainWindow(FluentWindow):
             status_bar.set_engine_status(engine, status)
 
     def _connect_signals(self):
+        # F-1: 文件面板空状态「上传 PDF」操作按钮 → 打开文件对话框（与工具栏同槽）
+        self.file_panel.upload_requested.connect(self.on_upload)
         self.file_panel.file_selected.connect(self.on_file_selected)
         self.file_panel.files_cleared.connect(self._on_files_cleared)
         self.file_panel.file_removed.connect(self._on_file_removed)

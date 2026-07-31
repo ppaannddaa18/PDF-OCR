@@ -315,3 +315,110 @@ class TestFocusTracking:
             assert text == expected
             seen.add(text)
         assert len(seen) == 3
+
+
+class TestUploadRequestedWiring:
+    """F-1: FileListPanel 空状态「上传 PDF」操作按钮 → on_upload（Task 8 遗留）"""
+
+    def test_file_panel_upload_requested_triggers_upload_dialog(self, main_window, monkeypatch):
+        """发射 upload_requested 后走真实 on_upload 槽：打开文件对话框并加载所选文件
+
+        on_upload 在 connect 时即被绑定，实例级替换无效；用桩替换
+        QFileDialog.getOpenFileNames，端到端验证真实槽被调用（不弹真实对话框）。
+        """
+        w = main_window
+        monkeypatch.setattr(
+            mw_module.QFileDialog, "getOpenFileNames",
+            lambda *args, **kwargs: (["dummy1.pdf", "dummy2.pdf"], ""),
+        )
+        assert w.file_panel.files == []
+        w.file_panel.upload_requested.emit()
+        assert w.file_panel.files == ["dummy1.pdf", "dummy2.pdf"]
+        assert "已加载 2 个文件" in w.status_label.text()
+
+
+class TestTemplateNameLabelTheme:
+    """F-2: template_name_label 创建点不再硬编码 #0078d4（Task 15 全局约束）
+
+    断言启动路径：构造后（_set_template_name 首次调用在文件加载之后）标签的
+    内嵌 QSS 即来自 ThemeManager。不在此处做 _apply_theme_mode 切换断言——
+    切换后 qfluentwidgets setTheme 会重排其控件 QSS（FluentWindow 既有行为，
+    与 F-2 无关），启动态才是本修复的覆盖范围。
+    """
+
+    def test_template_name_label_created_with_theme_manager_primary(self, main_window):
+        """启动全程（构造后、文件加载前）标签颜色为 ThemeManager primary，无 #0078d4"""
+        w = main_window
+        ss = w.template_name_label.styleSheet()
+        assert ThemeManager.get_color('primary') in ss
+        assert '#0078d4' not in ss
+
+
+class TestAnimationPrefWiring:
+    """F-3: 启动接线仅在 config 显式声明 animations_enabled 时覆盖系统 reduced-motion 检测"""
+
+    @staticmethod
+    def _spy_set_enabled(monkeypatch):
+        """包裹 AnimationManager.set_enabled：记录调用并委托原实现（classmethod 在
+        类属性访问时已绑定，普通函数替换后仍可经 AnimationManager.set_enabled(v) 调用）"""
+        import app.ui.animation_manager as anim_module
+        original = anim_module.AnimationManager.set_enabled
+        calls = []
+
+        def _spy(value):
+            calls.append(value)
+            return original(value)
+
+        monkeypatch.setattr(anim_module.AnimationManager, "set_enabled", _spy)
+        return calls
+
+    def test_no_animations_key_preserves_system_detection(self, qapp, monkeypatch):
+        """appearance 节缺失或无 animations_enabled 键 → 不调用 set_enabled，
+        保留模块级系统检测结果（模拟系统禁用动画）"""
+        import app.ui.animation_manager as anim_module
+        from app.ui.animation_manager import AnimationManager
+        from app.ui.widgets.cancel_result_dialog import CancelResultDialog
+        monkeypatch.setattr(mw_module, "get_ocr_engine", lambda config: FakeEngine())
+        monkeypatch.setattr(CancelResultDialog, "has_pending_task", lambda: False)
+        # 模拟系统 reduced-motion 检测结果：动画被系统禁用
+        monkeypatch.setattr(anim_module.AnimationManager, "_enabled", False)
+        calls = self._spy_set_enabled(monkeypatch)
+
+        # appearance 节完全缺失（_make_config 默认形态）
+        w1 = mw_module.MainWindow(_make_config())
+        assert calls == []
+        assert AnimationManager.is_enabled() is False  # 系统检测值原样保留
+        _destroy_test_window(w1)
+
+        # appearance 节存在但无 animations_enabled 键
+        config = _make_config()
+        config["appearance"] = {"theme": "light"}
+        w2 = mw_module.MainWindow(config)
+        assert calls == []
+        assert AnimationManager.is_enabled() is False
+        _destroy_test_window(w2)
+
+    def test_animations_key_applied_from_config(self, qapp, monkeypatch):
+        """config 显式声明 animations_enabled → 按声明值覆盖（False/True 两分支）"""
+        import app.ui.animation_manager as anim_module
+        from app.ui.animation_manager import AnimationManager
+        from app.ui.widgets.cancel_result_dialog import CancelResultDialog
+        monkeypatch.setattr(mw_module, "get_ocr_engine", lambda config: FakeEngine())
+        monkeypatch.setattr(CancelResultDialog, "has_pending_task", lambda: False)
+        monkeypatch.setattr(anim_module.AnimationManager, "_enabled", True)  # 基线
+        calls = self._spy_set_enabled(monkeypatch)
+
+        config_false = _make_config()
+        config_false["appearance"] = {"theme": "light", "animations_enabled": False}
+        w1 = mw_module.MainWindow(config_false)
+        assert calls == [False]
+        assert AnimationManager.is_enabled() is False
+        _destroy_test_window(w1)
+
+        calls.clear()
+        config_true = _make_config()
+        config_true["appearance"] = {"theme": "light", "animations_enabled": True}
+        w2 = mw_module.MainWindow(config_true)
+        assert calls == [True]
+        assert AnimationManager.is_enabled() is True
+        _destroy_test_window(w2)
