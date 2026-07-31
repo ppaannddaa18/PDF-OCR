@@ -34,6 +34,7 @@ def _get_ui_components():
         from app.ui.widgets.preprocess_toolbar import ImagePreprocessToolbar
         from app.ui.widgets.loading_overlay import LoadingOverlay
         from app.ui.widgets.result_panel import ResultPanel
+        from app.ui.widgets.status_bar import StatusBar
         from app.workers.batch_worker import BatchWorker
         from app.utils.command_history import AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
 
@@ -46,6 +47,7 @@ def _get_ui_components():
             'ImagePreprocessToolbar': ImagePreprocessToolbar,
             'LoadingOverlay': LoadingOverlay,
             'ResultPanel': ResultPanel,
+            'StatusBar': StatusBar,
             'BatchWorker': BatchWorker,
             'AddRegionCommand': AddRegionCommand,
             'RemoveRegionCommand': RemoveRegionCommand,
@@ -905,23 +907,17 @@ class MainWindow(FluentWindow):
         return widget
 
     def _create_status_bar(self) -> QWidget:
-        """创建底部状态栏"""
-        bar = QWidget()
-        bar.setFixedHeight(28)
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(5, 0, 5, 0)
+        """创建底部状态栏（Task 13: 独立 StatusBar 组件）
 
-        self.status_label = BodyLabel("就绪 - 请上传 PDF 文件开始")
-        layout.addWidget(self.status_label)
-        layout.addStretch()
-
-        # 快捷键提示
-        shortcut_label = BodyLabel("Ctrl+O 上传 | Ctrl+S 保存模板 | Ctrl+T 试识别 | Ctrl+Enter 批量识别 | Delete 删除字段 | Ctrl+Z 撤销 | Ctrl+Y 重做")
-        shortcut_label.setMaximumWidth(650)
-        shortcut_label.setStyleSheet("color: #666; font-size: 11px;")
-        layout.addWidget(shortcut_label)
-
-        return bar
+        StatusBar 提供 status_label 兼容属性（内部状态文本 QLabel），
+        既有 25 处 self.status_label.setText(...) 调用无需逐个修改。
+        """
+        self.status_bar = _get_ui_components().StatusBar()
+        self.status_label = self.status_bar.status_label
+        # 回放已记录的引擎状态（引擎初始化可能早于状态栏创建完成）
+        engine, status = self._last_engine_status
+        self.status_bar.set_engine_status(engine, status)
+        return self.status_bar
 
     def _on_toolbar_engine_changed(self, label: str):
         """CompactToolbar 引擎选择变更（信号携带显示名标签）→ 委托既有引擎切换逻辑"""
@@ -930,13 +926,17 @@ class MainWindow(FluentWindow):
             self._on_engine_switched(index)
 
     def _on_gpu_status_changed(self, engine: str, status: str):
-        """引擎状态变化记录（GpuStatusWidget.status_changed 信号）
+        """引擎状态变化记录 + 桥接到状态栏（GpuStatusWidget.status_changed 信号）
 
         注意：GpuStatusWidget._refresh 发射小写 engine_name（如 'gguf'），
         而 set_engine_status 发射显示名（如 'GGUF'），消费方需兼容两种形式。
-        Task 13 重构状态栏时将消费此信号。
+        状态栏创建前信号可能先到（OCR 初始化线程早于 _create_template_page
+        完成），故用 getattr 判空；_create_status_bar 会回放 _last_engine_status。
         """
         self._last_engine_status = (engine, status)
+        status_bar = getattr(self, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.set_engine_status(engine, status)
 
     def _connect_signals(self):
         self.file_panel.file_selected.connect(self.on_file_selected)
