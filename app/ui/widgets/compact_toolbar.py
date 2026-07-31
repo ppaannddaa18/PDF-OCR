@@ -1,0 +1,153 @@
+# app/ui/widgets/compact_toolbar.py
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QComboBox
+from app.ui.theme_manager import ThemeManager
+from app.ui.widgets.gpu_status import GpuStatusWidget
+
+
+class CompactToolbar(QWidget):
+    """紧凑工具栏"""
+
+    # 信号
+    upload_clicked = pyqtSignal()
+    test_ocr_clicked = pyqtSignal()
+    batch_ocr_clicked = pyqtSignal()
+    save_template_clicked = pyqtSignal()
+    load_template_clicked = pyqtSignal()
+    settings_clicked = pyqtSignal()
+    engine_changed = pyqtSignal(str)
+
+    ENGINE_OPTIONS = [
+        'GGUF (GPU)',
+        'GGUF (CPU)',
+        'RapidOCR (CPU)',
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setFixedHeight(36)
+        self.setStyleSheet(f"""
+            CompactToolbar {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                border-bottom: 1px solid {ThemeManager.get_color('border')};
+            }}
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(
+            ThemeManager.get_spacing('sm'),
+            0,
+            ThemeManager.get_spacing('sm'),
+            0
+        )
+        layout.setSpacing(ThemeManager.get_spacing('xs'))
+
+        # 主要操作组
+        self._create_icon_button(layout, '⬆️', '上传 PDF (Ctrl+O)', self.upload_clicked)
+        self._create_icon_button(layout, '🔍', '试识别 (Ctrl+T)', self.test_ocr_clicked)
+        self._create_icon_button(layout, '▶️', '批量识别 (Ctrl+Enter)', self.batch_ocr_clicked)
+
+        # 分隔线
+        layout.addSpacing(ThemeManager.get_spacing('sm'))
+        self._add_separator(layout)
+        layout.addSpacing(ThemeManager.get_spacing('sm'))
+
+        # 模板操作组
+        self._create_icon_button(layout, '💾', '保存模板 (Ctrl+S)', self.save_template_clicked)
+        self._create_icon_button(layout, '📂', '加载模板', self.load_template_clicked)
+
+        # 分隔线
+        layout.addSpacing(ThemeManager.get_spacing('sm'))
+        self._add_separator(layout)
+        layout.addSpacing(ThemeManager.get_spacing('sm'))
+
+        # 引擎状态（集成 GpuStatusWidget：彩色圆点 + 引擎缩写）
+        self.engine_status = GpuStatusWidget()
+        layout.addWidget(self.engine_status)
+
+        # 引擎选择
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItems(self.ENGINE_OPTIONS)
+        self.engine_combo.setFixedWidth(120)
+        self.engine_combo.setStyleSheet(f"""
+            QComboBox {{
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: {ThemeManager.get_radius('sm')}px;
+                padding: 2px 4px;
+                font-size: 12px;
+            }}
+        """)
+        self.engine_combo.currentTextChanged.connect(self.engine_changed.emit)
+        layout.addWidget(self.engine_combo)
+
+        layout.addStretch()
+
+        # 设置按钮
+        self._create_icon_button(layout, '⚙️', '设置', self.settings_clicked)
+
+        # 帮助按钮
+        help_btn = QPushButton('?')
+        help_btn.setFixedSize(24, 24)
+        help_btn.setToolTip('快捷键帮助 (F1)')
+        help_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {ThemeManager.get_color('text_secondary')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: {ThemeManager.get_radius('full')}px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+                color: {ThemeManager.get_color('text_primary')};
+            }}
+        """)
+        layout.addWidget(help_btn)
+
+    def _create_icon_button(self, layout, icon: str, tooltip: str, signal):
+        """创建图标按钮"""
+        btn = QPushButton(icon)
+        btn.setFixedSize(28, 28)
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                border-radius: {ThemeManager.get_radius('sm')}px;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QPushButton:pressed {{
+                background-color: {ThemeManager.get_color('bg_selected')};
+            }}
+        """)
+        btn.clicked.connect(signal.emit)
+        layout.addWidget(btn)
+        return btn
+
+    def _add_separator(self, layout):
+        """添加分隔线"""
+        separator = QWidget()
+        separator.setFixedWidth(1)
+        separator.setFixedHeight(20)
+        separator.setStyleSheet(
+            f"background-color: {ThemeManager.get_color('border')};"
+        )
+        layout.addWidget(separator)
+
+    def set_engine_status(self, engine: str, status: str):
+        """设置引擎状态
+
+        Args:
+            engine: 引擎名称
+            status: 'ready', 'initializing', 'unavailable', 'cpu_mode'
+        """
+        # 委托给集成的 GpuStatusWidget（彩色圆点 + 缩写）
+        self.engine_status.set_engine_status(engine, status)
