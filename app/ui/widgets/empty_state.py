@@ -41,6 +41,8 @@ class EmptyState(QWidget):
         self._setup_ui()
         if variant:
             self.apply_variant(variant)
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -59,24 +61,32 @@ class EmptyState(QWidget):
         self.title_label = QLabel()
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setFont(ThemeManager.get_font('subheading'))
-        self.title_label.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_primary')};"
-        )
         layout.addWidget(self.title_label)
 
         # 说明
         self.desc_label = QLabel()
         self.desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.desc_label.setFont(ThemeManager.get_font('body'))
-        self.desc_label.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_secondary')};"
-        )
         self.desc_label.setWordWrap(True)
         layout.addWidget(self.desc_label)
 
         # 操作按钮
         self.action_button = QPushButton()
         self.action_button.setFont(ThemeManager.get_font('button'))
+        self.action_button.setVisible(False)
+        layout.addWidget(self.action_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用）"""
+        self.title_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_primary')};"
+        )
+        self.desc_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')};"
+        )
         self.action_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {ThemeManager.get_color('primary')};
@@ -89,10 +99,6 @@ class EmptyState(QWidget):
                 background-color: {ThemeManager.get_color('primary_hover')};
             }}
         """)
-        self.action_button.setVisible(False)
-        layout.addWidget(self.action_button, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        # 设置背景
         self.setStyleSheet(
             f"background-color: {ThemeManager.get_color('bg_surface')};"
         )

@@ -18,6 +18,8 @@ class CollapsiblePanel(QWidget):
         self._animations = []  # 保留两个动画引用，防止被 Python GC 回收导致动画不运行
         self._content_widget = None
         self._setup_ui()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _setup_ui(self):
         # 不用 setFixedWidth：显式设置最小/最大宽度，与宽度动画兼容
@@ -32,18 +34,6 @@ class CollapsiblePanel(QWidget):
         self.toggle_button = QPushButton('◀')
         self.toggle_button.setFixedSize(24, 24)
         self.toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.toggle_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {ThemeManager.get_color('text_secondary')};
-                border: none;
-                font-size: 12px;
-            }}
-            QPushButton:hover {{
-                color: {ThemeManager.get_color('text_primary')};
-                background-color: {ThemeManager.get_color('bg_hover')};
-            }}
-        """)
         self.toggle_button.clicked.connect(self.toggle)
         layout.addWidget(self.toggle_button, alignment=Qt.AlignmentFlag.AlignRight)
 
@@ -61,13 +51,30 @@ class CollapsiblePanel(QWidget):
         # 折叠状态指示
         self.collapsed_indicator = QLabel()
         self.collapsed_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.collapsed_indicator.setVisible(False)
+        layout.addWidget(self.collapsed_indicator)
+
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用）"""
+        self.toggle_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {ThemeManager.get_color('text_secondary')};
+                border: none;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                color: {ThemeManager.get_color('text_primary')};
+                background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+        """)
         self.collapsed_indicator.setStyleSheet(f"""
             color: {ThemeManager.get_color('text_secondary')};
             font-size: 11px;
         """)
-        self.collapsed_indicator.setVisible(False)
-        layout.addWidget(self.collapsed_indicator)
-
         self.setStyleSheet(
             f"background-color: {ThemeManager.get_color('bg_surface')};"
         )

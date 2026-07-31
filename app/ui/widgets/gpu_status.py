@@ -30,12 +30,13 @@ class GpuStatusWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._dot_role = 'text_disabled'
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(4)
 
         self.status_icon = QLabel("●")
-        self._set_dot_color(ThemeManager.get_color('text_disabled'))
+        self._set_dot_color(self._dot_role)
         layout.addWidget(self.status_icon)
 
         self.status_label = BodyLabel("未初始化")
@@ -46,6 +47,9 @@ class GpuStatusWidget(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._engine = None
+
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def set_engine(self, engine):
         """绑定引擎实例"""
@@ -63,32 +67,41 @@ class GpuStatusWidget(QWidget):
             engine: 引擎显示名，如 'GGUF'、'RapidOCR'
             status: 'ready', 'initializing', 'unavailable', 'cpu_mode'
         """
-        status_colors = {
-            'ready': ThemeManager.get_color('success'),
-            'initializing': ThemeManager.get_color('warning'),
-            'unavailable': ThemeManager.get_color('error'),
-            'cpu_mode': ThemeManager.get_color('text_disabled'),
+        status_roles = {
+            'ready': 'success',
+            'initializing': 'warning',
+            'unavailable': 'error',
+            'cpu_mode': 'text_disabled',
         }
-        color = status_colors.get(status, ThemeManager.get_color('text_disabled'))
-        self._set_dot_color(color)
+        role = status_roles.get(status, 'text_disabled')
+        self._set_dot_color(role)
         self.status_label.setText(engine)
         self.setToolTip(f'{engine}: {status}')
         # 与 _refresh 各分支一致，外部设置路径同样发射状态信号
         self.status_changed.emit(engine, status)
 
-    def _set_dot_color(self, color: str):
-        self.status_icon.setStyleSheet(f"font-size: 10px; color: {color};")
+    def apply_theme(self):
+        """重建内嵌样式（Task 15：ThemeManager.set_theme 后调用，
+        圆点按当前状态角色重绘——角色存的是 ThemeManager 颜色角色，
+        set_theme 后重解析即得到新主题色）"""
+        self._set_dot_color(self._dot_role)
+
+    def _set_dot_color(self, color_role: str):
+        self._dot_role = color_role
+        self.status_icon.setStyleSheet(
+            f"font-size: 10px; color: {ThemeManager.get_color(color_role)};"
+        )
 
     def _refresh(self):
         if self._engine is None:
-            self._set_dot_color(ThemeManager.get_color('text_disabled'))
+            self._set_dot_color('text_disabled')
             self.status_label.setText("未初始化")
             self.setToolTip("引擎未初始化")
             self.status_changed.emit("", "unavailable")
             return
 
         if not self._engine.is_ready:
-            self._set_dot_color(ThemeManager.get_color('warning'))
+            self._set_dot_color('warning')
             # 显示具体引擎缩写，避免用户误以为卡死
             engine_label = self.ENGINE_ABBR.get(self._engine.engine_name, "引擎")
             self.status_label.setText(f"{engine_label} 加载中...")
@@ -99,7 +112,7 @@ class GpuStatusWidget(QWidget):
         engine_name = self._engine.engine_name
         if engine_name == "gguf":
             # GGUF 引擎不直接提供显存信息，显示就绪状态
-            self._set_dot_color(ThemeManager.get_color('success'))
+            self._set_dot_color('success')
             self.status_label.setText("GGUF")
             self.setToolTip("GPU: GGUF (就绪)")
             self.status_changed.emit(engine_name, "ready")
@@ -110,7 +123,7 @@ class GpuStatusWidget(QWidget):
             except Exception:
                 pass
         else:
-            self._set_dot_color(ThemeManager.get_color('success'))
+            self._set_dot_color('success')
             self.status_label.setText("RapidOCR")
             self.setToolTip("CPU: RapidOCR (就绪)")
             self.status_changed.emit(engine_name, "cpu_mode")

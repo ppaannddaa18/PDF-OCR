@@ -1,12 +1,24 @@
 # app/ui/theme_manager.py
+import types
+import weakref
+
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget
 
 
 class ThemeManager:
-    """主题管理器 - 集中管理所有视觉常量"""
+    """主题管理器 - 集中管理所有视觉常量
+
+    Task 15 增强：
+    - 刷新回调注册表：组件在 __init__ 时注册 apply_theme（弱引用），
+      set_theme 切换主题后自动调用全部回调，使构造时烘焙进 QSS 字符串的
+      颜色重新生成（unpolish/polish 不足以刷新内嵌样式表）
+    - detect_system_theme / resolve_theme：'auto' 模式跟随系统主题
+      （Qt 6.5+ QStyleHints.colorScheme()，已验证 PyQt6 6.11 可用）
+    """
 
     _current_theme = 'light'
+    _refresh_callbacks = []  # weakref.WeakMethod / weakref.ref 列表（组件销毁后自动失效）
 
     COLORS = {
         'light': {
@@ -107,12 +119,96 @@ class ThemeManager:
         """获取当前主题名称"""
         return cls._current_theme
 
+    # ── 主题切换与全局刷新 ──────────────────────────────────────
+
+    @classmethod
+    def register_refresh_callback(cls, callback) -> None:
+        """注册主题刷新回调：set_theme 切换主题后自动调用
+
+        回调以弱引用持有（WeakMethod/ref），组件被 GC 后自动失效，
+        无需显式注销。典型用法：组件 __init__ 末尾
+        ``ThemeManager.register_refresh_callback(self.apply_theme)``。
+        """
+        if callback is None:
+            return
+        if isinstance(callback, types.MethodType):
+            ref = weakref.WeakMethod(callback)
+        else:
+            ref = weakref.ref(callback)
+        cls._refresh_callbacks.append(ref)
+
     @classmethod
     def set_theme(cls, theme: str) -> None:
-        """设置当前主题"""
+        """设置当前主题，并触发全部已注册的刷新回调
+
+        相同主题重复调用为 no-op（组件构造/刷新后状态已一致，
+        避免启动双接线时重复刷新）。
+        """
         if theme not in cls.COLORS:
             raise ValueError(f"Unknown theme: {theme}")
+        if theme == cls._current_theme:
+            return
         cls._current_theme = theme
+        cls._invoke_refresh_callbacks()
+
+    @classmethod
+    def _invoke_refresh_callbacks(cls) -> None:
+        """调用全部刷新回调；失效（已销毁）回调在本轮清理"""
+        dead = []
+        for ref in cls._refresh_callbacks:
+            callback = ref()
+            if callback is None:
+                dead.append(ref)
+                continue
+            try:
+                callback()
+            except RuntimeError:
+                # 组件 C++ 对象已销毁，标记清理
+                dead.append(ref)
+            except Exception:
+                # 单个组件刷新失败不应阻断其余组件
+                pass
+        for ref in dead:
+            try:
+                cls._refresh_callbacks.remove(ref)
+            except ValueError:
+                pass
+
+    # ── 系统主题检测（'auto' 跟随系统） ─────────────────────────
+
+    @classmethod
+    def detect_system_theme(cls) -> str:
+        """检测系统主题（'light' | 'dark'）
+
+        Qt 6.5+：QApplication.styleHints().colorScheme() 返回
+        Qt.ColorScheme（Unknown/Light/Dark）——已验证 PyQt6 6.11 可用。
+        API 不可用或检测失败时回退 'light'（与旧行为一致）。
+        """
+        try:
+            from PyQt6.QtCore import Qt
+            from PyQt6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is None:
+                return 'light'
+            scheme = app.styleHints().colorScheme()
+            if scheme == Qt.ColorScheme.Dark:
+                return 'dark'
+            return 'light'
+        except Exception:
+            return 'light'
+
+    @classmethod
+    def resolve_theme(cls, mode: str) -> str:
+        """解析主题模式 → 实际生效主题
+
+        'auto' → 跟随系统（detect_system_theme）；
+        'light'/'dark' → 原样返回。
+        """
+        if mode == 'auto':
+            return cls.detect_system_theme()
+        if mode not in cls.COLORS:
+            raise ValueError(f"Unknown theme: {mode}")
+        return mode
 
     @classmethod
     def apply_stylesheet(cls, widget: QWidget, styles: dict) -> None:

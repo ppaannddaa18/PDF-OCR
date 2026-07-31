@@ -96,6 +96,8 @@ class FileListPanel(QWidget):
 
         self._setup_ui()
         self._update_empty_state()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     # ---------- UI ----------
 
@@ -107,34 +109,13 @@ class FileListPanel(QWidget):
         # 标题
         self.title = QLabel('文件列表')
         self.title.setFont(ThemeManager.get_font('subheading'))
-        self.title.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_primary')};"
-            f"padding: {ThemeManager.get_spacing('sm')}px;"
-        )
         layout.addWidget(self.title)
 
-        # 文件列表（紧凑设计：36px 行高，悬停/选中背景）
+        # 文件列表（紧凑设计：36px 行高，悬停/选中背景；
+        # 状态色条由 _StatusBarDelegate paint 时实时解析 ThemeManager，天然主题安全）
         self.list_widget = QListWidget()
         self.list_widget.setItemDelegate(_StatusBarDelegate(self.list_widget))
         self.list_widget.setUniformItemSizes(True)
-        self.list_widget.setStyleSheet(f"""
-            QListWidget {{
-                background-color: {ThemeManager.get_color('bg_surface')};
-                border: none;
-                outline: none;
-            }}
-            QListWidget::item {{
-                height: 36px;
-                padding-left: {ThemeManager.get_spacing('sm')}px;
-                color: {ThemeManager.get_color('text_primary')};
-            }}
-            QListWidget::item:hover {{
-                background-color: {ThemeManager.get_color('bg_hover')};
-            }}
-            QListWidget::item:selected {{
-                background-color: {ThemeManager.get_color('bg_selected')};
-            }}
-        """)
         self.list_widget.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self.list_widget, stretch=1)
 
@@ -147,10 +128,6 @@ class FileListPanel(QWidget):
         # 批量加载进度提示
         self.progress_label = QLabel("")
         self.progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.progress_label.setStyleSheet(
-            f"font-size: 12px; color: {ThemeManager.get_color('primary')};"
-            f"padding: {ThemeManager.get_spacing('xs')}px;"
-        )
         self.progress_label.setVisible(False)
         layout.addWidget(self.progress_label)
 
@@ -175,6 +152,41 @@ class FileListPanel(QWidget):
         self._apply_button_style(self.btn_remove)
         self._apply_button_style(self.btn_clear)
         layout.addLayout(button_layout)
+
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用；
+        状态色条 delegate 在 paint 时解析颜色，天然主题安全无需处理）"""
+        self.title.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_primary')};"
+            f"padding: {ThemeManager.get_spacing('sm')}px;"
+        )
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                border: none;
+                outline: none;
+            }}
+            QListWidget::item {{
+                height: 36px;
+                padding-left: {ThemeManager.get_spacing('sm')}px;
+                color: {ThemeManager.get_color('text_primary')};
+            }}
+            QListWidget::item:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QListWidget::item:selected {{
+                background-color: {ThemeManager.get_color('bg_selected')};
+            }}
+        """)
+        self.progress_label.setStyleSheet(
+            f"font-size: 12px; color: {ThemeManager.get_color('primary')};"
+            f"padding: {ThemeManager.get_spacing('xs')}px;"
+        )
+        self._apply_button_style(self.btn_remove)
+        self._apply_button_style(self.btn_clear)
 
     def _apply_button_style(self, button: QPushButton):
         """应用 ThemeManager 按钮样式（无硬编码颜色）"""

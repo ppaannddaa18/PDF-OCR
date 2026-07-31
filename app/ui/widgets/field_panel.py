@@ -53,6 +53,8 @@ class FieldPanel(QWidget):
         self._current_template_name = "未命名模板"
         self._setup_ui()
         self._update_empty_state()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     # ---------- UI ----------
 
@@ -69,30 +71,6 @@ class FieldPanel(QWidget):
         # 行高：defaultSectionSize 确定性生效（QSS item height 仅作兜底）
         self.table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
         self.table.verticalHeader().setVisible(False)  # 紧凑设计：隐藏行号列
-        self.table.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {ThemeManager.get_color('bg_surface')};
-                border: none;
-                outline: none;
-                gridline-color: {ThemeManager.get_color('border')};
-                alternate-background-color: {ThemeManager.get_color('bg_hover')};
-            }}
-            QTableWidget::item {{
-                height: {ROW_HEIGHT}px;
-                padding: {ThemeManager.get_spacing('xs')}px;
-                color: {ThemeManager.get_color('text_primary')};
-            }}
-            QTableWidget::item:selected {{
-                background-color: {ThemeManager.get_color('bg_selected')};
-            }}
-            QHeaderView::section {{
-                background-color: {ThemeManager.get_color('bg_hover')};
-                color: {ThemeManager.get_color('text_secondary')};
-                padding: {ThemeManager.get_spacing('sm')}px;
-                border: none;
-                border-bottom: 1px solid {ThemeManager.get_color('border')};
-            }}
-        """)
         # 字段名列可编辑
         self.table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
@@ -127,12 +105,6 @@ class FieldPanel(QWidget):
         self.detail_content = BodyLabel("")
         self.detail_content.setWordWrap(True)
         self.detail_content.setFont(ThemeManager.get_font('body'))
-        self.detail_content.setStyleSheet(
-            f"background: {ThemeManager.get_color('bg_hover')};"
-            f"color: {ThemeManager.get_color('text_primary')};"
-            f"padding: {ThemeManager.get_spacing('sm')}px;"
-            f"border-radius: {ThemeManager.get_radius('sm')}px;"
-        )
         detail_layout.addWidget(self.detail_content)
 
         self.detail_confidence = BodyLabel("")
@@ -166,6 +138,9 @@ class FieldPanel(QWidget):
         self._apply_button_style(self.clear_all_btn)
         layout.addLayout(button_layout)
 
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
     def _apply_button_style(self, button: QPushButton):
         """应用 ThemeManager 扁平按钮样式（无硬编码颜色）"""
         button.setStyleSheet(f"""
@@ -184,6 +159,68 @@ class FieldPanel(QWidget):
                 color: {ThemeManager.get_color('text_disabled')};
             }}
         """)
+
+    def _apply_delete_button_style(self, button: QPushButton):
+        """应用单元格内删除按钮主题样式（无硬编码颜色）"""
+        button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                color: {ThemeManager.get_color('text_secondary')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: {ThemeManager.get_radius('sm')}px;
+                padding: {ThemeManager.get_spacing('xs')}px
+                         {ThemeManager.get_spacing('sm')}px;
+            }}
+            QPushButton:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+                color: {ThemeManager.get_color('error')};
+            }}
+        """)
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用）
+
+        覆盖：表格、详情内容、底部清空按钮、以及已添加行中的删除按钮
+        （add_region 时烘焙，需在主题切换后重建）。
+        验证失败/低置信度的半透明背景在 show_preview_result 时用
+        当前主题色派生，天然主题安全。
+        """
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                border: none;
+                outline: none;
+                gridline-color: {ThemeManager.get_color('border')};
+                alternate-background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QTableWidget::item {{
+                height: {ROW_HEIGHT}px;
+                padding: {ThemeManager.get_spacing('xs')}px;
+                color: {ThemeManager.get_color('text_primary')};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {ThemeManager.get_color('bg_selected')};
+            }}
+            QHeaderView::section {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+                color: {ThemeManager.get_color('text_secondary')};
+                padding: {ThemeManager.get_spacing('sm')}px;
+                border: none;
+                border-bottom: 1px solid {ThemeManager.get_color('border')};
+            }}
+        """)
+        self.detail_content.setStyleSheet(
+            f"background: {ThemeManager.get_color('bg_hover')};"
+            f"color: {ThemeManager.get_color('text_primary')};"
+            f"padding: {ThemeManager.get_spacing('sm')}px;"
+            f"border-radius: {ThemeManager.get_radius('sm')}px;"
+        )
+        self._apply_button_style(self.clear_current_btn)
+        self._apply_button_style(self.clear_all_btn)
+        for row in range(self.table.rowCount()):
+            delete_btn = self.table.cellWidget(row, 3)
+            if delete_btn is not None:
+                self._apply_delete_button_style(delete_btn)
 
     # ---------- 空状态 ----------
 
@@ -312,20 +349,7 @@ class FieldPanel(QWidget):
 
         # 删除按钮（单元格内紧凑扁平按钮）
         btn = QPushButton("删除")
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_surface')};
-                color: {ThemeManager.get_color('text_secondary')};
-                border: 1px solid {ThemeManager.get_color('border')};
-                border-radius: {ThemeManager.get_radius('sm')}px;
-                padding: {ThemeManager.get_spacing('xs')}px
-                         {ThemeManager.get_spacing('sm')}px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('bg_hover')};
-                color: {ThemeManager.get_color('error')};
-            }}
-        """)
+        self._apply_delete_button_style(btn)
         btn.clicked.connect(lambda _, rid=region.id: self._delete(rid))
         self.table.setCellWidget(row, 3, btn)
 

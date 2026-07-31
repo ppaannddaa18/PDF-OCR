@@ -26,8 +26,11 @@ class ToastNotification(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._setup_ui()
         self._animation = None
+        self._last_type = None
+        self._setup_ui()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _setup_ui(self):
         self.setFixedWidth(320)
@@ -56,20 +59,10 @@ class ToastNotification(QWidget):
 
     def show_message(self, message: str, type: str = 'info', duration: int = 3000):
         """显示通知"""
-        color_role = self.TYPE_COLORS.get(type, 'primary')
-        color = ThemeManager.get_color(color_role)
-        icon = self.TYPE_ICONS.get(type, 'ℹ')
-
-        self.icon_label.setText(icon)
+        self._last_type = type
+        self.icon_label.setText(self.TYPE_ICONS.get(type, 'ℹ'))
         self.message_label.setText(message)
-        self.setStyleSheet(f"""
-            ToastNotification {{
-                background-color: {ThemeManager.get_color('bg_surface')};
-                border-left: 4px solid {color};
-                border-radius: {ThemeManager.get_radius('md')}px;
-                color: {ThemeManager.get_color('text_primary')};
-            }}
-        """)
+        self.apply_theme()
 
         # 定位到右下角
         if self.parent():
@@ -95,6 +88,26 @@ class ToastNotification(QWidget):
         QTimer.singleShot(duration, self._hide)
 
         ToastNotification._active_toasts.append(self)
+
+    def apply_theme(self):
+        """重建通知样式（Task 15：ThemeManager.set_theme 后调用；
+        未显示过时仅重设图标/消息颜色样式）"""
+        color_role = self.TYPE_COLORS.get(self._last_type or 'info', 'primary')
+        color = ThemeManager.get_color(color_role)
+        self.icon_label.setStyleSheet(
+            f"font-size: 16px; color: {color};"
+        )
+        self.message_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_primary')};"
+        )
+        self.setStyleSheet(f"""
+            ToastNotification {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                border-left: 4px solid {color};
+                border-radius: {ThemeManager.get_radius('md')}px;
+                color: {ThemeManager.get_color('text_primary')};
+            }}
+        """)
 
     def _hide(self):
         """隐藏通知（带动画）"""

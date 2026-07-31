@@ -7,7 +7,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QStackedWidget, QSplitter, QDialog
 )
-from PyQt6.QtCore import Qt, QSize, QTimer
+from PyQt6.QtCore import Qt, QSize, QTimer, QEvent
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition,
     TransparentToolButton, TransparentPushButton, SubtitleLabel,
@@ -72,6 +72,7 @@ def _icon(name: str, color: str = '#0078d4'):
 
 
 # 核心组件导入（轻量级）
+from app.ui.theme_manager import ThemeManager  # 主题管理器（Task 15：模块级，供各方法引用）
 from app.core.pdf_loader import PdfLoader
 from app.core.ocr_engine import get_ocr_engine
 from app.core.batch_processor import BatchProcessor
@@ -85,6 +86,9 @@ from app.models.region import Region
 
 class MainWindow(FluentWindow):
     def __init__(self, config):
+        # 先于 super().__init__() 初始化：FluentWindow 构造期间会以事件过滤器
+        # 身份回调本类 eventFilter（qfluentwidgets 内部机制），属性必须已存在
+        self._theme_mode = 'auto'
         super().__init__()
         self.config = config
         self.setWindowTitle(config["app"]["name"])
@@ -106,16 +110,31 @@ class MainWindow(FluentWindow):
         # 确保重型模块已加载
         _ensure_qta()
 
-        # 设置主题（跟随系统）
-        setTheme(Theme.AUTO)
-
-        # ThemeManager 主题（Task 7 接入；从配置读取 app.theme，默认 light）
+        # Task 15 启动接线：appearance.theme（默认 auto 跟随系统，兼容旧 app.theme）
+        # + appearance.animations_enabled（默认 True），双轨应用 ThemeManager 与
+        # qfluentwidgets 主题；在创建任何组件前执行，组件构造时即烘焙正确主题色
         from app.ui.theme_manager import ThemeManager
-        _theme = config.get("app", {}).get("theme", "light")
-        try:
-            ThemeManager.set_theme(_theme)
-        except ValueError:
-            ThemeManager.set_theme("light")
+        from app.ui.animation_manager import AnimationManager
+        theme_mode = (
+            config.get("appearance", {}).get("theme")
+            or config.get("app", {}).get("theme")
+            or "auto"
+        )
+        if theme_mode not in ('light', 'dark', 'auto'):
+            theme_mode = 'auto'
+        self._apply_theme_mode(theme_mode)
+        AnimationManager.set_enabled(
+            bool(config.get("appearance", {}).get("animations_enabled", True))
+        )
+        # 跟随系统模式：监听系统主题变化。
+        # 用 QApplication.paletteChanged 信号而非 installEventFilter：
+        # 应用级事件过滤器挂在窗口上会在窗口中途销毁时悬垂，实测间歇性段错误
+        # （access violation）；信号连接随接收者销毁自动断开，无生命周期风险。
+        # 系统主题变化（Windows WM_SETTINGCHANGE → Qt 更新调色板）即触发本信号。
+        from PyQt6.QtWidgets import QApplication
+        app_inst = QApplication.instance()
+        if app_inst is not None:
+            app_inst.paletteChanged.connect(self._on_system_palette_changed)
 
         # 创建加载遮罩层（在创建其他组件之前）
         self._create_loading_overlay()
@@ -160,6 +179,8 @@ class MainWindow(FluentWindow):
         self.worker = None
         self.state_tooltip = None
         self._last_engine_status = ("", "unavailable")  # GpuStatusWidget.status_changed 最新值
+        # 模板名称标签当前是否为默认态（apply_theme 重绘颜色时使用）
+        self._template_is_default = False
 
         # 字段配置存储：默认模板 + 特殊PDF的覆盖配置
         self._default_template = None  # 第一个PDF的字段配置作为默认
@@ -211,6 +232,76 @@ class MainWindow(FluentWindow):
             self._finance_processor = FinanceProcessor(self.config)
         except ImportError:
             self._finance_processor = None
+
+        # Task 15：注册自身主题刷新（子组件已在构造时注册，先于本行执行）
+        ThemeManager.register_refresh_callback(self.apply_theme)
+
+    # ── Task 15: 主题模式接线（ThemeManager + qfluentwidgets 双轨同步） ──
+
+    def _apply_theme_mode(self, mode: str):
+        """应用主题模式：'light' | 'dark' | 'auto'
+
+        - qfluentwidgets：setTheme(Theme.DARK/LIGHT/AUTO) 同步，
+          避免暗色系统下 qfluentwidgets 与 ThemeManager 明暗混用（Task 7 M-2）
+        - ThemeManager：自研组件色板（'auto' 时解析系统主题后设置）
+        顺序注意：先 setTheme（qfluentwidgets 重排会覆盖 qfluentwidgets 控件上
+        的内嵌 QSS，如模板名标签/统计标签），后 set_theme（触发全局刷新回调，
+        自研颜色最后烘焙、生效）。
+        """
+        self._theme_mode = mode
+        fluent_theme = {
+            'light': Theme.LIGHT,
+            'dark': Theme.DARK,
+            'auto': Theme.AUTO,
+        }[mode]
+        setTheme(fluent_theme)
+        effective = ThemeManager.resolve_theme(mode)
+        # set_theme 触发全部已注册组件的刷新回调（组件构造时已注册）
+        ThemeManager.set_theme(effective)
+
+    def eventFilter(self, watched, event):
+        """事件过滤：窗口自过滤（qfluentwidgets BackgroundAnimationWidget 在
+        FluentWindow 构造时 installEventFilter(self)），ApplicationPaletteChange
+        会送达顶层窗口——与 paletteChanged 信号双路径监听系统主题变化。
+
+        防御性设计：FluentWindow 构造期间（super().__init__ 内）本方法即会
+        被回调，此时部分属性/控件尚未创建；事件对象可能处于失效状态，
+        event.type() 访问需 try/except 保护，避免回调栈内抛异常导致
+        qFatal 硬崩溃（PyQt6 默认行为）。
+        """
+        try:
+            if event.type() == QEvent.Type.ApplicationPaletteChange:
+                self._on_system_palette_changed()
+        except RuntimeError:
+            pass  # 事件对象已失效（C++ 对象销毁），安全跳过
+        return super().eventFilter(watched, event)
+
+    def _on_system_palette_changed(self):
+        """系统调色板变化：'auto' 模式下重新解析系统主题并刷新 ThemeManager
+        （qfluentwidgets AUTO 模式内部自监听；本回调仅驱动自研色板）。
+        非 auto 模式直接忽略（手动主题不随系统变化）。
+        """
+        if self._theme_mode != 'auto':
+            return
+        effective = ThemeManager.resolve_theme('auto')
+        if effective != ThemeManager.current_theme():
+            ThemeManager.set_theme(effective)
+
+    def apply_theme(self):
+        """重建 MainWindow 自身内嵌 QSS（Task 15：ThemeManager.set_theme
+        后经注册回调调用；覆盖模板名称标签与结果页统计标签的颜色）"""
+        if hasattr(self, 'template_name_label'):
+            if self._template_is_default:
+                self.template_name_label.setStyleSheet(
+                    f"font-weight: bold; color: {ThemeManager.get_color('success')};")
+            else:
+                self.template_name_label.setStyleSheet(
+                    f"font-weight: bold; color: {ThemeManager.get_color('primary')};")
+        if hasattr(self, 'stat_success'):
+            self.stat_success.setStyleSheet(
+                f"color: {ThemeManager.get_color('success')};")
+            self.stat_fail.setStyleSheet(
+                f"color: {ThemeManager.get_color('error')};")
 
     def _setup_shortcuts(self):
         """设置快捷键
@@ -885,14 +976,15 @@ class MainWindow(FluentWindow):
         self.stat_total = StrongBodyLabel("共 0 个文件")
         layout.addWidget(self.stat_total)
 
-        # 成功数
+        # 成功数 / 失败数（ThemeManager 色，主题切换时 apply_theme 重建）
         self.stat_success = BodyLabel("成功: 0")
-        self.stat_success.setStyleSheet("color: #107c10;")
+        self.stat_success.setStyleSheet(
+            f"color: {ThemeManager.get_color('success')};")
         layout.addWidget(self.stat_success)
 
-        # 失败数
         self.stat_fail = BodyLabel("失败: 0")
-        self.stat_fail.setStyleSheet("color: #d13438;")
+        self.stat_fail.setStyleSheet(
+            f"color: {ThemeManager.get_color('error')};")
         layout.addWidget(self.stat_fail)
 
         layout.addStretch()
@@ -1153,14 +1245,17 @@ class MainWindow(FluentWindow):
 
     def _set_template_name(self, name: str, is_default: bool = False):
         """设置当前模板名称显示（在主窗口中）"""
+        self._template_is_default = is_default
         if is_default:
             self.template_name_label.setText(f"当前模板: 默认")
-            self.template_name_label.setStyleSheet("font-weight: bold; color: #107c10;")
+            self.template_name_label.setStyleSheet(
+                f"font-weight: bold; color: {ThemeManager.get_color('success')};")
             self.btn_set_default.setEnabled(False)
             self.btn_set_default.setText("设为默认")
         else:
             self.template_name_label.setText(f"当前模板: {name}")
-            self.template_name_label.setStyleSheet("font-weight: bold; color: #0078d4;")
+            self.template_name_label.setStyleSheet(
+                f"font-weight: bold; color: {ThemeManager.get_color('primary')};")
             self.btn_set_default.setEnabled(True)
             self.btn_set_default.setText("设为默认模板")
         # 同时更新field_panel中的记录
@@ -2090,6 +2185,14 @@ class MainWindow(FluentWindow):
             # 合并到当前配置
             self._merge_config_patch(self.config, patch)
 
+            # Task 15：外观设置立即生效（对话框内已即时应用，此处幂等兜底）
+            from app.ui.animation_manager import AnimationManager
+            appearance = self.config.get("appearance", {})
+            if "theme" in appearance:
+                self._apply_theme_mode(appearance["theme"])
+            if "animations_enabled" in appearance:
+                AnimationManager.set_enabled(bool(appearance["animations_enabled"]))
+
             # 保存配置
             try:
                 import yaml
@@ -2304,6 +2407,15 @@ class MainWindow(FluentWindow):
             return
 
         self._is_shutting_down = True
+
+        # 0. 断开系统主题变化监听（paletteChanged；信号随对象销毁也会自动断开）
+        from PyQt6.QtWidgets import QApplication as _QApp
+        _app_inst = _QApp.instance()
+        if _app_inst is not None:
+            try:
+                _app_inst.paletteChanged.disconnect(self._on_system_palette_changed)
+            except (TypeError, RuntimeError):
+                pass
 
         # 1. 立即接受关闭事件，隐藏窗口
         event.accept()

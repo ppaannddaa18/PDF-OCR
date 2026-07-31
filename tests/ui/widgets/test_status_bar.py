@@ -135,10 +135,12 @@ class TestEngineStatus:
         assert dot_color(bar.engine_icon) == ThemeManager.get_color(role)
 
     def test_empty_engine_shows_uninitialized(self, qapp):
+        """[Task 13 minor 修复] 空引擎态（'', 'unavailable'）回放：灰色圆点，
+        与 GpuStatusWidget 的 text_disabled 保持一致（原为红色 error）"""
         bar = StatusBar()
         bar.set_engine_status('', 'unavailable')
         assert bar.engine_label.text() == '引擎未初始化'
-        assert dot_color(bar.engine_icon) == ThemeManager.get_color('error')
+        assert dot_color(bar.engine_icon) == ThemeManager.get_color('text_disabled')
 
     def test_default_engine_state(self, qapp):
         bar = StatusBar()

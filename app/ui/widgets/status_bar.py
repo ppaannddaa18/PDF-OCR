@@ -62,17 +62,15 @@ class StatusBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_focus = 'global'
+        self._status_icon_role = 'text_secondary'
+        self._engine_icon_role = 'text_disabled'
         self._setup_ui()
         self.set_focus_area('global')
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _setup_ui(self):
         self.setFixedHeight(24)
-        self.setStyleSheet(f"""
-            StatusBar {{
-                background-color: {ThemeManager.get_color('bg_surface')};
-                border-top: 1px solid {ThemeManager.get_color('border')};
-            }}
-        """)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(
@@ -115,6 +113,9 @@ class StatusBar(QWidget):
         )
         layout.addWidget(self.shortcut_hint)
 
+        # 构造时烘焙样式（在全部子控件创建后调用，可安全重复执行）
+        self.apply_theme()
+
     # ── 对外接口 ──────────────────────────────────────────────
 
     def set_status(self, text: str, status_type: str = 'info'):
@@ -148,10 +149,35 @@ class StatusBar(QWidget):
         if engine:
             word = _ENGINE_STATUS_WORDS.get(status, '')
             self.engine_label.setText(f"{name} {word}".strip())
+            role = _ENGINE_STATUS_COLORS.get(status, 'text_disabled')
         else:
+            # [Task 13 minor] 空引擎态（'', 'unavailable'）回放：灰色圆点，
+            # 与 GpuStatusWidget 的 text_disabled 保持一致（原来显示红色 error）
             self.engine_label.setText('引擎未初始化')
-        role = _ENGINE_STATUS_COLORS.get(status, 'text_disabled')
+            role = 'text_disabled'
         self._set_dot_color(self.engine_icon, role)
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用，
+        构造时烘焙的颜色字符串需重新生成）"""
+        self.setStyleSheet(f"""
+            StatusBar {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                border-top: 1px solid {ThemeManager.get_color('border')};
+            }}
+        """)
+        self.status_text.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')};"
+        )
+        self.engine_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_disabled')};"
+        )
+        self.shortcut_hint.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_disabled')};"
+        )
+        # 圆点颜色按当前状态角色重绘
+        self._set_dot_color(self.status_icon, self._status_icon_role)
+        self._set_dot_color(self.engine_icon, self._engine_icon_role)
 
     # ── 兼容属性 ──────────────────────────────────────────────
 
@@ -167,6 +193,11 @@ class StatusBar(QWidget):
     # ── 内部工具 ──────────────────────────────────────────────
 
     def _set_dot_color(self, label: QLabel, color_role: str):
+        # 记录当前角色，主题刷新时可重绘
+        if label is self.status_icon:
+            self._status_icon_role = color_role
+        else:
+            self._engine_icon_role = color_role
         label.setStyleSheet(
             f"font-size: 8px; color: {ThemeManager.get_color(color_role)};"
         )

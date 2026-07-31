@@ -20,6 +20,8 @@ class SlidablePanel(QWidget):
         self._animation = None
         self._content_widget = None
         self._setup_ui()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _setup_ui(self):
         self.setMinimumWidth(self._min_width)
@@ -46,9 +48,6 @@ class SlidablePanel(QWidget):
         # 标题
         self.title_label = QLabel()
         self.title_label.setFont(ThemeManager.get_font('subheading'))
-        self.title_label.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_primary')};"
-        )
         header_layout.addWidget(self.title_label)
 
         header_layout.addStretch()
@@ -57,19 +56,6 @@ class SlidablePanel(QWidget):
         self.close_button = QPushButton('✕')
         self.close_button.setFixedSize(24, 24)
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {ThemeManager.get_color('text_secondary')};
-                border: none;
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                color: {ThemeManager.get_color('error')};
-                background-color: {ThemeManager.get_color('bg_hover')};
-                border-radius: {ThemeManager.get_radius('sm')}px;
-            }}
-        """)
         self.close_button.clicked.connect(self.slide_out)
         header_layout.addWidget(self.close_button)
 
@@ -86,6 +72,27 @@ class SlidablePanel(QWidget):
         )
         layout.addWidget(self.content_area, stretch=1)
 
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用）"""
+        self.title_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_primary')};"
+        )
+        self.close_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {ThemeManager.get_color('text_secondary')};
+                border: none;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                color: {ThemeManager.get_color('error')};
+                background-color: {ThemeManager.get_color('bg_hover')};
+                border-radius: {ThemeManager.get_radius('sm')}px;
+            }}
+        """)
         self.setStyleSheet(
             f"background-color: {ThemeManager.get_color('bg_surface')};"
             f"border-left: 1px solid {ThemeManager.get_color('border')};"

@@ -210,42 +210,26 @@ class PdfCanvas(QGraphicsView):
         # 空状态（无 PDF 时显示）
         self._show_empty_state()
         self._layout_overlays()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     # ------------------------------------------------------------------
     # UI 搭建（主题化）
     # ------------------------------------------------------------------
     def _setup_ui(self):
         """初始化主题化背景与覆盖层控件（空状态/缩放标签/浮动工具栏/尺寸提示）"""
-        # 设置背景（ThemeManager，支持暗色主题）
-        self.setStyleSheet(
-            f"background-color: {ThemeManager.get_color('bg_primary')};"
-        )
-        self.scene_.setBackgroundBrush(QColor(ThemeManager.get_color('bg_primary')))
-
-        # 空状态（'no_preview' 变体）
+        # 空状态（'no_preview' 变体；自身注册刷新回调）
         self.empty_state = EmptyState('no_preview', self.viewport())
         self.empty_state.setVisible(True)
 
         # 缩放比例显示（右下角，点击恢复 100%）
         self.zoom_label = QLabel('100%', self.viewport())
-        self.zoom_label.setStyleSheet(f"""
-            background-color: {ThemeManager.get_color('bg_surface')};
-            color: {ThemeManager.get_color('text_secondary')};
-            border-radius: {ThemeManager.get_radius('sm')}px;
-            padding: 2px 6px;
-            font-size: 11px;
-        """)
         self.zoom_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.zoom_label.setVisible(False)
         self.zoom_label.installEventFilter(self)
 
         # 浮动工具栏（悬停显示）
         self.floating_toolbar = _FloatingToolbar(self.viewport())
-        self.floating_toolbar.setStyleSheet(f"""
-            background-color: {ThemeManager.get_color('bg_surface')};
-            border: 1px solid {ThemeManager.get_color('border')};
-            border-radius: {ThemeManager.get_radius('md')}px;
-        """)
         self.floating_toolbar.setVisible(False)
         self.floating_toolbar.hovered.connect(self._on_toolbar_hovered)
 
@@ -253,9 +237,8 @@ class PdfCanvas(QGraphicsView):
         self._btn_zoom_out = QPushButton('缩小', self.floating_toolbar)
         self._btn_fit = QPushButton('适应窗口', self.floating_toolbar)
         self._btn_reset = QPushButton('100%', self.floating_toolbar)
-        for btn in (self._btn_zoom_in, self._btn_zoom_out,
-                    self._btn_fit, self._btn_reset):
-            self._style_toolbar_button(btn)
+        self._toolbar_buttons = (self._btn_zoom_in, self._btn_zoom_out,
+                                 self._btn_fit, self._btn_reset)
         self._btn_zoom_in.clicked.connect(lambda: self._zoom_by(1.15))
         self._btn_zoom_out.clicked.connect(lambda: self._zoom_by(1 / 1.15))
         self._btn_fit.clicked.connect(self._fit_to_view)
@@ -264,8 +247,7 @@ class PdfCanvas(QGraphicsView):
         layout = QHBoxLayout(self.floating_toolbar)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
-        for btn in (self._btn_zoom_in, self._btn_zoom_out,
-                    self._btn_fit, self._btn_reset):
+        for btn in self._toolbar_buttons:
             layout.addWidget(btn)
 
         # 浮动工具栏延迟隐藏定时器（移出画布/工具栏后延迟隐藏，避免悬停闪烁）
@@ -275,13 +257,6 @@ class PdfCanvas(QGraphicsView):
 
         # 区域尺寸提示标签（框选/调整时显示，透明鼠标事件）
         self._size_label = QLabel(self.viewport())
-        self._size_label.setStyleSheet(f"""
-            background-color: {ThemeManager.get_color('primary')};
-            color: {ThemeManager.get_color('white')};
-            border-radius: {ThemeManager.get_radius('sm')}px;
-            padding: 2px 6px;
-            font-size: 11px;
-        """)
         self._size_label.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._size_label.setVisible(False)
@@ -289,6 +264,59 @@ class PdfCanvas(QGraphicsView):
         # 视口鼠标事件过滤（浮动工具栏边缘悬停显隐/缩放标签点击）
         self.viewport().setMouseTracking(True)
         self.viewport().installEventFilter(self)
+
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS 与主题色（Task 15：ThemeManager.set_theme 后调用）
+
+        覆盖：视图背景 + 场景背景刷、缩放标签、浮动工具栏、尺寸提示、
+        浮动工具栏按钮、场景中已创建的 ResizeHandle（画笔/画刷主题色）。
+        区域框线颜色为区域固有颜色（随机区分色），与主题无关。
+        """
+        # 视图与场景背景
+        self.setStyleSheet(
+            f"background-color: {ThemeManager.get_color('bg_primary')};"
+        )
+        self.scene_.setBackgroundBrush(QColor(ThemeManager.get_color('bg_primary')))
+
+        # 缩放比例标签
+        self.zoom_label.setStyleSheet(f"""
+            background-color: {ThemeManager.get_color('bg_surface')};
+            color: {ThemeManager.get_color('text_secondary')};
+            border-radius: {ThemeManager.get_radius('sm')}px;
+            padding: 2px 6px;
+            font-size: 11px;
+        """)
+
+        # 浮动工具栏容器
+        self.floating_toolbar.setStyleSheet(f"""
+            background-color: {ThemeManager.get_color('bg_surface')};
+            border: 1px solid {ThemeManager.get_color('border')};
+            border-radius: {ThemeManager.get_radius('md')}px;
+        """)
+
+        # 浮动工具栏按钮
+        for btn in self._toolbar_buttons:
+            self._style_toolbar_button(btn)
+
+        # 区域尺寸提示
+        self._size_label.setStyleSheet(f"""
+            background-color: {ThemeManager.get_color('primary')};
+            color: {ThemeManager.get_color('white')};
+            border-radius: {ThemeManager.get_radius('sm')}px;
+            padding: 2px 6px;
+            font-size: 11px;
+        """)
+
+        # 场景中已创建的手柄（新手柄在创建时即用当前主题色）
+        handle_brush = QColor(ThemeManager.get_color('primary'))
+        handle_pen = QPen(QColor(ThemeManager.get_color('white')), 2)
+        for item in self.scene_.items():
+            if isinstance(item, ResizeHandle):
+                item.setBrush(handle_brush)
+                item.setPen(handle_pen)
 
     def _style_toolbar_button(self, btn: QPushButton):
         """应用浮动工具栏按钮样式（主题化）"""

@@ -39,6 +39,8 @@ class ResultPanel(QWidget):
         self._page_result = None
         self._finance_result = None
         self._init_ui()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -49,23 +51,6 @@ class ResultPanel(QWidget):
         self.tab_bar = QTabBar()
         for label in TAB_LABELS:
             self.tab_bar.addTab(label)
-        self.tab_bar.setStyleSheet(f"""
-            QTabBar::tab {{
-                background-color: {ThemeManager.get_color('bg_surface')};
-                color: {ThemeManager.get_color('text_secondary')};
-                padding: {ThemeManager.get_spacing('sm')}px
-                         {ThemeManager.get_spacing('md')}px;
-                border: none;
-                border-bottom: 2px solid transparent;
-            }}
-            QTabBar::tab:selected {{
-                color: {ThemeManager.get_color('primary')};
-                border-bottom: 2px solid {ThemeManager.get_color('primary')};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background-color: {ThemeManager.get_color('bg_hover')};
-            }}
-        """)
         layout.addWidget(self.tab_bar)
 
         # 内容区（堆叠视图）
@@ -100,6 +85,34 @@ class ResultPanel(QWidget):
 
         # 导出按钮
         self.export_btn = QPushButton("📥 导出")
+        self.export_btn.clicked.connect(self._on_export)
+        layout.addWidget(self.export_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+        # 标签页切换联动内容区
+        self.tab_bar.currentChanged.connect(self._on_tab_changed)
+
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用）"""
+        self.tab_bar.setStyleSheet(f"""
+            QTabBar::tab {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                color: {ThemeManager.get_color('text_secondary')};
+                padding: {ThemeManager.get_spacing('sm')}px
+                         {ThemeManager.get_spacing('md')}px;
+                border: none;
+                border-bottom: 2px solid transparent;
+            }}
+            QTabBar::tab:selected {{
+                color: {ThemeManager.get_color('primary')};
+                border-bottom: 2px solid {ThemeManager.get_color('primary')};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+        """)
         self.export_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {ThemeManager.get_color('primary')};
@@ -113,11 +126,6 @@ class ResultPanel(QWidget):
                 background-color: {ThemeManager.get_color('primary_hover')};
             }}
         """)
-        self.export_btn.clicked.connect(self._on_export)
-        layout.addWidget(self.export_btn, alignment=Qt.AlignmentFlag.AlignRight)
-
-        # 标签页切换联动内容区
-        self.tab_bar.currentChanged.connect(self._on_tab_changed)
 
     # ---------- 视图切换 ----------
 

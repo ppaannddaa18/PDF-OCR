@@ -25,16 +25,14 @@ class CompactToolbar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._icon_buttons = []  # 主题化图标按钮（apply_theme 时重建 QSS）
+        self._separators = []    # 主题化分隔线（apply_theme 时重建 QSS）
         self._setup_ui()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _setup_ui(self):
         self.setFixedHeight(36)
-        self.setStyleSheet(f"""
-            CompactToolbar {{
-                background-color: {ThemeManager.get_color('bg_surface')};
-                border-bottom: 1px solid {ThemeManager.get_color('border')};
-            }}
-        """)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(
@@ -72,14 +70,6 @@ class CompactToolbar(QWidget):
         self.engine_combo = QComboBox()
         self.engine_combo.addItems(self.ENGINE_OPTIONS)
         self.engine_combo.setFixedWidth(120)
-        self.engine_combo.setStyleSheet(f"""
-            QComboBox {{
-                border: 1px solid {ThemeManager.get_color('border')};
-                border-radius: {ThemeManager.get_radius('sm')}px;
-                padding: 2px 4px;
-                font-size: 12px;
-            }}
-        """)
         self.engine_combo.currentTextChanged.connect(self.engine_changed.emit)
         layout.addWidget(self.engine_combo)
 
@@ -92,7 +82,29 @@ class CompactToolbar(QWidget):
         help_btn = QPushButton('?')
         help_btn.setFixedSize(24, 24)
         help_btn.setToolTip('快捷键帮助 (F1)')
-        help_btn.setStyleSheet(f"""
+        layout.addWidget(help_btn)
+        self._help_btn = help_btn
+
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用）"""
+        self.setStyleSheet(f"""
+            CompactToolbar {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                border-bottom: 1px solid {ThemeManager.get_color('border')};
+            }}
+        """)
+        self.engine_combo.setStyleSheet(f"""
+            QComboBox {{
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: {ThemeManager.get_radius('sm')}px;
+                padding: 2px 4px;
+                font-size: 12px;
+            }}
+        """)
+        self._help_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
                 color: {ThemeManager.get_color('text_secondary')};
@@ -106,7 +118,25 @@ class CompactToolbar(QWidget):
                 color: {ThemeManager.get_color('text_primary')};
             }}
         """)
-        layout.addWidget(help_btn)
+        for btn in self._icon_buttons:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    border: none;
+                    border-radius: {ThemeManager.get_radius('sm')}px;
+                    font-size: 14px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ThemeManager.get_color('bg_hover')};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ThemeManager.get_color('bg_selected')};
+                }}
+            """)
+        for separator in self._separators:
+            separator.setStyleSheet(
+                f"background-color: {ThemeManager.get_color('border')};"
+            )
 
     def _create_icon_button(self, layout, icon: str, tooltip: str, signal):
         """创建图标按钮"""
@@ -114,22 +144,9 @@ class CompactToolbar(QWidget):
         btn.setFixedSize(28, 28)
         btn.setToolTip(tooltip)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-radius: {ThemeManager.get_radius('sm')}px;
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('bg_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('bg_selected')};
-            }}
-        """)
         btn.clicked.connect(signal.emit)
         layout.addWidget(btn)
+        self._icon_buttons.append(btn)
         return btn
 
     def _add_separator(self, layout):
@@ -137,10 +154,8 @@ class CompactToolbar(QWidget):
         separator = QWidget()
         separator.setFixedWidth(1)
         separator.setFixedHeight(20)
-        separator.setStyleSheet(
-            f"background-color: {ThemeManager.get_color('border')};"
-        )
         layout.addWidget(separator)
+        self._separators.append(separator)
 
     def set_engine_status(self, engine: str, status: str):
         """设置引擎状态

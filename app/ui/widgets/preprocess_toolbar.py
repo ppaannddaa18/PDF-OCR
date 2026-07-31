@@ -61,7 +61,10 @@ class ImagePreprocessToolbar(QWidget):
         super().__init__(parent)
         self._expanded = False
         self._animations = []  # 保留动画引用，防止被 Python GC 回收导致动画不运行（Task 4 模式）
+        self._theme_buttons = []  # (btn, font_size) 主题化工具按钮（apply_theme 时重建 QSS）
         self._init_ui()
+        # Task 15：主题切换后由 ThemeManager 触发重建 QSS
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _init_ui(self):
         # 初始为折叠态：最小/最大高度均锁定为折叠高度（不用 setFixedHeight，与高度动画兼容）
@@ -77,13 +80,6 @@ class ImagePreprocessToolbar(QWidget):
         )
         layout.setSpacing(6)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-
-        # 工具栏底色（类选择器限定自身，避免样式级联影响 qfluentwidgets 子控件）
-        self.setStyleSheet(
-            f"ImagePreprocessToolbar {{"
-            f"background-color: {ThemeManager.get_color('bg_surface')};"
-            f"}}"
-        )
 
         # 展开/折叠按钮（始终可见，仅此按钮切换展开状态）
         self.expand_btn = self._build_tool_button(
@@ -109,6 +105,9 @@ class ImagePreprocessToolbar(QWidget):
 
         layout.addStretch()
 
+        # 构造时烘焙样式（可安全重复执行）
+        self.apply_theme()
+
         # 当前参数
         self._current_params = {
             'rotation': 0,
@@ -125,6 +124,13 @@ class ImagePreprocessToolbar(QWidget):
         btn.setFixedSize(24, 24)
         btn.setToolTip(tooltip)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(handler)
+        self._theme_buttons.append((btn, font_size))
+        self._apply_tool_button_style(btn, font_size)
+        return btn
+
+    def _apply_tool_button_style(self, btn: QPushButton, font_size: int):
+        """应用工具按钮主题样式"""
         btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
@@ -138,8 +144,28 @@ class ImagePreprocessToolbar(QWidget):
                 color: {ThemeManager.get_color('text_primary')};
             }}
         """)
-        btn.clicked.connect(handler)
-        return btn
+
+    def apply_theme(self):
+        """重建全部内嵌 QSS（Task 15：ThemeManager.set_theme 后调用）
+
+        覆盖：工具栏底色、全部图标工具按钮（展开/折叠 + 4 个快捷按钮）、
+        btn_reset 的 qtawesome 图标颜色（构造时烘焙，需重建图标）。
+        展开态详细控件（ComboBox/PushButton/BodyLabel）为 qfluentwidgets
+        组件，由 qfluentwidgets 自身主题（setTheme）接管。
+        """
+        self.setStyleSheet(
+            f"ImagePreprocessToolbar {{"
+            f"background-color: {ThemeManager.get_color('bg_surface')};"
+            f"}}"
+        )
+        for btn, font_size in self._theme_buttons:
+            self._apply_tool_button_style(btn, font_size)
+        btn_reset = getattr(self, 'btn_reset', None)
+        if btn_reset is not None:
+            btn_reset.setIcon(
+                _get_qta().icon('fa5s.undo',
+                                color=ThemeManager.get_color('text_secondary'))
+            )
 
     def _build_detail_controls(self):
         """构建展开态详细控件（保留全部既有功能与信号）"""

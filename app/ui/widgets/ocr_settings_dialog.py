@@ -16,6 +16,7 @@ from qfluentwidgets import (
 import copy
 
 from app.ui.animation_manager import AnimationManager
+from app.ui.theme_manager import ThemeManager
 
 
 class OcrSettingsDialog(QDialog):
@@ -24,12 +25,18 @@ class OcrSettingsDialog(QDialog):
     # 信号：设置已应用
     settings_applied = Signal(dict)
 
+    # 主题模式（与 config appearance.theme 取值一致）
+    THEME_OPTIONS = ['light', 'dark', 'auto']
+    THEME_LABELS = ['浅色', '深色', '跟随系统']
+
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
         self._original_config = copy.deepcopy(config)
         self._config = copy.deepcopy(config)
         self._init_ui()
         self._load_settings()
+        # Task 15：主题切换后由 ThemeManager 触发重建本对话框内嵌 QSS
+        ThemeManager.register_refresh_callback(self._apply_theme_styles)
 
     def _init_ui(self):
         """初始化 UI"""
@@ -37,6 +44,10 @@ class OcrSettingsDialog(QDialog):
         self.setMinimumSize(600, 700)
         self.resize(650, 750)
         self.setModal(True)
+
+        # 主题化输入/滑块（Task 15：主题切换时重建 QSS）
+        self._theme_inputs = []   # QLineEdit（数值输入框）
+        self._theme_sliders = []  # QSlider（滑块）
 
         # 主布局
         main_layout = QVBoxLayout(self)
@@ -63,15 +74,42 @@ class OcrSettingsDialog(QDialog):
         title_layout.addStretch()
         content_layout.addLayout(title_layout)
 
-        # 提示文本
+        # 提示文本（颜色走 ThemeManager，主题切换时随 _apply_theme_styles 重建）
         hint = BodyLabel("设置变化将自动同步到当前 API")
-        hint.setStyleSheet("color: #999; font-size: 12px;")
+        hint.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_disabled')}; font-size: 12px;")
         content_layout.addWidget(hint)
+        self._hint_label = hint
 
         content_layout.addWidget(HorizontalSeparator())
 
         # ===== 外观设置 =====
         content_layout.addLayout(self._create_section_title("外观设置"))
+
+        # 主题选择（浅色/深色/跟随系统；选择即时生效）
+        theme_layout = QHBoxLayout()
+        theme_layout.setSpacing(16)
+        self.bg_theme = QButtonGroup(self)
+        self.rb_theme_light = RadioButton(self.THEME_LABELS[0])
+        self.rb_theme_dark = RadioButton(self.THEME_LABELS[1])
+        self.rb_theme_auto = RadioButton(self.THEME_LABELS[2])
+        self.bg_theme.addButton(self.rb_theme_light, 0)
+        self.bg_theme.addButton(self.rb_theme_dark, 1)
+        self.bg_theme.addButton(self.rb_theme_auto, 2)
+        theme_layout.addWidget(self.rb_theme_light)
+        theme_layout.addWidget(self.rb_theme_dark)
+        theme_layout.addWidget(self.rb_theme_auto)
+        theme_layout.addStretch()
+        content_layout.addLayout(theme_layout)
+
+        # 主题单选即时应用（checked=True 时触发；加载配置时 blockSignals 防副作用）
+        self.rb_theme_light.toggled.connect(
+            lambda checked: checked and self._on_theme_changed('light'))
+        self.rb_theme_dark.toggled.connect(
+            lambda checked: checked and self._on_theme_changed('dark'))
+        self.rb_theme_auto.toggled.connect(
+            lambda checked: checked and self._on_theme_changed('auto'))
+
         self.sw_animations = self._create_switch(
             "禁用动画",
             tooltip="关闭折叠、滑入滑出等界面动画，界面变化即时生效（尊重系统动画偏好）"
@@ -265,16 +303,6 @@ class OcrSettingsDialog(QDialog):
 
         self.btn_apply = PushButton("应用并重启")
         self.btn_apply.setFixedWidth(120)
-        self.btn_apply.setStyleSheet("""
-            PushButton {
-                background-color: #4a90d9;
-                color: white;
-                font-weight: bold;
-            }
-            PushButton:hover {
-                background-color: #3a7bc8;
-            }
-        """)
         self.btn_apply.clicked.connect(self._on_apply)
         btn_layout.addWidget(self.btn_apply)
 
@@ -284,6 +312,9 @@ class OcrSettingsDialog(QDialog):
         btn_layout.addWidget(self.btn_cancel)
 
         main_layout.addLayout(btn_layout)
+
+        # 构造时烘焙全部内嵌样式（btn_apply 等此时已创建，可安全重复执行）
+        self._apply_theme_styles()
 
     def _create_section_title(self, text: str) -> QHBoxLayout:
         """创建区域标题"""
@@ -336,39 +367,17 @@ class OcrSettingsDialog(QDialog):
         line_edit = QLineEdit()
         line_edit.setFixedWidth(80)
         line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        line_edit.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                padding: 4px 8px;
-                background: white;
-            }
-        """)
 
         # 滑块
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setMinimum(int(min_val / step))
         slider.setMaximum(int(max_val / step))
         slider.setValue(int(default / step))
-        slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                height: 6px;
-                background: #e0e0e0;
-                border-radius: 3px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #4a90d9;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                width: 16px;
-                height: 16px;
-                background: white;
-                border: 2px solid #4a90d9;
-                border-radius: 8px;
-                margin: -5px 0;
-            }
-        """)
+
+        # 主题化样式（_apply_theme_styles 会在主题切换时重建）
+        self._theme_inputs.append(line_edit)
+        self._theme_sliders.append(slider)
+        self._apply_theme_styles()
 
         # 同步数值和滑块
         def update_from_slider():
@@ -403,12 +412,98 @@ class OcrSettingsDialog(QDialog):
             "step": step
         }
 
+    def _on_theme_changed(self, theme: str):
+        """主题单选变化：立即应用（ThemeManager + qfluentwidgets 双轨同步）
+
+        'auto' 模式先解析系统主题，再设置 ThemeManager（解析结果）；
+        qfluentwidgets 侧设 Theme.AUTO 由库自身跟随系统。
+        顺序注意：先 setFluentTheme（qfluentwidgets 重排会覆盖其控件上的
+        内嵌 QSS，如本对话框 btn_apply 的自定义色），再 ThemeManager.set_theme
+        （触发全局刷新回调，含本对话框自身——烘焙颜色最后写入、生效）。
+        """
+        from qfluentwidgets import Theme as FluentTheme
+        from qfluentwidgets import setTheme as setFluentTheme
+        setFluentTheme({
+            'light': FluentTheme.LIGHT,
+            'dark': FluentTheme.DARK,
+            'auto': FluentTheme.AUTO,
+        }[theme])
+        effective = ThemeManager.resolve_theme(theme)
+        ThemeManager.set_theme(effective)
+
+    def _apply_theme_styles(self):
+        """重建本对话框内嵌 QSS（Task 15：ThemeManager.set_theme 后调用；
+        _create_slider_row 中途调用时部分控件尚未创建，需防御式访问）"""
+        hint = getattr(self, '_hint_label', None)
+        if hint is not None:
+            hint.setStyleSheet(
+                f"color: {ThemeManager.get_color('text_disabled')}; font-size: 12px;"
+            )
+        btn_apply = getattr(self, 'btn_apply', None)
+        if btn_apply is not None:
+            btn_apply.setStyleSheet(f"""
+                PushButton {{
+                    background-color: {ThemeManager.get_color('primary')};
+                    color: {ThemeManager.get_color('white')};
+                    font-weight: bold;
+                }}
+                PushButton:hover {{
+                    background-color: {ThemeManager.get_color('primary_hover')};
+                }}
+            """)
+        border = ThemeManager.get_color('border')
+        bg = ThemeManager.get_color('bg_surface')
+        primary = ThemeManager.get_color('primary')
+        for line_edit in self._theme_inputs:
+            line_edit.setStyleSheet(f"""
+                QLineEdit {{
+                    border: 1px solid {border};
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    background: {bg};
+                }}
+            """)
+        for slider in self._theme_sliders:
+            slider.setStyleSheet(f"""
+                QSlider::groove:horizontal {{
+                    height: 6px;
+                    background: {border};
+                    border-radius: 3px;
+                }}
+                QSlider::sub-page:horizontal {{
+                    background: {primary};
+                    border-radius: 3px;
+                }}
+                QSlider::handle:horizontal {{
+                    width: 16px;
+                    height: 16px;
+                    background: {bg};
+                    border: 2px solid {primary};
+                    border-radius: 8px;
+                    margin: -5px 0;
+                }}
+            """)
+
     def _load_settings(self):
         """从配置加载设置"""
         gguf_cfg = self._config.get("ocr", {}).get("gguf", {})
 
-        # 外观设置：appearance.animations_enabled（缺省启用）
+        # 外观设置：appearance.theme（缺省 auto 跟随系统）与
+        # appearance.animations_enabled（缺省启用）
         appearance = self._config.get("appearance", {})
+        theme = appearance.get("theme", "auto")
+        # 注意：QButtonGroup.blockSignals 只屏蔽组自身信号，radio 的 toggled
+        # 仍会触发 _on_theme_changed（打开对话框即应用主题）；须逐个 block
+        for rb in (self.rb_theme_light, self.rb_theme_dark, self.rb_theme_auto):
+            rb.blockSignals(True)
+        try:
+            self.bg_theme.button(self.THEME_OPTIONS.index(theme)).setChecked(True)
+        except ValueError:
+            # 配置含未知主题值：回退跟随系统
+            self.bg_theme.button(2).setChecked(True)
+        finally:
+            for rb in (self.rb_theme_light, self.rb_theme_dark, self.rb_theme_auto):
+                rb.blockSignals(False)
         self.sw_animations["switch"].setChecked(
             not appearance.get("animations_enabled", True)
         )
@@ -543,7 +638,8 @@ class OcrSettingsDialog(QDialog):
         # NMS 默认
         self.sw_nms.setChecked(True)
 
-        # 外观默认：动画启用
+        # 外观默认：主题跟随系统 + 动画启用
+        self.bg_theme.button(2).setChecked(True)
         self.sw_animations["switch"].setChecked(False)
 
         InfoBar.success(
@@ -565,5 +661,8 @@ class OcrSettingsDialog(QDialog):
         """获取配置补丁（用于合并到主配置）"""
         return {
             "ocr": {"gguf": self._get_settings()},
-            "appearance": {"animations_enabled": not self.sw_animations["switch"].isChecked()},
+            "appearance": {
+                "animations_enabled": not self.sw_animations["switch"].isChecked(),
+                "theme": self.THEME_OPTIONS[self.bg_theme.checkedId()],
+            },
         }
