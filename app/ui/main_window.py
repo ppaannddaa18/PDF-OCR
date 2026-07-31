@@ -107,6 +107,14 @@ class MainWindow(FluentWindow):
         # 设置主题（跟随系统）
         setTheme(Theme.AUTO)
 
+        # ThemeManager 主题（Task 7 接入；从配置读取 app.theme，默认 light）
+        from app.ui.theme_manager import ThemeManager
+        _theme = config.get("app", {}).get("theme", "light")
+        try:
+            ThemeManager.set_theme(_theme)
+        except ValueError:
+            ThemeManager.set_theme("light")
+
         # 创建加载遮罩层（在创建其他组件之前）
         self._create_loading_overlay()
 
@@ -149,6 +157,7 @@ class MainWindow(FluentWindow):
         self.results = []
         self.worker = None
         self.state_tooltip = None
+        self._last_engine_status = ("", "unavailable")  # GpuStatusWidget.status_changed 最新值
 
         # 字段配置存储：默认模板 + 特殊PDF的覆盖配置
         self._default_template = None  # 第一个PDF的字段配置作为默认
@@ -202,36 +211,125 @@ class MainWindow(FluentWindow):
             self._finance_processor = None
 
     def _setup_shortcuts(self):
-        """设置快捷键"""
+        """设置快捷键
+
+        协调者裁决：每个 QShortcut 创建后调用 setObjectName('<快捷键字符串>')，
+        对象名 = 快捷键字符串本身，供 Task 16 集成测试用
+        findChild(QShortcut, 'Ctrl+Shift+L') 验证快捷键绑定。
+        """
         from PyQt6.QtGui import QShortcut, QKeySequence
 
         # Ctrl+O: 上传PDF
         shortcut_upload = QShortcut(QKeySequence("Ctrl+O"), self)
+        shortcut_upload.setObjectName("Ctrl+O")
         shortcut_upload.activated.connect(self.on_upload)
 
         # Ctrl+S: 保存模板
         shortcut_save = QShortcut(QKeySequence("Ctrl+S"), self)
+        shortcut_save.setObjectName("Ctrl+S")
         shortcut_save.activated.connect(self.on_save_template)
 
         # Ctrl+Enter: 批量识别
         shortcut_batch = QShortcut(QKeySequence("Ctrl+Return"), self)
+        shortcut_batch.setObjectName("Ctrl+Return")
         shortcut_batch.activated.connect(self.on_batch_run)
 
         # Ctrl+T: 试识别
         shortcut_try = QShortcut(QKeySequence("Ctrl+T"), self)
+        shortcut_try.setObjectName("Ctrl+T")
         shortcut_try.activated.connect(self.on_try_ocr)
 
         # Delete: 删除选中字段（当字段表格有焦点时）
         shortcut_delete = QShortcut(QKeySequence("Delete"), self.field_panel)
+        shortcut_delete.setObjectName("Delete")
         shortcut_delete.activated.connect(self._delete_selected_field)
 
         # Ctrl+Z: 撤销
         shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        shortcut_undo.setObjectName("Ctrl+Z")
         shortcut_undo.activated.connect(self._undo)
 
         # Ctrl+Y: 重做
         shortcut_redo = QShortcut(QKeySequence("Ctrl+Y"), self)
+        shortcut_redo.setObjectName("Ctrl+Y")
         shortcut_redo.activated.connect(self._redo)
+
+        # Ctrl+Shift+L: 切换左侧面板
+        shortcut_left = QShortcut(QKeySequence("Ctrl+Shift+L"), self)
+        shortcut_left.setObjectName("Ctrl+Shift+L")
+        shortcut_left.activated.connect(self.left_panel.toggle)
+
+        # Ctrl+Shift+R: 切换右侧面板
+        shortcut_right = QShortcut(QKeySequence("Ctrl+Shift+R"), self)
+        shortcut_right.setObjectName("Ctrl+Shift+R")
+        shortcut_right.activated.connect(self._toggle_right_panel)
+
+        # Ctrl+Shift+N: 新建模板
+        shortcut_new = QShortcut(QKeySequence("Ctrl+Shift+N"), self)
+        shortcut_new.setObjectName("Ctrl+Shift+N")
+        shortcut_new.activated.connect(self._on_new_template)
+
+        # Space: 快速预览
+        shortcut_preview = QShortcut(QKeySequence("Space"), self)
+        shortcut_preview.setObjectName("Space")
+        shortcut_preview.activated.connect(self._on_quick_preview)
+
+    def _toggle_right_panel(self):
+        """Ctrl+Shift+R: 切换右侧面板"""
+        if self.right_panel.is_visible():
+            self.right_panel.slide_out()
+        else:
+            self.right_panel.slide_in()
+
+    def _on_new_template(self):
+        """Ctrl+Shift+N: 新建模板（清空当前字段配置，支持撤销）"""
+        regions = list(self.field_panel.regions.values())
+        ui = _get_ui_components()
+
+        def clear_regions():
+            self.field_panel.clear_all()
+            self.pdf_canvas.update_regions([])
+
+        def restore_regions(saved_regions):
+            self.field_panel.clear_all()
+            for r in saved_regions:
+                self.field_panel.add_region(r)
+            self.pdf_canvas.update_regions(saved_regions)
+
+        command = ui.ClearAllCommand(regions, clear_regions, restore_regions)
+        self.command_history.execute(command)
+        self._current_preview_result = None
+        self._set_template_name("未配置", is_default=False)
+        self.status_label.setText("已新建空白模板 - 在画布上拖拽框选区域")
+        InfoBar.success(
+            title="新建模板",
+            content="已创建空白模板，请框选识别区域",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2000,
+            parent=self
+        )
+
+    def _on_quick_preview(self):
+        """Space: 快速预览当前PDF（已有试识别结果则展示，否则给出提示）"""
+        if not self._current_pdf:
+            InfoBar.warning(
+                title="提示",
+                content="请先加载PDF文件",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+            return
+        from pathlib import Path
+        if self._current_preview_result:
+            self.field_panel.show_preview_result(self._current_preview_result)
+            self.status_label.setText(f"快速预览: {Path(self._current_pdf).name} - 试识别结果")
+        else:
+            self.status_label.setText(f"快速预览: {Path(self._current_pdf).name} - 按 Ctrl+T 试识别")
 
     def _delete_selected_field(self):
         """删除当前选中的字段"""
@@ -409,15 +507,77 @@ class MainWindow(FluentWindow):
         self.navigationInterface.setReturnButtonVisible(False)
 
     def _create_template_page(self) -> QWidget:
-        """创建模板编辑页面"""
+        """创建模板编辑页面
+
+        Task 7 重构：单层水平布局替代嵌套 QSplitter
+        （左 CollapsiblePanel | 中央工作区 | 右 SlidablePanel）
+        """
+        from PyQt6.QtWidgets import QPushButton
+        from app.ui.widgets.collapsible_panel import CollapsiblePanel
+        from app.ui.widgets.slidable_panel import SlidablePanel
+        from app.ui.widgets.compact_toolbar import CompactToolbar
+        from app.ui.widgets.layout_visualizer import LayoutVisualizer
+
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # 顶部工具栏
-        toolbar = self._create_toolbar()
-        layout.addWidget(toolbar)
+        # ── 工具栏容器：CompactToolbar + VLM 解析按钮 ──
+        toolbar_container = QWidget()
+        toolbar_layout = QHBoxLayout(toolbar_container)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setSpacing(4)
+
+        self.toolbar = CompactToolbar()
+        self.toolbar.upload_clicked.connect(self.on_upload)
+        self.toolbar.test_ocr_clicked.connect(self.on_try_ocr)
+        self.toolbar.batch_ocr_clicked.connect(self.on_batch_run)
+        self.toolbar.save_template_clicked.connect(self.on_save_template)
+        self.toolbar.load_template_clicked.connect(self.on_load_template)
+        self.toolbar.settings_clicked.connect(self._on_settings_clicked)
+        self.toolbar.engine_changed.connect(self._on_toolbar_engine_changed)
+        toolbar_layout.addWidget(self.toolbar, 1)
+
+        # 解析按钮 — 仅 VLM 模式显示（CompactToolbar 之外的补充按钮）
+        self._btn_parse = QPushButton("解析")
+        self._btn_parse.setToolTip("解析当前页面 (VLM 模式)")
+        self._btn_parse.setFixedHeight(28)
+        self._btn_parse.clicked.connect(self._on_parse_current_page)
+        self._btn_parse.hide()  # 默认隐藏，VLM模式显示
+        toolbar_layout.addWidget(self._btn_parse)
+
+        # 引擎/GPU 状态别名（兼容既有引用：_on_engine_switched / _on_ocr_ready / closeEvent）
+        self.engine_combo = self.toolbar.engine_combo
+        self.gpu_status = self.toolbar.engine_status
+
+        # 根据当前配置同步引擎下拉框（防止初始化时触发切换）
+        current_engine = self.config.get("ocr", {}).get("engine", "gguf")
+        current_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
+        if current_engine == "gguf" and current_device == "gpu":
+            current_idx = 0
+        elif current_engine == "gguf" and current_device == "cpu":
+            current_idx = 1
+        else:
+            current_idx = 2
+        self.engine_combo.blockSignals(True)
+        self.engine_combo.setCurrentIndex(current_idx)
+        self.engine_combo.blockSignals(False)
+
+        # 定位 CompactToolbar 内部的试识别/批量识别按钮（模式切换时显示/隐藏）
+        for btn in self.toolbar.findChildren(QPushButton):
+            tip = btn.toolTip()
+            if tip == '试识别 (Ctrl+T)' and not hasattr(self, '_btn_try'):
+                self._btn_try = btn
+            elif tip == '批量识别 (Ctrl+Enter)' and not hasattr(self, '_btn_batch'):
+                self._btn_batch = btn
+
+        # 引擎状态桥接（GpuStatusWidget.status_changed 信号：
+        # _refresh 发小写 engine_name，set_engine_status 发显示名；
+        # Task 13 状态栏重构时将消费该信号）
+        self.gpu_status.status_changed.connect(self._on_gpu_status_changed)
+
+        layout.addWidget(toolbar_container)
 
         # 进度条区域（默认隐藏）
         self.progress_widget = QWidget()
@@ -431,41 +591,27 @@ class MainWindow(FluentWindow):
         self.progress_widget.setVisible(False)
         layout.addWidget(self.progress_widget)
 
-        # 主内容区（三栏布局）
+        # ── 主内容区：单层水平布局（左 CollapsiblePanel | 中央工作区 | 右 SlidablePanel） ──
         content = QWidget()
         content_layout = QHBoxLayout(content)
         content_layout.setSpacing(0)
         content_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 使用 QSplitter 实现可拖拽调整
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # 左栏：文件列表（包含标题）
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(4)
-
-        from qfluentwidgets import SubtitleLabel
         ui = _get_ui_components()
-        file_title = SubtitleLabel("文件列表")
-        left_layout.addWidget(file_title)
 
+        # 左侧面板（可折叠 240 ↔ 48，内容为现有 FileListPanel）
+        self.left_panel = CollapsiblePanel(expanded_width=240, collapsed_width=48)
         self.file_panel = ui.FileListPanel()
-        self.file_panel.setMinimumWidth(220)
-        self.file_panel.setMaximumWidth(400)
-        left_layout.addWidget(self.file_panel, 1)
+        self.left_panel.set_content(self.file_panel)
+        content_layout.addWidget(self.left_panel)
 
-        # 中栏：PDF 画布
-        canvas_container = QWidget()
-        canvas_layout = QVBoxLayout(canvas_container)
-        canvas_layout.setContentsMargins(0, 0, 0, 0)
-        canvas_layout.setSpacing(4)
+        # 中央工作区
+        self.workspace = QWidget()
+        workspace_layout = QVBoxLayout(self.workspace)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(0)
 
-        canvas_title = SubtitleLabel("PDF 预览")
-        canvas_layout.addWidget(canvas_title)
-
-        # 图像预处理工具栏
+        # 图像预处理工具栏（Task 10 将重构）
         self.preprocess_toolbar = ui.ImagePreprocessToolbar()
         self.preprocess_toolbar.setEnabled(False)
         self.preprocess_toolbar.image_changed.connect(self._on_preprocess_changed)
@@ -473,23 +619,21 @@ class MainWindow(FluentWindow):
         self.preprocess_toolbar.reset_requested.connect(self._on_preprocess_reset)
         self.preprocess_toolbar.apply_auto_contrast.connect(self._on_preprocess_auto_contrast)  # [修复]
         self.preprocess_toolbar.apply_sharpen.connect(self._on_preprocess_sharpen)  # [修复]
-        canvas_layout.addWidget(self.preprocess_toolbar)
+        workspace_layout.addWidget(self.preprocess_toolbar)
+
+        # PDF 画布 + 版面可视化（VLM 模式 block 覆盖层；普通水平布局替代子 splitter）
+        canvas_area = QWidget()
+        canvas_area_layout = QHBoxLayout(canvas_area)
+        canvas_area_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_area_layout.setSpacing(0)
 
         self.pdf_canvas = ui.PdfCanvas()
-        canvas_layout.addWidget(self.pdf_canvas, 1)
+        canvas_area_layout.addWidget(self.pdf_canvas, 1)
 
-        # 版面可视化（VLM自动模式下的block覆盖层）
-        from app.ui.widgets.layout_visualizer import LayoutVisualizer
         self._layout_view = LayoutVisualizer()
         self._layout_view.setMinimumWidth(200)
         self._layout_view.hide()  # 默认隐藏，VLM模式显示
-
-        # 中间区域子 splitter（PDF 画布 + 版面可视化）
-        middle_splitter = QSplitter(Qt.Orientation.Horizontal)
-        middle_splitter.addWidget(canvas_container)
-        middle_splitter.addWidget(self._layout_view)
-        middle_splitter.setStretchFactor(0, 3)
-        middle_splitter.setStretchFactor(1, 2)
+        canvas_area_layout.addWidget(self._layout_view)
 
         # 滚动同步：pdf_canvas <-> layout_visualizer
         self.pdf_canvas.verticalScrollBar().valueChanged.connect(
@@ -499,15 +643,23 @@ class MainWindow(FluentWindow):
             self.pdf_canvas.verticalScrollBar().setValue
         )
 
-        # 右栏：字段配置 / 解析结果（根据模式动态切换）
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(4)
+        workspace_layout.addWidget(canvas_area, 1)
 
-        # 标题（根据模式动态切换）
-        self._right_title = SubtitleLabel("字段配置")
-        right_layout.addWidget(self._right_title)
+        # 底部状态栏（Task 13 将重构为 StatusBar 组件）
+        status_bar = self._create_status_bar()
+        workspace_layout.addWidget(status_bar)
+
+        content_layout.addWidget(self.workspace, 1)
+
+        # 右侧面板（可滑动 320，内容 = 模板信息 + 字段/结果切换栈）
+        self.right_panel = SlidablePanel(panel_width=320)
+        self._right_title = self.right_panel.title_label
+        self._right_title.setText("字段配置")
+
+        right_content = QWidget()
+        right_content_layout = QVBoxLayout(right_content)
+        right_content_layout.setContentsMargins(0, 0, 0, 0)
+        right_content_layout.setSpacing(4)
 
         # 模板信息区域（仅手动模式显示）
         self._template_info_widget = QWidget()
@@ -531,7 +683,7 @@ class MainWindow(FluentWindow):
         line = HorizontalSeparator(self)
         template_info_layout.addWidget(line)
 
-        right_layout.addWidget(self._template_info_widget)
+        right_content_layout.addWidget(self._template_info_widget)
 
         # 使用 QStackedWidget 切换手动/自动面板
         self._right_content_stack = QStackedWidget()
@@ -539,38 +691,17 @@ class MainWindow(FluentWindow):
         # 页0：字段面板（手动模式）
         self.field_panel = ui.FieldPanel()
         self.field_panel.setMinimumWidth(320)
-        self.field_panel.setMaximumWidth(450)
         self._right_content_stack.addWidget(self.field_panel)
 
         # 页1：结果面板（自动模式）
         self._result_panel = ui.ResultPanel()
         self._right_content_stack.addWidget(self._result_panel)
 
-        right_layout.addWidget(self._right_content_stack, 1)
+        right_content_layout.addWidget(self._right_content_stack, 1)
+        self.right_panel.set_content(right_content)
+        content_layout.addWidget(self.right_panel)
 
-        # 添加到 splitter
-        splitter.addWidget(left_panel)
-        splitter.addWidget(middle_splitter)
-        splitter.addWidget(right_panel)
-
-        # 设置初始比例 (左:中:右 = 1:4:1.5)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 4)
-        splitter.setStretchFactor(2, 2)
-
-        # 设置初始大小
-        total_width = self.width()
-        left_width = max(220, int(total_width * 0.15))
-        right_width = max(300, int(total_width * 0.22))
-        middle_width = total_width - left_width - right_width - 20
-        splitter.setSizes([left_width, middle_width, right_width])
-
-        content_layout.addWidget(splitter, 1)
         layout.addWidget(content, 1)
-
-        # 底部状态栏
-        status_bar = self._create_status_bar()
-        layout.addWidget(status_bar)
 
         return page
 
@@ -782,125 +913,20 @@ class MainWindow(FluentWindow):
 
         return bar
 
-    def _create_toolbar(self) -> QWidget:
-        """创建 Fluent 风格工具栏"""
-        toolbar = QWidget()
-        toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(4, 3, 4, 3)
-        toolbar_layout.setSpacing(6)
+    def _on_toolbar_engine_changed(self, label: str):
+        """CompactToolbar 引擎选择变更（信号携带显示名标签）→ 委托既有引擎切换逻辑"""
+        index = {"GGUF (GPU)": 0, "GGUF (CPU)": 1, "RapidOCR (CPU)": 2}.get(label, -1)
+        if index >= 0:
+            self._on_engine_switched(index)
 
-        # 上传按钮（带文字）
-        btn_upload = TransparentPushButton("上传 PDF", self)
-        btn_upload.setIcon(_icon('fa5s.file-upload'))
-        btn_upload.setMinimumWidth(105)
-        btn_upload.setToolTip("上传PDF文件 (Ctrl+O)")
-        btn_upload.clicked.connect(self.on_upload)
-        toolbar_layout.addWidget(btn_upload)
+    def _on_gpu_status_changed(self, engine: str, status: str):
+        """引擎状态变化记录（GpuStatusWidget.status_changed 信号）
 
-        toolbar_layout.addSpacing(4)
-
-        # 试识别按钮
-        self._btn_try = TransparentPushButton("试识别", self)
-        self._btn_try.setIcon(_icon('fa5s.search'))
-        self._btn_try.setMinimumWidth(85)
-        self._btn_try.setToolTip("试识别当前文件 (Ctrl+T)")
-        self._btn_try.clicked.connect(self.on_try_ocr)
-        toolbar_layout.addWidget(self._btn_try)
-
-        # 批量识别按钮
-        self._btn_batch = TransparentPushButton("批量识别", self)
-        self._btn_batch.setIcon(_icon('fa5s.play', color='#107c10'))
-        self._btn_batch.setMinimumWidth(95)
-        self._btn_batch.setToolTip("批量识别所有文件 (Ctrl+Enter)")
-        self._btn_batch.clicked.connect(self.on_batch_run)
-        toolbar_layout.addWidget(self._btn_batch)
-
-        # 解析按钮 — 仅VLM模式显示
-        self._btn_parse = PushButton("解析")
-        self._btn_parse.clicked.connect(self._on_parse_current_page)
-        self._btn_parse.hide()  # 默认隐藏，VLM模式显示
-        toolbar_layout.addWidget(self._btn_parse)
-
-        toolbar_layout.addSpacing(8)
-
-        # 分隔线
-        sep = QWidget()
-        sep.setFixedWidth(1)
-        sep.setFixedHeight(20)
-        sep.setStyleSheet("background: #e0e0e0;")
-        toolbar_layout.addWidget(sep)
-
-        toolbar_layout.addSpacing(8)
-
-        # 保存模板按钮
-        btn_save = TransparentPushButton("保存模板", self)
-        btn_save.setIcon(_icon('fa5s.save'))
-        btn_save.setMinimumWidth(95)
-        btn_save.setToolTip("保存当前字段配置 (Ctrl+S)")
-        btn_save.clicked.connect(self.on_save_template)
-        toolbar_layout.addWidget(btn_save)
-
-        # 加载模板按钮
-        btn_load = TransparentPushButton("加载模板", self)
-        btn_load.setIcon(_icon('fa5s.folder-open'))
-        btn_load.setMinimumWidth(95)
-        btn_load.setToolTip("加载已保存的模板")
-        btn_load.clicked.connect(self.on_load_template)
-        toolbar_layout.addWidget(btn_load)
-
-        toolbar_layout.addSpacing(8)
-
-        # 分隔线
-        sep2 = QWidget()
-        sep2.setFixedWidth(1)
-        sep2.setFixedHeight(20)
-        sep2.setStyleSheet("background: #e0e0e0;")
-        toolbar_layout.addWidget(sep2)
-
-        toolbar_layout.addSpacing(8)
-
-        # 引擎切换（三引擎）
-        from qfluentwidgets import ComboBox
-        self.engine_combo = ComboBox()
-        self.engine_combo.blockSignals(True)  # 防止初始化时触发切换
-        self.engine_combo.addItems([
-            "GGUF (GPU)",
-            "GGUF (CPU)",
-            "RapidOCR (CPU)",
-        ])
-        # 根据当前引擎设置默认选项
-        current_engine = self.config.get("ocr", {}).get("engine", "gguf")
-        current_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
-        if current_engine == "gguf" and current_device == "gpu":
-            current_idx = 0
-        elif current_engine == "gguf" and current_device == "cpu":
-            current_idx = 1
-        else:
-            current_idx = 2
-        self.engine_combo.setCurrentIndex(current_idx)
-        self.engine_combo.blockSignals(False)
-        self.engine_combo.currentIndexChanged.connect(self._on_engine_switched)
-        self.engine_combo.setMinimumWidth(170)
-        toolbar_layout.addWidget(self.engine_combo)
-
-        toolbar_layout.addSpacing(4)
-
-        # 设置按钮
-        self.settings_btn = PushButton("⚙️ 设置")
-        self.settings_btn.setFixedWidth(80)
-        self.settings_btn.setToolTip("打开 OCR 引擎设置")
-        self.settings_btn.clicked.connect(self._on_settings_clicked)
-        toolbar_layout.addWidget(self.settings_btn)
-
-        toolbar_layout.addSpacing(4)
-
-        # GPU 状态指示器
-        from app.ui.widgets.gpu_status import GpuStatusWidget
-        self.gpu_status = GpuStatusWidget()
-        toolbar_layout.addWidget(self.gpu_status)
-
-        toolbar_layout.addStretch()
-        return toolbar
+        注意：GpuStatusWidget._refresh 发射小写 engine_name（如 'gguf'），
+        而 set_engine_status 发射显示名（如 'GGUF'），消费方需兼容两种形式。
+        Task 13 重构状态栏时将消费此信号。
+        """
+        self._last_engine_status = (engine, status)
 
     def _connect_signals(self):
         self.file_panel.file_selected.connect(self.on_file_selected)
