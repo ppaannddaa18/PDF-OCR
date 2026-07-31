@@ -19,6 +19,7 @@
   连接缺失/映射错误都会导致断言失败
 """
 import pytest
+from PyQt6 import sip
 from PyQt6.QtGui import QShortcut
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
@@ -76,10 +77,11 @@ def _destroy_test_window(w):
        累积的事件循环负载会饿死 10ms 级动画（test_animation_manager
        注册表断言失败的顺序污染根因）。600ms 同时覆盖全部面板动画
        （折叠 300ms / 滑入滑出 250ms）自然结束并清理注册表；
-    3. AnimationManager.stop_all() + deleteLater + qWait(50)：
+    3. AnimationManager.stop_all() + deleteLater + 轮询自验证：
        兜底停止仍在运行的动画后显式销毁 C++ 窗口。deleteLater 走析构
        不走 closeEvent；DeferredDelete 需真实事件循环交付（processEvents
-       不交付，实测），qWait(50) 完成交付。
+       不交付，实测）。轮询等待交付完成并断言 sip.isdeleted(w)
+       —— 销毁失败在源头响亮报错，而非静默残留到后续测试。
     """
     app_inst = QApplication.instance()
     if app_inst is not None:
@@ -96,7 +98,18 @@ def _destroy_test_window(w):
     from app.ui.animation_manager import AnimationManager
     AnimationManager.stop_all()
     w.deleteLater()
-    QTest.qWait(50)
+    # 自验证（fix round 1）：「无残留窗口」是 teardown 的核心承诺，不能静默假设。
+    # 轮询等待 DeferredDelete 交付（固定 qWait 时长在 Qt 交付行为变化时
+    # 不可靠；本机 PyQt6 未暴露 QTest.qWaitUntil，用 qWait 轮询等价实现），
+    # 超时 → assert 在源头响亮失败，避免窗口泄漏被静默归因到无关的后续
+    # 测试（sip.isdeleted：C++ 对象已析构 ⇒ 必然不在
+    # QApplication.topLevelWidgets() 中）。
+    import time
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not sip.isdeleted(w):
+        QTest.qWait(20)
+    assert sip.isdeleted(w), \
+        "fixture 窗口未销毁：deleteLater + 2s 后 C++ 对象仍存活"
 
 
 class TestMainWindowCreation:
