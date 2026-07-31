@@ -1,10 +1,30 @@
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem, QGraphicsEllipseItem
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QImage, QFont, QCursor
-from PyQt6.QtCore import Qt, QRectF, pyqtSignal as Signal, QPointF
+"""PdfCanvas - PDF 预览画布（Task 9 重构版）
+
+Task 9 增强内容：
+- 背景色/控件配色统一走 ThemeManager（支持暗色主题，去除硬编码 #fafafa 等）
+- 空状态集成统一 EmptyState 组件（'no_preview' 变体）
+- 右下角缩放比例标签（点击恢复 100%）
+- 悬停显示的浮动工具栏（放大 / 缩小 / 适应窗口 / 100%）
+- 框选/调整大小时显示区域尺寸提示（宽×高 px）
+- 框选起始/结束点 10px 网格吸附（仅新建区域，移动/调整既有区域保持精确行为）
+
+对外接口保持不变：region_drawn / region_updated / region_selected 信号，
+load_image / clear / update_regions / update_region / remove_region / get_region /
+set_drawing_enabled / regions_data / region_items 等。
+"""
+from PyQt6.QtWidgets import (
+    QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsEllipseItem,
+    QLabel, QWidget, QPushButton, QHBoxLayout,
+)
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QImage
+from PyQt6.QtCore import Qt, QRectF, QPointF, QEvent, QTimer, pyqtSignal as Signal
 from PIL import Image
 import uuid
 import random
+
 from app.models.region import Region
+from app.ui.theme_manager import ThemeManager
+from app.ui.widgets.empty_state import EmptyState
 
 
 # 预定义的明显区分颜色列表
@@ -25,6 +45,12 @@ DISTINCT_COLORS = [
 
 # 调整手柄大小
 HANDLE_SIZE = 8
+
+# 网格吸附尺寸（像素）
+GRID_SIZE = 10
+
+# 浮动工具栏隐藏延迟（鼠标移出画布/工具栏后毫秒）
+FLOATING_TOOLBAR_HIDE_DELAY_MS = 200
 
 
 def get_random_color(used_colors: set = None) -> str:
@@ -50,8 +76,8 @@ class ResizeHandle(QGraphicsEllipseItem):
         super().__init__(-size/2, -size/2, size, size, parent)
         self.setPos(x, y)
         self.handle_type = handle_type  # 'tl', 'tr', 'bl', 'br' 或 'move'
-        self.setBrush(QColor("#0078d4"))
-        self.setPen(QPen(QColor("#fff"), 2))
+        self.setBrush(QColor(ThemeManager.get_color('primary')))
+        self.setPen(QPen(QColor(ThemeManager.get_color('white')), 2))
         self.setZValue(100)
         self.setCursor(self._get_cursor())
 
@@ -115,6 +141,23 @@ class SelectableRectItem(QGraphicsRectItem):
         self.handles[4].setPos(rect.center().x(), rect.center().y())  # move
 
 
+class _FloatingToolbar(QWidget):
+    """浮动工具栏 - 悬停显示；鼠标进入/离开通过信号通知 PdfCanvas 控制显隐"""
+    hovered = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.hovered.emit(True)
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.hovered.emit(False)
+
+
 class PdfCanvas(QGraphicsView):
     region_drawn = Signal(object)          # 用户完成框选 -> Region
     region_updated = Signal(str, object)   # 区域更新 -> (region_id, Region)
@@ -126,7 +169,7 @@ class PdfCanvas(QGraphicsView):
         self.setScene(self.scene_)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
-        self.setStyleSheet("background: #fafafa;")
+        self._setup_ui()
 
         self.pixmap_item = None
         self.img_w = 0
@@ -159,52 +202,283 @@ class PdfCanvas(QGraphicsView):
         # VLM模式下禁用框选
         self._drawing_enabled = True
 
-        # 空状态提示
-        self.empty_text = None
+        # 空状态（无 PDF 时显示）
         self._show_empty_state()
+        self._layout_overlays()
 
+    # ------------------------------------------------------------------
+    # UI 搭建（主题化）
+    # ------------------------------------------------------------------
+    def _setup_ui(self):
+        """初始化主题化背景与覆盖层控件（空状态/缩放标签/浮动工具栏/尺寸提示）"""
+        # 设置背景（ThemeManager，支持暗色主题）
+        self.setStyleSheet(
+            f"background-color: {ThemeManager.get_color('bg_primary')};"
+        )
+        self.scene_.setBackgroundBrush(QColor(ThemeManager.get_color('bg_primary')))
+
+        # 空状态（'no_preview' 变体）
+        self.empty_state = EmptyState('no_preview', self.viewport())
+        self.empty_state.setVisible(True)
+
+        # 缩放比例显示（右下角，点击恢复 100%）
+        self.zoom_label = QLabel('100%', self.viewport())
+        self.zoom_label.setStyleSheet(f"""
+            background-color: {ThemeManager.get_color('bg_surface')};
+            color: {ThemeManager.get_color('text_secondary')};
+            border-radius: {ThemeManager.get_radius('sm')}px;
+            padding: 2px 6px;
+            font-size: 11px;
+        """)
+        self.zoom_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.zoom_label.setVisible(False)
+        self.zoom_label.installEventFilter(self)
+
+        # 浮动工具栏（悬停显示）
+        self.floating_toolbar = _FloatingToolbar(self.viewport())
+        self.floating_toolbar.setStyleSheet(f"""
+            background-color: {ThemeManager.get_color('bg_surface')};
+            border: 1px solid {ThemeManager.get_color('border')};
+            border-radius: {ThemeManager.get_radius('md')}px;
+        """)
+        self.floating_toolbar.setVisible(False)
+        self.floating_toolbar.hovered.connect(self._on_toolbar_hovered)
+
+        self._btn_zoom_in = QPushButton('放大', self.floating_toolbar)
+        self._btn_zoom_out = QPushButton('缩小', self.floating_toolbar)
+        self._btn_fit = QPushButton('适应窗口', self.floating_toolbar)
+        self._btn_reset = QPushButton('100%', self.floating_toolbar)
+        for btn in (self._btn_zoom_in, self._btn_zoom_out,
+                    self._btn_fit, self._btn_reset):
+            self._style_toolbar_button(btn)
+        self._btn_zoom_in.clicked.connect(lambda: self._zoom_by(1.15))
+        self._btn_zoom_out.clicked.connect(lambda: self._zoom_by(1 / 1.15))
+        self._btn_fit.clicked.connect(self._fit_to_view)
+        self._btn_reset.clicked.connect(self.reset_zoom)
+
+        layout = QHBoxLayout(self.floating_toolbar)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+        for btn in (self._btn_zoom_in, self._btn_zoom_out,
+                    self._btn_fit, self._btn_reset):
+            layout.addWidget(btn)
+
+        # 浮动工具栏延迟隐藏定时器（移出画布/工具栏后延迟隐藏，避免悬停闪烁）
+        self._toolbar_hide_timer = QTimer(self)
+        self._toolbar_hide_timer.setSingleShot(True)
+        self._toolbar_hide_timer.timeout.connect(self._hide_floating_toolbar)
+
+        # 区域尺寸提示标签（框选/调整时显示，透明鼠标事件）
+        self._size_label = QLabel(self.viewport())
+        self._size_label.setStyleSheet(f"""
+            background-color: {ThemeManager.get_color('primary')};
+            color: {ThemeManager.get_color('white')};
+            border-radius: {ThemeManager.get_radius('sm')}px;
+            padding: 2px 6px;
+            font-size: 11px;
+        """)
+        self._size_label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._size_label.setVisible(False)
+
+        # 视口鼠标进入/离开事件过滤（用于浮动工具栏显隐）
+        self.viewport().installEventFilter(self)
+
+    def _style_toolbar_button(self, btn: QPushButton):
+        """应用浮动工具栏按钮样式（主题化）"""
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {ThemeManager.get_color('text_primary')};
+                border: none;
+                border-radius: {ThemeManager.get_radius('sm')}px;
+                padding: 4px 10px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QPushButton:pressed {{
+                background-color: {ThemeManager.get_color('bg_selected')};
+            }}
+        """)
+
+    def eventFilter(self, watched, event):
+        """视口鼠标进入/离开 -> 浮动工具栏显隐；缩放标签点击 -> 恢复 100%
+
+        注意：QAbstractScrollArea 会把自己注册为滚动条/视口的事件过滤器，
+        setStyleSheet 触发的 polish 事件也会经过本方法（此时 zoom_label 等
+        控件可能尚未创建），因此属性访问必须防御式处理，避免在 Qt 原生
+        调用栈内抛异常导致死锁。
+        """
+        if watched is self.viewport():
+            if event.type() == QEvent.Type.Enter:
+                self._on_viewport_enter()
+            elif event.type() == QEvent.Type.Leave:
+                self._on_viewport_leave()
+        elif watched is getattr(self, 'zoom_label', None) \
+                and event.type() == QEvent.Type.MouseButtonPress:
+            self.reset_zoom()
+        return super().eventFilter(watched, event)
+
+    # ------------------------------------------------------------------
+    # 覆盖层布局
+    # ------------------------------------------------------------------
+    def _layout_overlays(self):
+        """重新布局覆盖层控件（空状态铺满视口、浮动工具栏顶部居中、缩放标签右下角）"""
+        vp = self.viewport()
+        rect = vp.rect()
+
+        self.empty_state.setGeometry(rect)
+
+        self.floating_toolbar.adjustSize()
+        tb = self.floating_toolbar
+        tb.move(max(0, (rect.width() - tb.width()) // 2), 8)
+
+        self.zoom_label.adjustSize()
+        zl = self.zoom_label
+        zl.move(max(0, rect.width() - zl.width() - 12),
+                max(0, rect.height() - zl.height() - 12))
+
+    def _viewport_pos_from_scene(self, scene_pt: QPointF):
+        """将场景坐标转换为视口坐标（用于定位覆盖层控件）"""
+        return self.viewport().mapFrom(self, self.mapFromScene(scene_pt))
+
+    # ------------------------------------------------------------------
+    # 空状态（EmptyState 集成）
+    # ------------------------------------------------------------------
     def _show_empty_state(self):
-        """显示空状态提示 - [增强] 更详细的操作引导"""
-        if self.empty_text:
-            return
-        # 创建增强的空状态提示
-        empty_text = """📷 PDF预览区域
-
-上传PDF后在此显示
-
-─────────────────────────
-框选操作提示:
-• 鼠标左键拖拽 = 框选区域
-• 右键拖动 = 平移画布
-• 滚轮 = 缩放"""
-        self.empty_text = QGraphicsTextItem()
-        self.empty_text.setPlainText(empty_text)
-        self.empty_text.setDefaultTextColor(QColor("#888"))
-        self.empty_text.setFont(QFont("Microsoft YaHei", 12))
-        self.empty_text.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        self.scene_.addItem(self.empty_text)
-        # [修复] 使用视图中心坐标，而不是固定坐标
-        self._center_empty_text()
-
-    def _center_empty_text(self):
-        """[修复] 将空状态文本居中显示"""
-        if self.empty_text:
-            # 获取视图可视区域中心
-            view_rect = self.viewport().rect()
-            center = self.mapToScene(view_rect.center())
-            # 计算文本尺寸并居中
-            text_rect = self.empty_text.boundingRect()
-            self.empty_text.setPos(
-                center.x() - text_rect.width() / 2,
-                center.y() - text_rect.height() / 2
-            )
+        """显示空状态提示（无 PDF 时）"""
+        self.empty_state.setVisible(True)
 
     def _hide_empty_state(self):
         """隐藏空状态提示"""
-        if self.empty_text:
-            self.scene_.removeItem(self.empty_text)
-            self.empty_text = None
+        self.empty_state.setVisible(False)
 
+    # ------------------------------------------------------------------
+    # 缩放控制与缩放比例标签
+    # ------------------------------------------------------------------
+    def _update_zoom_label(self):
+        """更新右下角缩放比例标签（与当前 transform 保持一致）"""
+        scale = self.transform().m11()
+        self.zoom_label.setText(f"{round(scale * 100)}%")
+        self.zoom_label.setVisible(self.pixmap_item is not None)
+        if self.pixmap_item is not None:
+            self._layout_overlays()
+
+    def _zoom_by(self, factor: float):
+        """按比例缩放 - [修复] 添加缩放范围限制（0.1x ~ 10x）"""
+        current_scale = self.transform().m11()  # 获取当前缩放比例
+        new_scale = current_scale * factor
+
+        # [修复] 限制缩放范围：0.1x 到 10x
+        if new_scale < 0.1:
+            factor = 0.1 / current_scale
+        elif new_scale > 10:
+            factor = 10 / current_scale
+
+        self.scale(factor, factor)
+        self._update_zoom_label()
+
+    def reset_zoom(self):
+        """重置缩放到 100%（缩放标签点击触发）"""
+        current_scale = self.transform().m11()
+        if current_scale > 0 and current_scale != 1.0:
+            self.scale(1.0 / current_scale, 1.0 / current_scale)
+        self._update_zoom_label()
+
+    def _fit_to_view(self):
+        """适应窗口（浮动工具栏按钮）"""
+        if self.pixmap_item:
+            self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+            self._update_zoom_label()
+
+    # ------------------------------------------------------------------
+    # 浮动工具栏显隐（悬停显示）
+    # ------------------------------------------------------------------
+    def _show_floating_toolbar(self):
+        """显示浮动工具栏（仅在有 PDF 时）"""
+        if self.pixmap_item is None:
+            return
+        self._stop_toolbar_hide_timer()
+        self.floating_toolbar.setVisible(True)
+
+    def _hide_floating_toolbar(self):
+        """隐藏浮动工具栏"""
+        self._stop_toolbar_hide_timer()
+        self.floating_toolbar.setVisible(False)
+
+    def _stop_toolbar_hide_timer(self):
+        """停止浮动工具栏隐藏定时器（控件未创建时安全跳过）"""
+        timer = getattr(self, '_toolbar_hide_timer', None)
+        if timer is not None:
+            timer.stop()
+
+    def _on_viewport_enter(self):
+        """鼠标进入画布视口 -> 显示浮动工具栏"""
+        self._stop_toolbar_hide_timer()
+        if getattr(self, 'pixmap_item', None) is not None:
+            self.floating_toolbar.setVisible(True)
+
+    def _on_viewport_leave(self):
+        """鼠标离开画布视口 -> 延迟隐藏浮动工具栏"""
+        timer = getattr(self, '_toolbar_hide_timer', None)
+        if timer is not None:
+            timer.start(FLOATING_TOOLBAR_HIDE_DELAY_MS)
+
+    def _on_toolbar_hovered(self, entered: bool):
+        """鼠标进入/离开浮动工具栏 -> 取消/启动隐藏定时器"""
+        if entered:
+            self._stop_toolbar_hide_timer()
+        else:
+            timer = getattr(self, '_toolbar_hide_timer', None)
+            if timer is not None:
+                timer.start(FLOATING_TOOLBAR_HIDE_DELAY_MS)
+
+    # ------------------------------------------------------------------
+    # 区域尺寸提示
+    # ------------------------------------------------------------------
+    def _show_region_size(self, rect: QRectF):
+        """框选/调整大小时显示区域尺寸提示（宽×高 px，跟随矩形右上角）"""
+        if rect.width() < 5 or rect.height() < 5:
+            self._hide_region_size()
+            return
+        # 使用 round 而非 int：归一化坐标重建的矩形存在浮点噪声（如 79.9999...）
+        w, h = round(rect.width()), round(rect.height())
+        self._size_label.setText(f'{w}×{h}px')
+        self._size_label.adjustSize()
+
+        # 定位在矩形右上角旁（视口坐标），并钳制在视口范围内
+        vp = self.viewport()
+        anchor = self._viewport_pos_from_scene(QPointF(rect.right(), rect.top()))
+        x = anchor.x() + 6
+        y = anchor.y() - self._size_label.height() - 6
+        x = max(4, min(x, vp.width() - self._size_label.width() - 4))
+        y = max(4, min(y, vp.height() - self._size_label.height() - 4))
+        self._size_label.move(x, y)
+        self._size_label.setVisible(True)
+
+    def _hide_region_size(self):
+        """隐藏区域尺寸提示"""
+        self._size_label.setVisible(False)
+
+    # ------------------------------------------------------------------
+    # 网格吸附
+    # ------------------------------------------------------------------
+    def _snap_to_grid(self, pos: QPointF) -> QPointF:
+        """将坐标吸附到 10px 网格（仅用于新建框选的起始/结束点）"""
+        x = int(pos.x() / GRID_SIZE + 0.5) * GRID_SIZE
+        y = int(pos.y() / GRID_SIZE + 0.5) * GRID_SIZE
+        # 钳制到图片范围内，避免越界产生无效矩形
+        if self.img_w > 0:
+            x = max(0, min(x, self.img_w))
+        if self.img_h > 0:
+            y = max(0, min(y, self.img_h))
+        return QPointF(x, y)
+
+    # ------------------------------------------------------------------
+    # 原有功能（框选/平移/缩放/区域编辑，保持行为不变）
+    # ------------------------------------------------------------------
     def set_drawing_enabled(self, enabled: bool):
         """启用/禁用框选功能（VLM模式下禁用）"""
         self._drawing_enabled = enabled
@@ -235,7 +509,9 @@ class PdfCanvas(QGraphicsView):
         self.move_start_rect = None
         self.right_dragging = False
         self.last_mouse_pos = None
-        self.empty_text = None
+        self._hide_region_size()
+        self._hide_floating_toolbar()
+        self.zoom_label.setVisible(False)
         self._show_empty_state()
 
     def load_image(self, pil_image: Image.Image):
@@ -245,7 +521,8 @@ class PdfCanvas(QGraphicsView):
         self.scene_.clear()
         self.region_items.clear()
         self.selected_region_id = None
-        self.empty_text = None
+        self._hide_empty_state()
+        self._hide_region_size()
         self.img_w, self.img_h = pil_image.size
         qimg = QImage(pil_image.tobytes("raw", "RGB"), self.img_w, self.img_h,
                       self.img_w * 3, QImage.Format.Format_RGB888)
@@ -253,6 +530,7 @@ class PdfCanvas(QGraphicsView):
         self.pixmap_item = self.scene_.addPixmap(pix)
         self.setSceneRect(QRectF(pix.rect()))
         self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+        self._update_zoom_label()
 
         # 恢复框选区域
         if saved_regions:
@@ -322,9 +600,9 @@ class PdfCanvas(QGraphicsView):
             # 点击在空白处，取消选中
             self._deselect_all()
 
-            # 开始框选
+            # 开始框选（起始点吸附到 10px 网格）
             self.drawing = True
-            self.start_pt = scene_pos
+            self.start_pt = self._snap_to_grid(scene_pos)
             self.temp_rect = QGraphicsRectItem()
             # [修复] 获取已使用的颜色，避免重复
             used_colors = {r.color for r in self.regions_data.values()}
@@ -359,7 +637,7 @@ class PdfCanvas(QGraphicsView):
             return
         scene_pos = self.mapToScene(event.pos())
 
-        # 移动区域
+        # 移动区域（保持精确行为，不做网格吸附）
         if self.moving and self.moved_item:
             delta = scene_pos - self.move_start_pos
             new_rect = QRectF(
@@ -374,7 +652,7 @@ class PdfCanvas(QGraphicsView):
             self.moved_item.update_handle_positions()
             return
 
-        # 调整大小
+        # 调整大小（保持精确行为，不做网格吸附）
         if self.resizing and self.resize_handle and self.resized_item:
             rect = self.resize_start_rect
             handle_type = self.resize_handle.handle_type
@@ -404,6 +682,7 @@ class PdfCanvas(QGraphicsView):
                 new_rect = self._constrain_rect(new_rect)
                 self.resized_item.setRect(new_rect)
                 self.resized_item.update_handle_positions()
+                self._show_region_size(new_rect)
             return
 
         # 右键拖动
@@ -416,11 +695,12 @@ class PdfCanvas(QGraphicsView):
             v_bar.setValue(v_bar.value() - delta.y())
             return
 
-        # 框选中
+        # 框选中（结束点吸附到 10px 网格）
         if self.drawing and self.temp_rect:
-            cur = scene_pos
+            cur = self._snap_to_grid(scene_pos)
             rect = QRectF(self.start_pt, cur).normalized()
             self.temp_rect.setRect(rect)
+            self._show_region_size(rect)
 
         super().mouseMoveEvent(event)
 
@@ -462,6 +742,7 @@ class PdfCanvas(QGraphicsView):
             self.move_start_pos = None
             self.move_start_rect = None
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._hide_region_size()
             super().mouseReleaseEvent(event)
             return
 
@@ -483,6 +764,7 @@ class PdfCanvas(QGraphicsView):
             self.resize_handle = None
             self.resized_item = None
             self.resize_start_rect = None
+            self._hide_region_size()
             super().mouseReleaseEvent(event)
             return
 
@@ -506,6 +788,7 @@ class PdfCanvas(QGraphicsView):
                         self.regions_data[self.moved_item.region_id] = new_region
                         self.region_updated.emit(self.moved_item.region_id, new_region)
             self.last_mouse_pos = None
+            self._hide_region_size()
             return
 
         # 左键释放 - 完成框选
@@ -532,14 +815,19 @@ class PdfCanvas(QGraphicsView):
             else:
                 self.scene_.removeItem(self.temp_rect)
             self.temp_rect = None
+            self._hide_region_size()
 
         super().mouseReleaseEvent(event)
 
     def resizeEvent(self, event):
-        """[修复] 视图大小变化时重新居中显示空状态文本"""
+        """[修复] 视图大小变化时重新布局覆盖层控件"""
         super().resizeEvent(event)
-        if self.empty_text:
-            self._center_empty_text()
+        self._layout_overlays()
+
+    def wheelEvent(self, event):
+        # 滚轮缩放 - [修复] 添加缩放范围限制（0.1x 到 10x）
+        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+        self._zoom_by(factor)
 
     def _add_region_item(self, region: Region):
         """添加区域项到场景"""
@@ -600,17 +888,3 @@ class PdfCanvas(QGraphicsView):
     def get_region(self, region_id: str) -> Region:
         """获取指定区域数据"""
         return self.regions_data.get(region_id)
-
-    def wheelEvent(self, event):
-        # 滚轮缩放 - [修复] 添加缩放范围限制
-        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        current_scale = self.transform().m11()  # 获取当前缩放比例
-        new_scale = current_scale * factor
-
-        # [修复] 限制缩放范围：0.1x 到 10x
-        if new_scale < 0.1:
-            factor = 0.1 / current_scale
-        elif new_scale > 10:
-            factor = 10 / current_scale
-
-        self.scale(factor, factor)
