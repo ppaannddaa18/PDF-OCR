@@ -56,4 +56,4 @@ class TestButtonStyle:
         assert '<bg_surface>' in ss
         assert '<border>' in ss
         # 只使用已定义的颜色角色 token（证明没有手写颜色字面量）
-        assert set(calls) <= set(ThemeManager.COLORS['light'].keys())
+        assert set(calls) <= set(ThemeManager.COLORS['default']['light'].keys())

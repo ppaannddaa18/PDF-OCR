@@ -15,54 +15,127 @@ class ThemeManager:
       颜色重新生成（unpolish/polish 不足以刷新内嵌样式表）
     - detect_system_theme / resolve_theme：'auto' 模式跟随系统主题
       （Qt 6.5+ QStyleHints.colorScheme()，已验证 PyQt6 6.11 可用）
+
+    Task P2 增强（双设计 token 管道）：
+    - 新增 design 维度：'default' | 'gguf'（固定深色科技）| 'rapid'（固定浅色简洁）
+    - COLORS 按 design 嵌套；design 非 default 时 get_color 忽略 _current_theme，
+      直接取该设计唯一调色板（gguf 仅 dark / rapid 仅 light）；default 行为不变
+    - set_design 切换同样触发 _invoke_refresh_callbacks（复用弱引用注册表），
+      已注册 apply_theme 的组件零代码改动自动换色
+    - apply_card_shadow：Rapid 卡片阴影（QSS 不支持 box-shadow 的替代方案）
+    - FONTS 新增 mono 家族（数字指标），QFontDatabase 按 family 查找，
+      缺省回退 'Courier New'
     """
 
     _current_theme = 'light'
+    _current_design = 'default'
     _refresh_callbacks = []  # weakref.WeakMethod / weakref.ref 列表（组件销毁后自动失效）
 
+    _THEMES = ('light', 'dark')
+
     COLORS = {
-        'light': {
-            'bg_primary': '#f8f9fa',
-            'bg_surface': '#ffffff',
-            'bg_hover': '#f3f4f6',
-            'bg_selected': '#eff6ff',
-            'primary': '#2563eb',
-            'primary_hover': '#1d4ed8',
-            'white': '#ffffff',
-            'success_bg': '#E7F5E9',
-            'warning_bg': '#FFF8E1',
-            'error_bg': '#FDE8E8',
-            'success': '#16a34a',
-            'warning': '#f59e0b',
-            'warning_text': '#b45309',
-            'error': '#dc2626',
-            'text_primary': '#1f2937',
-            'text_secondary': '#6b7280',
-            'text_disabled': '#9ca3af',
-            'border': '#e5e7eb',
-            'border_focus': '#2563eb',
+        # ── default：与改造前完全一致（light/dark 双主题） ─────────
+        'default': {
+            'light': {
+                'bg_primary': '#f8f9fa',
+                'bg_surface': '#ffffff',
+                'bg_hover': '#f3f4f6',
+                'bg_selected': '#eff6ff',
+                'primary': '#2563eb',
+                'primary_hover': '#1d4ed8',
+                'white': '#ffffff',
+                'success_bg': '#E7F5E9',
+                'warning_bg': '#FFF8E1',
+                'error_bg': '#FDE8E8',
+                'success': '#16a34a',
+                'warning': '#f59e0b',
+                'warning_text': '#b45309',
+                'error': '#dc2626',
+                'text_primary': '#1f2937',
+                'text_secondary': '#6b7280',
+                'text_disabled': '#9ca3af',
+                'border': '#e5e7eb',
+                'border_focus': '#2563eb',
+            },
+            'dark': {
+                'bg_primary': '#111827',
+                'bg_surface': '#1f2937',
+                'bg_hover': '#374151',
+                'bg_selected': '#1e3a5f',
+                'primary': '#3b82f6',
+                'primary_hover': '#2563eb',
+                'white': '#ffffff',
+                'success_bg': '#12301B',
+                'warning_bg': '#3A2F14',
+                'error_bg': '#3A1518',
+                'success': '#22c55e',
+                'warning': '#fbbf24',
+                'warning_text': '#fbbf24',
+                'error': '#ef4444',
+                'text_primary': '#f9fafb',
+                'text_secondary': '#d1d5db',
+                'text_disabled': '#9ca3af',
+                'border': '#374151',
+                'border_focus': '#3b82f6',
+            },
         },
-        'dark': {
-            'bg_primary': '#111827',
-            'bg_surface': '#1f2937',
-            'bg_hover': '#374151',
-            'bg_selected': '#1e3a5f',
-            'primary': '#3b82f6',
-            'primary_hover': '#2563eb',
-            'white': '#ffffff',
-            'success_bg': '#12301B',
-            'warning_bg': '#3A2F14',
-            'error_bg': '#3A1518',
-            'success': '#22c55e',
-            'warning': '#fbbf24',
-            'warning_text': '#fbbf24',
-            'error': '#ef4444',
-            'text_primary': '#f9fafb',
-            'text_secondary': '#d1d5db',
-            'text_disabled': '#9ca3af',
-            'border': '#374151',
-            'border_focus': '#3b82f6',
-        }
+        # ── gguf：深色科技，固定深色（仅 dark） ───────────────────
+        # 简报权威值；未列出的现有 role 按同视觉方向推导（P6 再精修）：
+        #   bg_hover/bg_selected 取 surface_2/border，primary 系取 accent 系
+        'gguf': {
+            'dark': {
+                'bg_primary': '#0B0F1A',
+                'bg_surface': '#141B2E',          # 简报 surface
+                'surface_2': '#1C2740',           # 简报（新增 role）
+                'bg_hover': '#1C2740',            # = surface_2
+                'bg_selected': '#26334F',         # = border
+                'primary': '#E8A33D',             # = accent
+                'primary_hover': '#C98B2E',       # accent 压暗
+                'white': '#ffffff',
+                'success_bg': '#12301B',          # 沿用 default dark
+                'warning_bg': '#3A2F14',          # 沿用 default dark
+                'error_bg': '#3A1518',            # 沿用 default dark
+                'success': '#5EEAD4',
+                'warning': '#F59E0B',
+                'warning_text': '#F59E0B',        # = warning（同 default dark 模式）
+                'error': '#F87171',
+                'text_primary': '#E6EDF7',
+                'text_secondary': '#8A97B5',
+                'text_disabled': '#5A6783',
+                'border': '#26334F',
+                'border_focus': '#E8A33D',        # = accent
+                'accent': '#E8A33D',              # 简报（新增 role）
+                'accent_alt': '#5EEAD4',          # 简报（新增 role）
+            },
+        },
+        # ── rapid：浅色简洁，固定浅色（仅 light） ──────────────────
+        # 简报权威值；未列出 role 同理推导（primary 系取 accent 系）
+        'rapid': {
+            'light': {
+                'bg_primary': '#F6F8FB',
+                'bg_surface': '#FFFFFF',          # 简报 surface
+                'surface_2': '#EEF2F7',           # 简报（新增 role）
+                'bg_hover': '#EEF2F7',            # = surface_2
+                'bg_selected': '#E5F2FD',         # 浅蓝配 accent
+                'primary': '#0C8CE9',             # = accent
+                'primary_hover': '#0A7CD0',       # accent 压暗
+                'white': '#ffffff',
+                'success_bg': '#E7F5E9',          # 沿用 default light
+                'warning_bg': '#FFF8E1',          # 沿用 default light
+                'error_bg': '#FDE8E8',            # 沿用 default light
+                'success': '#16A34A',
+                'warning': '#D97706',
+                'warning_text': '#B45309',        # 沿用 default light
+                'error': '#DC2626',
+                'text_primary': '#1F2937',
+                'text_secondary': '#6B7280',
+                'text_disabled': '#9CA3AF',       # 沿用 default light
+                'border': '#E3E9F2',
+                'border_focus': '#0C8CE9',        # = accent
+                'accent': '#0C8CE9',              # 简报（新增 role）
+                'accent_alt': '#5EEAD4',          # 推导（简报未给，保持结构对称）
+            },
+        },
     }
 
     FONTS = {
@@ -71,6 +144,9 @@ class ThemeManager:
         'body': {'size': 13, 'weight': 400, 'line_height': 1.5},
         'caption': {'size': 11, 'weight': 400, 'line_height': 1.4},
         'button': {'size': 13, 'weight': 500, 'line_height': 1.0},
+        # P2 新增 mono 家族：数字指标用（Consolas 优先，缺省回退 Courier New）
+        'mono': {'size': 13, 'weight': 400, 'line_height': 1.4,
+                 'family': 'Consolas', 'fallback_family': 'Courier New'},
     }
 
     SPACING = {
@@ -83,55 +159,96 @@ class ThemeManager:
     }
 
     RADIUS = {
-        'sm': 4,
-        'md': 8,
-        'lg': 12,
-        'full': 9999,
+        # P2：gguf 更锐利（科技感）、rapid 更圆润（简洁风）
+        'default': {'sm': 4, 'md': 8, 'lg': 12, 'full': 9999},
+        'gguf': {'sm': 2, 'md': 4, 'lg': 6, 'full': 9999},
+        'rapid': {'sm': 4, 'md': 8, 'lg': 12, 'full': 9999},
     }
 
     @classmethod
+    def _active_palette(cls) -> dict:
+        """当前 design 生效的颜色表
+
+        design 非 default 时忽略 _current_theme，直接取该设计唯一调色板
+        （gguf→dark / rapid→light）；default 时取当前主题表（与改造前一致）。
+        """
+        if cls._current_design == 'default':
+            return cls.COLORS['default'][cls._current_theme]
+        palettes = cls.COLORS[cls._current_design]
+        return palettes[next(iter(palettes))]
+
+    @classmethod
     def get_color(cls, role: str) -> str:
-        """获取当前主题下的颜色值"""
-        theme = cls._current_theme
-        if role not in cls.COLORS[theme]:
+        """获取当前主题下的颜色值（design 感知）"""
+        palette = cls._active_palette()
+        if role not in palette:
             raise ValueError(f"Unknown color role: {role}")
-        return cls.COLORS[theme][role]
+        return palette[role]
 
     @classmethod
     def get_font(cls, level: str) -> QFont:
-        """获取指定层级的字体"""
+        """获取指定层级的字体
+
+        FONTS 目前与 design/theme 无关（P2 简报未定义设计专属字体规格）；
+        'mono' 层级带 family 解析：QFontDatabase 按 family 查找，
+        缺省回退 'Courier New'。
+        """
         if level not in cls.FONTS:
             raise ValueError(f"Unknown font level: {level}")
         config = cls.FONTS[level]
         font = QFont()
+        family = config.get('family')
+        if family:
+            font.setFamily(cls._resolve_mono_family(
+                family, config.get('fallback_family')))
         font.setPointSize(config['size'])
         font.setWeight(config['weight'])
         return font
 
     @classmethod
+    def _resolve_mono_family(cls, preferred: str, fallback: str = None) -> str:
+        """按 QFontDatabase 查找字体族，系统缺失时回退"""
+        try:
+            from PyQt6.QtGui import QFontDatabase
+            if preferred in QFontDatabase.families():
+                return preferred
+        except Exception:
+            pass
+        return fallback or preferred
+
+    @classmethod
     def get_spacing(cls, name: str) -> int:
-        """获取间距值"""
+        """获取间距值（SPACING 与 design 无关，简报未定义设计专属间距）"""
         if name not in cls.SPACING:
             raise ValueError(f"Unknown spacing name: {name}")
         return cls.SPACING[name]
 
     @classmethod
     def get_radius(cls, name: str) -> int:
-        """获取圆角值"""
-        if name not in cls.RADIUS:
+        """获取圆角值（design 感知：gguf 锐利 / rapid 圆润 / default 现状）"""
+        if cls._current_design == 'default':
+            table = cls.RADIUS['default']
+        else:
+            table = cls.RADIUS[cls._current_design]
+        if name not in table:
             raise ValueError(f"Unknown radius name: {name}")
-        return cls.RADIUS[name]
+        return table[name]
 
     @classmethod
     def current_theme(cls) -> str:
         """获取当前主题名称"""
         return cls._current_theme
 
-    # ── 主题切换与全局刷新 ──────────────────────────────────────
+    @classmethod
+    def current_design(cls) -> str:
+        """获取当前设计名称（'default' | 'gguf' | 'rapid'）"""
+        return cls._current_design
+
+    # ── 设计/主题切换与全局刷新 ────────────────────────────────
 
     @classmethod
     def register_refresh_callback(cls, callback) -> None:
-        """注册主题刷新回调：set_theme 切换主题后自动调用
+        """注册主题刷新回调：set_theme / set_design 后自动调用
 
         回调以弱引用持有（WeakMethod/ref），组件被 GC 后自动失效，
         无需显式注销。典型用法：组件 __init__ 末尾
@@ -151,12 +268,30 @@ class ThemeManager:
 
         相同主题重复调用为 no-op（组件构造/刷新后状态已一致，
         避免启动双接线时重复刷新）。
+        design 非 default（gguf/rapid 固定单色调板）时 no-op：
+        主题切换不生效，get_color 不受 _current_theme 影响。
         """
-        if theme not in cls.COLORS:
+        if theme not in cls._THEMES:
             raise ValueError(f"Unknown theme: {theme}")
+        if cls._current_design != 'default':
+            return
         if theme == cls._current_theme:
             return
         cls._current_theme = theme
+        cls._invoke_refresh_callbacks()
+
+    @classmethod
+    def set_design(cls, design: str) -> None:
+        """设置设计（'default' | 'gguf' | 'rapid'），变化时触发刷新回调
+
+        gguf/rapid 为固定单色调板设计，切换后 get_color/get_radius 等
+        token 立即按新设计解析（已注册组件经回调自动重建 QSS）。
+        """
+        if design not in cls.COLORS:
+            raise ValueError(f"Unknown design: {design}")
+        if design == cls._current_design:
+            return
+        cls._current_design = design
         cls._invoke_refresh_callbacks()
 
     @classmethod
@@ -214,7 +349,7 @@ class ThemeManager:
         """
         if mode == 'auto':
             return cls.detect_system_theme()
-        if mode not in cls.COLORS:
+        if mode not in cls._THEMES:
             raise ValueError(f"Unknown theme: {mode}")
         return mode
 
@@ -228,9 +363,27 @@ class ThemeManager:
                    值如果是颜色角色名，会自动解析为实际颜色值
         """
         style_parts = []
+        palette = cls._active_palette()
         for prop, value in styles.items():
             # 如果值是颜色角色名，解析为实际颜色
-            if value in cls.COLORS[cls._current_theme]:
+            if value in palette:
                 value = cls.get_color(value)
             style_parts.append(f"{prop}: {value};")
         widget.setStyleSheet("".join(style_parts))
+
+    # ── 卡片阴影（Rapid 用，QSS 无 box-shadow 的替代方案） ──────
+
+    @classmethod
+    def apply_card_shadow(cls, widget: QWidget) -> 'QGraphicsDropShadowEffect':
+        """给控件挂载卡片阴影
+
+        blur ~12、轻微下投偏移 (0, 2)、rgba(15,23,42,0.06)（alpha=0.06*255≈15）。
+        """
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtWidgets import QGraphicsDropShadowEffect
+        effect = QGraphicsDropShadowEffect(widget)
+        effect.setBlurRadius(12)
+        effect.setOffset(0, 2)
+        effect.setColor(QColor(15, 23, 42, round(0.06 * 255)))
+        widget.setGraphicsEffect(effect)
+        return effect

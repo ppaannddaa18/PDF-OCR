@@ -22,6 +22,7 @@ def qapp():
 
 @pytest.fixture(autouse=True)
 def reset_theme():
-    """每个测试前复位主题状态，避免类级全局状态跨测试污染"""
+    """每个测试前复位主题与设计状态，避免类级全局状态跨测试污染"""
+    ThemeManager.set_design('default')  # 先复位设计，set_theme 才生效
     ThemeManager.set_theme('light')
     yield

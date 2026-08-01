@@ -10,14 +10,21 @@ primary_qss() / secondary_qss() 只从 ThemeManager token 生成 QSS，
 from app.ui.theme_manager import ThemeManager
 
 
+def _primary_background() -> str:
+    """主按钮底色：default 用 primary，gguf/rapid 用各自 accent（P2 双设计）"""
+    if ThemeManager.current_design() == 'default':
+        return ThemeManager.get_color('primary')
+    return ThemeManager.get_color('accent')
+
+
 def primary_qss() -> str:
-    """主操作按钮 QSS（primary 背景 + white 文字 + md 圆角 + sm/lg 内边距）
+    """主操作按钮 QSS（accent/primary 背景 + white 文字 + md 圆角 + sm/lg 内边距）
 
     按钮几何（固定高度/宽度）由调用方负责，样式只描述外观。
     """
     return f"""
         QPushButton {{
-            background-color: {ThemeManager.get_color('primary')};
+            background-color: {_primary_background()};
             color: {ThemeManager.get_color('white')};
             border: none;
             border-radius: {ThemeManager.get_radius('md')}px;
