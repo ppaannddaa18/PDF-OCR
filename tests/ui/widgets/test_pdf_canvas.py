@@ -388,3 +388,112 @@ class TestHighlights:
             Qt.KeyboardModifier.NoModifier)
         canvas.mousePressEvent(press)
         assert clicked == []
+
+
+class TestZoomBarDragOcclusion:
+    """缩放条在手动模式拖拽期间必须隐藏，避免遮挡鼠标事件（评审发现）"""
+
+    def test_zoom_bar_hidden_while_drawing(self, qapp):
+        canvas = make_canvas(qapp)
+        assert canvas.zoom_bar.isVisible()
+        press = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(105, 55),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mousePressEvent(press)
+        assert canvas.drawing
+        assert not canvas.zoom_bar.isVisible()
+
+    def test_zoom_bar_reshown_after_release(self, qapp):
+        canvas = make_canvas(qapp)
+        press = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(105, 55),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mousePressEvent(press)
+        release = QMouseEvent(
+            QEvent.Type.MouseButtonRelease, QPointF(105, 55),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mouseReleaseEvent(release)
+        assert not canvas.drawing
+        assert canvas.zoom_bar.isVisible()
+
+    def test_zoom_bar_hidden_while_resizing(self, qapp):
+        """拖拽选中区域的手柄开始 resize 时缩放条隐藏"""
+        canvas = make_canvas(qapp)
+        # 先画一个区域 (110,60,50,20)
+        press = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(105, 55),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mousePressEvent(press)
+        move = QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(163, 84),
+            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mouseMoveEvent(move)
+        release = QMouseEvent(
+            QEvent.Type.MouseButtonRelease, QPointF(163, 84),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mouseReleaseEvent(release)
+        assert canvas.zoom_bar.isVisible()  # 绘制完成后恢复
+
+        region_id = list(canvas.region_items.keys())[0]
+        canvas._select_region(region_id)
+        item = canvas.region_items[region_id]
+        br = item.handles[3]  # 'br'
+        base = br.scenePos()
+        press2 = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(base.x(), base.y()),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mousePressEvent(press2)
+        assert canvas.resizing
+        assert not canvas.zoom_bar.isVisible()
+        release2 = QMouseEvent(
+            QEvent.Type.MouseButtonRelease, QPointF(base.x(), base.y()),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier)
+        canvas.mouseReleaseEvent(release2)
+        assert canvas.zoom_bar.isVisible()
+
+
+class TestViewportRectSignal:
+    """viewport_rect_changed 单一发射源 + 场景坐标（振荡缓解核心）"""
+
+    def test_scroll_emits_viewport_rect_changed_once(self, qapp):
+        """一次滚动 -> 恰好一次发射（scrollContentsBy 是唯一发射源）"""
+        canvas = PdfCanvas()
+        canvas.setFixedSize(200, 100)
+        canvas.show()
+        qapp.processEvents()
+        img = Image.new('RGB', (200, 100), 'white')
+        canvas.load_image(img)
+        canvas._zoom_by(2.0)  # 场景放大到 400x200，产生滚动范围
+        qapp.processEvents()
+        emitted = []
+        canvas.viewport_rect_changed.connect(emitted.append)
+        canvas.verticalScrollBar().setValue(30)
+        qapp.processEvents()
+        assert len(emitted) == 1
+
+    def test_emitted_rect_in_scene_coords(self, qapp):
+        """发射的矩形为场景/图像像素坐标（QRectF，宽高>0）"""
+        canvas = PdfCanvas()
+        canvas.setFixedSize(200, 100)
+        canvas.show()
+        qapp.processEvents()
+        img = Image.new('RGB', (200, 100), 'white')
+        canvas.load_image(img)
+        canvas._zoom_by(2.0)
+        qapp.processEvents()
+        emitted = []
+        canvas.viewport_rect_changed.connect(emitted.append)
+        canvas.verticalScrollBar().setValue(30)
+        qapp.processEvents()
+        assert len(emitted) == 1
+        rect = emitted[0]
+        assert isinstance(rect, QRectF)
+        assert rect.width() > 0 and rect.height() > 0

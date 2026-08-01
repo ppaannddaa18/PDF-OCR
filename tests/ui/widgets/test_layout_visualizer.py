@@ -76,6 +76,18 @@ class TestViewportIndicator:
         assert viz.viewport_indicator.rect() == QRectF(0, 0, 0, 0)  # 未更新
         assert not viz.viewport_indicator.isVisible()
 
+    def test_set_viewport_rect_does_not_write_scrollbars(self, qapp):
+        """导航图只更新指示矩形，不写滚动条（振荡缓解单向同步）"""
+        viz = make_visualizer(qapp)
+        # 加载后再缩小视图 -> 图片溢出 -> 垂直滚动条有范围
+        viz.resize(100, 100)
+        qapp.processEvents()
+        viz.verticalScrollBar().setValue(20)
+        assert viz.verticalScrollBar().maximum() > 0
+        before = viz.verticalScrollBar().value()
+        viz.set_viewport_rect(QRectF(10, 10, 100, 80))
+        assert viz.verticalScrollBar().value() == before
+
 
 class TestNavigate:
     def test_mouse_press_emits_scene_coords(self, qapp):

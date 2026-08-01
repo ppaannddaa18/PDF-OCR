@@ -377,9 +377,17 @@ class PdfCanvas(QGraphicsView):
         """更新缩放比例标签，并同步缩放条的显隐（与当前 transform 保持一致）"""
         scale = self.transform().m11()
         self.zoom_label.setText(f"{round(scale * 100)}%")
-        self.zoom_bar.setVisible(self.pixmap_item is not None)
+        self._update_zoom_bar_visibility()
         if self.pixmap_item is not None:
             self._layout_overlays()
+
+    def _is_dragging(self) -> bool:
+        """手动模式拖拽/框选进行中（复用旧浮动工具栏的遮挡防护条件）"""
+        return self.drawing or self.resizing or self.moving or self.right_dragging
+
+    def _update_zoom_bar_visibility(self):
+        """同步缩放条显隐：拖拽/框选期间隐藏（避免遮挡鼠标事件），否则有图即显示"""
+        self.zoom_bar.setVisible(self.pixmap_item is not None and not self._is_dragging())
 
     def _zoom_by(self, factor: float):
         """按比例缩放 - [修复] 添加缩放范围限制（0.1x ~ 10x）"""
@@ -568,10 +576,12 @@ class PdfCanvas(QGraphicsView):
                 self.move_start_rect = handle.parentItem().rect()
                 self.moved_item = handle.parentItem()
                 self.setCursor(Qt.CursorShape.SizeAllCursor)
+                self._update_zoom_bar_visibility()
                 return
             self.right_dragging = True
             self.last_mouse_pos = event.pos()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self._update_zoom_bar_visibility()
             return
 
         # 左键
@@ -583,6 +593,7 @@ class PdfCanvas(QGraphicsView):
                 self.resize_handle = handle
                 self.resize_start_rect = handle.parentItem().rect()
                 self.resized_item = handle.parentItem()
+                self._update_zoom_bar_visibility()
                 return
 
             # 检查是否点击在区域上
@@ -594,6 +605,7 @@ class PdfCanvas(QGraphicsView):
                 self.move_start_pos = scene_pos
                 self.move_start_rect = region_item.rect()
                 self.moved_item = region_item
+                self._update_zoom_bar_visibility()
                 return
 
             # 点击在空白处，取消选中
@@ -611,6 +623,7 @@ class PdfCanvas(QGraphicsView):
             self.temp_rect.setPen(pen)
             self.temp_rect.setData(Qt.ItemDataRole.UserRole, color)  # 存储颜色
             self.scene_.addItem(self.temp_rect)
+            self._update_zoom_bar_visibility()
 
         super().mousePressEvent(event)
 
@@ -749,6 +762,7 @@ class PdfCanvas(QGraphicsView):
             self.move_start_rect = None
             self.setCursor(Qt.CursorShape.ArrowCursor)
             self._hide_region_size()
+            self._update_zoom_bar_visibility()
             super().mouseReleaseEvent(event)
             return
 
@@ -771,6 +785,7 @@ class PdfCanvas(QGraphicsView):
             self.resized_item = None
             self.resize_start_rect = None
             self._hide_region_size()
+            self._update_zoom_bar_visibility()
             super().mouseReleaseEvent(event)
             return
 
@@ -795,6 +810,7 @@ class PdfCanvas(QGraphicsView):
                         self.region_updated.emit(self.moved_item.region_id, new_region)
             self.last_mouse_pos = None
             self._hide_region_size()
+            self._update_zoom_bar_visibility()
             return
 
         # 左键释放 - 完成框选
@@ -822,6 +838,7 @@ class PdfCanvas(QGraphicsView):
                 self.scene_.removeItem(self.temp_rect)
             self.temp_rect = None
             self._hide_region_size()
+            self._update_zoom_bar_visibility()
 
         super().mouseReleaseEvent(event)
 
