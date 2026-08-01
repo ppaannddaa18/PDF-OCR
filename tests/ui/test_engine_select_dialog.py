@@ -90,73 +90,46 @@ class TestEngineSelectDialog:
 
 class TestChooseEngine:
     def test_env_shortcut_no_dialog(self, qapp, monkeypatch):
-        """PDFOCR_ENGINE=rapidocr → 不弹窗直接返回"""
+        """PDFOCR_ENGINE=rapidocr → 不构造对话框直接返回"""
         monkeypatch.setenv("PDFOCR_ENGINE", "rapidocr")
+        called = []
+        monkeypatch.setattr(main_module, "_show_engine_dialog",
+                            lambda c: called.append(c) or "rapid")
         config = {}
         assert main_module.choose_engine(config) == "rapidocr"
         assert config["ocr"]["engine"] == "rapidocr"
+        assert called == []  # env 分支在任何对话框构造前返回
 
     def test_env_invalid_falls_back_to_dialog(self, qapp, monkeypatch):
-        """PDFOCR_ENGINE 非 gguf/rapidocr → 忽略并弹窗"""
-        import app.ui.engine_select_dialog as dialog_module
-        import app.utils.engine_checker as checker_module
+        """PDFOCR_ENGINE 非 gguf/rapidocr → 忽略并走对话框层"""
         monkeypatch.setenv("PDFOCR_ENGINE", "bogus")
-
         calls = []
-
-        class FakeDialog:
-            def __init__(self, config):
-                calls.append(("init", config))
-
-            def set_availability(self, avail):
-                calls.append(("set_availability", avail))
-
-            def exec(self):
-                return QDialog.DialogCode.Accepted
-
-            def selected_engine(self):
-                return "gguf"
-
-        monkeypatch.setattr(dialog_module, "EngineSelectDialog", FakeDialog)
-        monkeypatch.setattr(checker_module, "check_engine_availability",
-                            lambda c: _FAKE_AVAILABILITY)
+        monkeypatch.setattr(main_module, "_show_engine_dialog",
+                            lambda c: calls.append(c) or "gguf")
         config = {}
         assert main_module.choose_engine(config) == "gguf"
         assert config["ocr"]["engine"] == "gguf"
-        assert any(c[0] == "set_availability" for c in calls)
+        assert calls == [config]
 
-    def test_accepted_writes_memory_not_disk(self, qapp, monkeypatch):
-        """Accepted 后只写内存 config，不触发 save_config 写盘"""
-        import app.ui.engine_select_dialog as dialog_module
-        import app.utils.engine_checker as checker_module
+    def test_accepted_normalizes_engine_memory_not_disk(self, qapp, monkeypatch):
+        """Accepted 后写内存 config（'rapid' → 'rapidocr' 归一化），不触发写盘"""
         from app.utils import config_loader
         monkeypatch.delenv("PDFOCR_ENGINE", raising=False)
-
-        class FakeDialog:
-            def __init__(self, config):
-                pass
-
-            def set_availability(self, avail):
-                pass
-
-            def exec(self):
-                return QDialog.DialogCode.Accepted
-
-            def selected_engine(self):
-                return "rapid"
-
-        monkeypatch.setattr(dialog_module, "EngineSelectDialog", FakeDialog)
-        monkeypatch.setattr(checker_module, "check_engine_availability",
-                            lambda c: _FAKE_AVAILABILITY)
+        monkeypatch.setattr(main_module, "_show_engine_dialog", lambda c: "rapid")
         saved = []
         monkeypatch.setattr(config_loader, "save_config", lambda c: saved.append(c))
         config = {}
-        assert main_module.choose_engine(config) == "rapid"
-        assert config["ocr"]["engine"] == "rapid"
+        assert main_module.choose_engine(config) == "rapidocr"
+        assert config["ocr"]["engine"] == "rapidocr"
         assert saved == []
 
-    def test_rejected_quits_app(self, qapp, monkeypatch):
-        """对话框 rejected → QApplication.quit()，绝不带默认值进入"""
+    def test_normalize_engine(self, qapp):
+        """卡片 key → 配置权威值映射"""
+        assert main_module._normalize_engine("gguf") == "gguf"
+        assert main_module._normalize_engine("rapid") == "rapidocr"
+
+    def test_show_dialog_rejected_quits_and_exits(self, qapp, monkeypatch):
+        """对话框 rejected → QApplication.quit() + SystemExit，绝不带默认值进入"""
         import app.ui.engine_select_dialog as dialog_module
         import app.utils.engine_checker as checker_module
         monkeypatch.delenv("PDFOCR_ENGINE", raising=False)
@@ -179,6 +152,14 @@ class TestChooseEngine:
                             lambda c: _FAKE_AVAILABILITY)
         quits = []
         monkeypatch.setattr(QApplication, "quit", lambda: quits.append(1))
-        result = main_module.choose_engine({})
+        with pytest.raises(SystemExit):
+            main_module._show_engine_dialog({})
         assert quits == [1]
-        assert result == "gguf"  # 占位值；quit 标志使主事件循环立即退出
+
+    def test_rejected_exit_not_swallowed_by_choose_engine(self, qapp, monkeypatch):
+        """rejected 的退出不被 choose_engine 吞掉"""
+        monkeypatch.delenv("PDFOCR_ENGINE", raising=False)
+        monkeypatch.setattr(main_module, "_show_engine_dialog",
+                            lambda c: (_ for _ in ()).throw(SystemExit(0)))
+        with pytest.raises(SystemExit):
+            main_module.choose_engine({})

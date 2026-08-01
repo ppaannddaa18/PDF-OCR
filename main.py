@@ -9,34 +9,43 @@ import os
 import sys
 
 
-def choose_engine(config) -> str:
-    """
-    返回 'gguf' | 'rapid'。PDFOCR_ENGINE 环境变量直通；否则弹 EngineSelectDialog 强制选择。
+def _normalize_engine(choice: str) -> str:
+    """对话框卡片 key（'gguf'|'rapid'）→ 配置权威值（'gguf'|'rapidocr'）"""
+    return "rapidocr" if choice == "rapid" else choice
 
-    - PDFOCR_ENGINE 只认 gguf/rapidocr，其他值忽略 → 弹窗（与 config_loader 语义一致）
-    - env 存在时不弹窗直接返回
-    - 对话框 Accepted 后写入内存 config["ocr"]["engine"]，不写回 config.yaml
-    - 对话框 rejected → QApplication.quit()（Esc / 关闭 = 退出程序，绝不静默带默认值进入）
-    """
+
+def _show_engine_dialog(config) -> str:
+    """弹出引擎选择对话框，返回卡片 key（'gguf'|'rapid'）；rejected 时退出程序"""
     from PyQt6.QtWidgets import QApplication, QDialog
-
-    env_engine = os.environ.get("PDFOCR_ENGINE", "")
-    if env_engine in ("gguf", "rapidocr"):
-        config.setdefault("ocr", {})["engine"] = env_engine
-        return env_engine
-
     from app.ui.engine_select_dialog import EngineSelectDialog
     from app.utils.engine_checker import check_engine_availability
 
     dialog = EngineSelectDialog(config)
     dialog.set_availability(check_engine_availability(config))
     if dialog.exec() != QDialog.DialogCode.Accepted:
-        # 退出程序：quit 标志使后续 app.exec() 立即返回
+        # Esc / 关闭 = 退出程序，绝不静默带默认值进入
         QApplication.quit()
-        return "gguf"  # 占位值，不会真正使用
-    choice = dialog.selected_engine()
-    config.setdefault("ocr", {})["engine"] = choice
-    return choice
+        sys.exit(0)
+    return dialog.selected_engine()
+
+
+def choose_engine(config) -> str:
+    """
+    返回 'gguf' | 'rapidocr'。PDFOCR_ENGINE 环境变量直通；否则弹 EngineSelectDialog 强制选择。
+
+    - PDFOCR_ENGINE 只认 gguf/rapidocr，其他值忽略 → 弹窗（与 config_loader 语义一致）
+    - env 存在时不弹窗直接返回（不构造对话框）
+    - 对话框 Accepted 后写入内存 config["ocr"]["engine"]（归一化为权威值），不写回 config.yaml
+    - 对话框 rejected → 退出程序（QApplication.quit() + sys.exit(0)），绝不静默带默认值进入
+    """
+    env_engine = os.environ.get("PDFOCR_ENGINE", "")
+    if env_engine in ("gguf", "rapidocr"):
+        config.setdefault("ocr", {})["engine"] = env_engine
+        return env_engine
+
+    choice = _show_engine_dialog(config)
+    config.setdefault("ocr", {})["engine"] = _normalize_engine(choice)
+    return config["ocr"]["engine"]
 
 
 def main():
