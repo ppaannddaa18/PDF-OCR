@@ -405,6 +405,9 @@ class PdfCanvas(QGraphicsView):
 
         self.scale(factor, factor)
         self._update_zoom_label()
+        # 补发视口矩形：页面顶端原地缩放时滚动条值不变，scrollContentsBy
+        # 不会被调用，导航图指示矩形会停留在旧视口（评审 minor #4）
+        self.viewport_rect_changed.emit(self._current_viewport_rect())
 
     def reset_zoom(self):
         """重置缩放到 100%（缩放标签点击触发）"""

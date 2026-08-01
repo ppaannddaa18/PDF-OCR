@@ -200,6 +200,11 @@ class LayoutVisualizer(QGraphicsView):
         super().resizeEvent(event)
         self._layout_close_button()
 
+    def showEvent(self, event):
+        # 首次显示即布局 ✕ 按钮，避免加载前停留在 (0,0) 闪位
+        super().showEvent(event)
+        self._layout_close_button()
+
     def scroll_to(self, value: int):
         """外部同步滚动（防振荡）"""
         if self._is_syncing:

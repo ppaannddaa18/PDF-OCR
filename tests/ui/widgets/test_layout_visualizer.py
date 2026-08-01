@@ -145,3 +145,12 @@ class TestCloseButton:
         viz.close_requested.connect(lambda: emitted.append(True))
         viz._close_btn.click()
         assert emitted == [True]
+
+    def test_close_button_positioned_on_first_show(self, qapp):
+        """评审修复：showEvent 即布局 ✕，加载前不再停留在 (0,0) 闪位"""
+        viz = LayoutVisualizer()
+        viz.resize(400, 300)
+        viz.show()
+        qapp.processEvents()
+        assert viz._close_btn.pos() != QPoint(0, 0)
+        assert viz._close_btn.x() < 400  # 在视口右缘内

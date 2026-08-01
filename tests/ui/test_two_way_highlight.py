@@ -120,3 +120,65 @@ class TestCanvasClickToResult:
         w._current_page_result = None
         w._on_canvas_bbox_clicked([60, 45, 70, 55])  # 不崩溃
         assert w._result_panel._field_table.currentRow() == -1
+
+
+class TestReviewFixes:
+    """最终评审修复回归：高亮不累积 / 检测初始化不冻结主线程 / 预处理清旧结果"""
+
+    def test_consecutive_field_clicks_do_not_stack_highlights(self, main_window):
+        """连续点击两个字段行：只保留当前选中，不叠加累积（评审 Important #3）"""
+        w = main_window
+        w._current_page_result = _make_result()
+        _load_canvas_image(w)
+        w._on_result_field_selected(0)
+        w._on_result_field_selected(1)
+        assert len(w.pdf_canvas._highlight_items) == 1
+        _, bbox = w.pdf_canvas._highlight_items[0]
+        assert bbox == [10, 40, 120, 60]  # 字段1（境内收货人）
+
+    def test_detection_fn_never_initializes_on_main_thread(self, main_window, monkeypatch):
+        """检测函数只返回引擎方法，模型初始化必须留在 worker 线程（评审 Important #1）"""
+        w = main_window
+        w.config["structured"]["detection"] = True
+        calls = []
+
+        class FakeRapid:
+            def __init__(self, *a, **k):
+                self.detect_lines = "detect_lines_fn"
+
+            def initialize(self):
+                calls.append("initialize")
+
+        monkeypatch.setattr("app.core.ocr_engine_rapid.RapidOCREngine", FakeRapid)
+        fn = w._get_detection_fn()
+        assert fn == "detect_lines_fn"
+        assert calls == []  # 主线程绝不同步加载 ONNX 模型
+
+    def test_detection_fn_disabled_returns_none(self, main_window):
+        """默认 structured.detection: false → 不启用检测层"""
+        w = main_window
+        assert w._get_detection_fn() is None
+
+    def test_preprocess_change_clears_stale_result(self, main_window):
+        """预处理变更后旧解析结果与旧 bbox 必须清除（评审 Important #2）"""
+        w = main_window
+        w._current_page_result = _make_result()
+        _load_canvas_image(w)
+        w.pdf_canvas.highlight_bbox([10, 10, 110, 30])
+
+        class FakeToolbar:
+            def get_params(self):
+                return {}
+
+        class FakePreprocessor:
+            def set_params(self, params):
+                pass
+
+            def get_current_image(self):
+                return Image.new("RGB", (200, 150), "white")
+
+        w.preprocess_toolbar = FakeToolbar()
+        w._current_preprocessor = FakePreprocessor()
+        w._on_preprocess_changed()
+        assert w._current_page_result is None
+        assert w.pdf_canvas._highlight_items == []

@@ -235,13 +235,6 @@ class MainWindow(FluentWindow):
         # 初始模式同步（引擎切换触发 UI 模式调整）
         QTimer.singleShot(100, lambda: self._switch_ui_mode(self._current_mode))
 
-        # 财务字段处理器（引擎无关，复用实例）
-        try:
-            from app.core.finance_processor import FinanceProcessor
-            self._finance_processor = FinanceProcessor(self.config)
-        except ImportError:
-            self._finance_processor = None
-
         # Task 15：注册自身主题刷新（子组件已在构造时注册，先于本行执行）
         ThemeManager.register_refresh_callback(self.apply_theme)
 
@@ -1500,6 +1493,9 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.set_params(params)
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
+            # P1: 图像已变，旧解析结果的 bbox 不再对应新图坐标，必须清除
+            self._current_page_result = None
+            self.pdf_canvas.clear_highlights()
 
     def _on_preprocess_apply_to_all(self):
         """将当前预处理应用到所有文件"""
@@ -1526,6 +1522,9 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.reset()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
+            # P1: 图像已变，旧解析结果的 bbox 不再对应新图坐标，必须清除
+            self._current_page_result = None
+            self.pdf_canvas.clear_highlights()
 
     def _on_preprocess_auto_contrast(self):
         """[修复] 应用自动对比度"""
@@ -2513,8 +2512,10 @@ class MainWindow(FluentWindow):
     def _get_detection_fn(self):
         """P1 检测层：RapidOCR 行盒检测（``structured.detection=true`` 时启用）。
 
-        语义与坐标解耦：坐标来自检测层（RapidOCR），不依赖 VLM。任何初始化
-        失败都返回 None（启发式兜底），绝不阻断解析流程。
+        语义与坐标解耦：坐标来自检测层（RapidOCR），不依赖 VLM。模型加载
+        必须且只在 worker 线程惰性完成（detect_lines 内部懒初始化，主线程
+        绝不 initialize —— 否则 ONNX 加载 0.5–2s+ 会冻结 UI）；初始化失败
+        时 detect_lines 返回 []，启发式兜底，绝不阻断解析流程。
         """
         if not self.config.get("structured", {}).get("detection", False):
             return None
@@ -2527,10 +2528,7 @@ class MainWindow(FluentWindow):
                 use_gpu=rapid_cfg.get("use_gpu", False),
                 use_angle_cls=ocr_cfg.get("use_angle_cls", True),
             )
-            if not engine.is_ready:
-                engine.initialize()
-            if engine.is_ready:
-                return engine.detect_lines
+            return engine.detect_lines
         except Exception:
             logging.getLogger("PDFOCR").debug(
                 "P1 detection init failed, falling back to heuristic", exc_info=True)
@@ -2555,6 +2553,8 @@ class MainWindow(FluentWindow):
         if not bbox or len(bbox) != 4:
             canvas.clear_highlights()
             return
+        # 先清旧高亮再画新：连续点击字段行不叠加累积（当前选中语义）
+        canvas.clear_highlights()
         canvas.highlight_bbox(bbox)
         canvas.centerOn(QPointF((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2))
 

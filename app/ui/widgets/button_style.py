@@ -31,6 +31,10 @@ def primary_qss() -> str:
             /* 焦点环：primary 底色上用白环保证键盘导航可见性 */
             border: 1px solid {ThemeManager.get_color('white')};
         }}
+        QPushButton:disabled {{
+            background-color: {ThemeManager.get_color('bg_hover')};
+            color: {ThemeManager.get_color('text_disabled')};
+        }}
     """
 
 

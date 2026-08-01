@@ -172,6 +172,15 @@ class TestFocusRing:
         ThemeManager.set_theme('dark')
         assert ThemeManager.get_color('white') in es.action_button.styleSheet()
 
+    def test_primary_button_disabled_qss(self, qapp):
+        """primary 按钮 :disabled 态（解析中按钮置灰），明暗两主题均含"""
+        from app.ui.widgets.button_style import primary_qss
+        for theme in ('light', 'dark'):
+            ThemeManager.set_theme(theme)
+            ss = primary_qss()
+            assert ':disabled' in ss
+            assert ThemeManager.get_color('text_disabled') in ss
+
 
 class TestSettingsDialogTheme:
     """设置对话框主题选项：加载 / 即时应用 / 保存"""
