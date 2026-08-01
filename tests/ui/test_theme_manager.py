@@ -102,3 +102,14 @@ class TestThemeManager:
         style = widget.styleSheet()
         assert '#f8f9fa' in style
         assert '#1f2937' in style
+
+    def test_status_bg_roles_both_themes(self):
+        """Task 7: 单元格状态底色角色（明暗两主题均存在且不同主题值不同）"""
+        ThemeManager.set_theme('light')
+        assert ThemeManager.get_color('success_bg') == '#E7F5E9'
+        assert ThemeManager.get_color('warning_bg') == '#FFF8E1'
+        assert ThemeManager.get_color('error_bg') == '#FDE8E8'
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('success_bg') == '#12301B'
+        assert ThemeManager.get_color('warning_bg') == '#3A2F14'
+        assert ThemeManager.get_color('error_bg') == '#3A1518'
