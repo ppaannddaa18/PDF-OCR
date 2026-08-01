@@ -163,6 +163,53 @@ class TestTablesAndDetect:
         assert pr.line_boxes == [box]
 
 
+class TestBlockPath:
+    """P1：line_boxes 非空时 field.bbox = 命中的行盒并集（语义与坐标解耦）"""
+
+    def test_bbox_is_union_of_label_and_value_boxes(self):
+        label_box = Block("text", "境内收货人：", bbox=[0, 0, 100, 20])
+        value_box = Block("text", "91330333", bbox=[100, 0, 220, 20])
+        other = Block("text", "无关行", bbox=[0, 100, 50, 120])
+        pr = PageResult(blocks=[], markdown="境内收货人：91330333")
+        pr.line_boxes = [label_box, value_box, other]
+        result = make_extractor().enrich(pr)
+        f = field_map(result)["境内收货人"]
+        assert f.bbox == [0, 0, 220, 20]  # 标签盒 + 值盒并集
+        # 未匹配到行盒的字段保持 None
+        assert field_map(result)["报关单号"].bbox is None
+
+    def test_bbox_from_single_merged_line(self):
+        merged = Block("text", "境内收货人：91330333", bbox=[0, 0, 120, 20])
+        pr = PageResult(blocks=[], markdown="境内收货人：91330333")
+        pr.line_boxes = [merged]
+        result = make_extractor().enrich(pr)
+        assert field_map(result)["境内收货人"].bbox == [0, 0, 120, 20]
+
+    def test_value_across_lines_unions_all_matching_boxes(self):
+        box1 = Block("text", "境内收货人：91330333", bbox=[0, 0, 120, 20])
+        box2 = Block("text", "91330333", bbox=[0, 20, 200, 40])  # 值跨行重复出现
+        pr = PageResult(blocks=[], markdown="境内收货人：91330333")
+        pr.line_boxes = [box1, box2]
+        result = make_extractor().enrich(pr)
+        assert field_map(result)["境内收货人"].bbox == [0, 0, 200, 40]
+
+    def test_no_value_field_keeps_none_bbox(self):
+        box = Block("text", "境内收货人：91330333", bbox=[0, 0, 120, 20])
+        pr = PageResult(blocks=[], markdown="")
+        pr.line_boxes = [box]
+        result = make_extractor().enrich(pr)
+        # 全部字段无值（markdown 空）→ bbox 全 None
+        assert all(f.bbox is None for f in result.fields)
+
+    def test_detection_off_p0_path_unchanged(self):
+        """detect=None 时 line_boxes 恒空，Block 路径跳过，P0 行为不变"""
+        img = Image.new("RGB", (10, 10), (255, 255, 255))
+        pr = PageResult(blocks=[], markdown="报关单号：090820241000039736")
+        result = make_extractor().enrich(pr, image=img)
+        assert pr.line_boxes == []
+        assert all(f.bbox is None for f in result.fields)
+
+
 class TestConfig:
     def test_invoice_keywords_from_config(self):
         config = {"finance": {"invoice": {"keywords": ["发票号码", "开票日期"]}}}

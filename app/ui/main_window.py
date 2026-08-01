@@ -7,7 +7,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QStackedWidget, QSplitter, QDialog
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, QEvent
+from PyQt6.QtCore import Qt, QSize, QTimer, QEvent, QPointF
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition,
     TransparentToolButton, TransparentPushButton, SubtitleLabel,
@@ -775,6 +775,9 @@ class MainWindow(FluentWindow):
         self._layout_view.navigate.connect(self._on_minimap_navigate)
         self._layout_view.close_requested.connect(self._hide_layout_view)
 
+        # P1 双向高亮：画布点击行盒 -> 右侧选中对应字段行
+        self.pdf_canvas.bbox_clicked.connect(self._on_canvas_bbox_clicked)
+
         workspace_layout.addWidget(canvas_area, 1)
 
         # 底部状态栏（Task 13 将重构为 StatusBar 组件）
@@ -829,6 +832,8 @@ class MainWindow(FluentWindow):
         # 页1：结果面板（自动模式）
         self._result_panel = ui.ResultPanel()
         self._right_content_stack.addWidget(self._result_panel)
+        # P1 双向高亮：字段行点击 -> 画布高亮对应原文区域并居中
+        self._result_panel.field_selected.connect(self._on_result_field_selected)
 
         right_content_layout.addWidget(self._right_content_stack, 1)
         self.right_panel.set_content(right_content)
@@ -1400,6 +1405,10 @@ class MainWindow(FluentWindow):
             self._pdf_preview_results[self._current_pdf] = self._current_preview_result
 
         self._current_pdf = pdf_path
+        # P1：切换文件后旧解析结果/高亮不再对应当前页，清理之
+        self._current_page_result = None
+        if hasattr(self, 'pdf_canvas') and self.pdf_canvas:
+            self.pdf_canvas.clear_highlights()
 
         # 加载新 PDF 预览（自动保留已有的框选区域）
         try:
@@ -2458,9 +2467,12 @@ class MainWindow(FluentWindow):
 
         # 在 QThread 中执行（避免阻塞UI）；图像在主线程先 copy，防止与主线程修改产生竞态
         # 结构化字段/表格解析/校验在 worker 线程内完成（StructuredExtractor.enrich），不阻塞 UI
+        # P1 检测层：structured.detection=true 时附加 RapidOCR 行盒检测（默认关，探针通过才开）
         ui = _get_ui_components()
         from app.core.structured_extractor import StructuredExtractor
-        enricher = lambda pr, img: StructuredExtractor(self.config).enrich(pr, img)
+        extractor = StructuredExtractor(self.config)
+        detect_fn = self._get_detection_fn()
+        enricher = lambda pr, img: extractor.enrich(pr, img, detect=detect_fn)
         self._parse_worker = ui.ParseWorker(engine, self._current_page_image.copy(), enricher)
         self._parse_worker.finished.connect(self._on_parse_worker_finished)
         self._parse_worker.error.connect(self._on_parse_worker_error)
@@ -2498,12 +2510,78 @@ class MainWindow(FluentWindow):
         self._btn_parse.setText("解析")
         self._parse_worker = None
 
+    def _get_detection_fn(self):
+        """P1 检测层：RapidOCR 行盒检测（``structured.detection=true`` 时启用）。
+
+        语义与坐标解耦：坐标来自检测层（RapidOCR），不依赖 VLM。任何初始化
+        失败都返回 None（启发式兜底），绝不阻断解析流程。
+        """
+        if not self.config.get("structured", {}).get("detection", False):
+            return None
+        try:
+            from app.core.ocr_engine_rapid import RapidOCREngine
+            ocr_cfg = self.config.get("ocr", {})
+            rapid_cfg = ocr_cfg.get("rapidocr", {})
+            engine = RapidOCREngine(
+                lang=rapid_cfg.get("lang", "ch"),
+                use_gpu=rapid_cfg.get("use_gpu", False),
+                use_angle_cls=ocr_cfg.get("use_angle_cls", True),
+            )
+            if not engine.is_ready:
+                engine.initialize()
+            if engine.is_ready:
+                return engine.detect_lines
+        except Exception:
+            logging.getLogger("PDFOCR").debug(
+                "P1 detection init failed, falling back to heuristic", exc_info=True)
+        return None
+
+    def _on_result_field_selected(self, row: int):
+        """P1 结果→画布：字段行点击 -> 画布高亮对应原文区域并居中
+
+        bbox 为图像像素场景坐标（检测层/Block 路径填充）；无 bbox（检测关闭）
+        时只清除高亮，功能自然降级。
+        """
+        result = getattr(self, '_current_page_result', None)
+        if result is None or result.structured is None:
+            return
+        fields = result.structured.fields
+        if row < 0 or row >= len(fields):
+            return
+        bbox = fields[row].bbox
+        canvas = getattr(self, 'pdf_canvas', None)
+        if canvas is None:
+            return
+        if not bbox or len(bbox) != 4:
+            canvas.clear_highlights()
+            return
+        canvas.highlight_bbox(bbox)
+        canvas.centerOn(QPointF((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2))
+
+    def _on_canvas_bbox_clicked(self, bbox):
+        """P1 画布→结果：点击行盒 -> 右侧选中对应字段行（中心包含判定）"""
+        result = getattr(self, '_current_page_result', None)
+        panel = getattr(self, '_result_panel', None)
+        if result is None or result.structured is None or panel is None:
+            return
+        if not bbox or len(bbox) != 4:
+            return
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+        for i, f in enumerate(result.structured.fields):
+            fb = f.bbox
+            if (fb and len(fb) == 4
+                    and fb[0] <= cx <= fb[2] and fb[1] <= cy <= fb[3]):
+                panel.highlight_row(i)
+                return
+
     def _on_page_parsed(self, result):
         """解析完成回调"""
-        # 更新版面可视化
+        # 更新版面可视化：检测层开启时有 line_boxes（行级盒），否则退回 blocks
+        # （GGUF 整页大框会被 update_blocks 跳过，导航图退化为纯导航）
         if self._layout_view is not None:
             if hasattr(self._layout_view, 'update_blocks'):
-                self._layout_view.update_blocks(result.blocks)
+                self._layout_view.update_blocks(result.line_boxes or result.blocks)
 
         # 更新结果面板（结构化字段已在 worker 线程由 StructuredExtractor.enrich 填充，
         # 校验逻辑并入 extractor，此处不再调用 finance_processor.process）

@@ -95,6 +95,64 @@ class TestRapidOCREngine:
         assert e2.is_ready  # same instance, already initialized
 
 
+class TestDetectLines:
+    """P1 检测层：detect_lines 行盒转换 + 坐标缩放回原始图像空间"""
+
+    @pytest.fixture
+    def engine(self):
+        config = get_default_config()
+        config['ocr']['engine'] = 'rapidocr'
+        e = get_ocr_engine(config)
+        e.initialize()
+        return e
+
+    def test_detect_lines_converts_to_blocks(self, engine, monkeypatch):
+        # 合成 RapidOCR 结果：[4点框, 文本, score]
+        fake_result = [
+            ([[0, 0], [100, 0], [100, 20], [0, 20]], "报关单号：123", 0.95),
+        ]
+        monkeypatch.setattr(engine, "_ocr", lambda arr: (fake_result, 0.5))
+        img = Image.new('RGB', (200, 100), 'white')
+        blocks = engine.detect_lines(img)
+        assert len(blocks) == 1
+        b = blocks[0]
+        assert b.block_type == 'text'
+        assert b.content == "报关单号：123"
+        assert len(b.bbox) == 4
+        assert b.bbox == [0, 0, 100, 20]
+        assert 0.0 <= b.confidence <= 1.0
+
+    def test_detect_lines_scales_back_when_preprocess_resized(self, engine, monkeypatch):
+        # min(size)=30 < 100 → preprocess_for_ocr 放大 ×3；
+        # bbox 必须缩放回原始图像坐标（== 画布场景坐标）
+        fake_result = [
+            ([[0, 0], [150, 0], [150, 30], [0, 30]], "文本", 0.9),
+        ]
+        monkeypatch.setattr(engine, "_ocr", lambda arr: (fake_result, 0.5))
+        img = Image.new('RGB', (50, 30), 'white')
+        blocks = engine.detect_lines(img)
+        assert len(blocks) == 1
+        x1, y1, x2, y2 = blocks[0].bbox
+        assert x1 == 0 and y1 == 0
+        # 预处理图 150×90，框 0..150 × 0..30 → 原图 0..50 × 0..10
+        assert abs(x2 - 50) < 0.01
+        assert abs(y2 - 10) < 0.01
+
+    def test_detect_lines_empty_result(self, engine, monkeypatch):
+        monkeypatch.setattr(engine, "_ocr", lambda arr: (None, 0.5))
+        img = Image.new('RGB', (200, 100), 'white')
+        assert engine.detect_lines(img) == []
+
+    def test_detect_lines_not_ready_returns_empty(self, monkeypatch):
+        from app.core.ocr_engine_rapid import RapidOCREngine
+        RapidOCREngine.reset_instance()
+        engine = RapidOCREngine(lang='ch', use_gpu=False)
+        # 阻止真实初始化（加载 ONNX 模型），验证未就绪兜底
+        monkeypatch.setattr(engine, "initialize", lambda: None)
+        img = Image.new('RGB', (200, 100), 'white')
+        assert engine.detect_lines(img) == []
+
+
 class TestPaddleOCREngine:
     """PaddleOCR-VL引擎功能测试（需要PaddlePaddle GPU）"""
 
@@ -119,7 +177,7 @@ class TestPaddleOCREngine:
         assert isinstance(conf, float)
 
     def test_dummy_region_created_at_module_level(self):
-        from app.core.ocr_engine_paddle import _DummyRegion
+        from app.core.ocr_engine_gguf import _DummyRegion
         dr = _DummyRegion(100, 50, mode='general')
         assert dr.id == '__single__'
         assert dr.x == 0.0
@@ -128,11 +186,21 @@ class TestPaddleOCREngine:
         assert dr.h == 1.0
         assert dr._pixel_bbox == [0, 0, 100, 50]
 
-    def test_calc_max_pixels(self):
-        from app.core.ocr_engine_paddle import PaddleOCREngine
+    def test_image_pixel_limit_rescaling(self):
+        """GGUF 引擎的像素限制缩放逻辑（_image_to_base64）"""
+        import base64, io
+        from app.core.ocr_engine_gguf import GGUFOCREngine
         config = get_default_config()
-        e = PaddleOCREngine(config)
-        # 小图：至少0.5M
-        assert e._calc_max_pixels((100, 100)) >= 512 * 1024
-        # 大图：上限8M
-        assert e._calc_max_pixels((5000, 5000)) <= 8 * 1024 * 1024
+        config['ocr']['engine'] = 'gguf'
+        config['ocr']['gguf']['min_pixels'] = 147384
+        config['ocr']['gguf']['max_pixels'] = 2822400
+        GGUFOCREngine.reset_instance()
+        engine = GGUFOCREngine(config)
+        # 小图（10000 px << min_pixels）应被放大（int 截断允许 <1% 误差）
+        small = Image.new('RGB', (100, 100), 'white')
+        out = Image.open(io.BytesIO(base64.b64decode(engine._image_to_base64(small))))
+        assert out.width * out.height >= 147384 * 0.99
+        # 大图（25M px >> max_pixels）应被缩小到不超过 max_pixels
+        big = Image.new('RGB', (5000, 5000), 'white')
+        out = Image.open(io.BytesIO(base64.b64decode(engine._image_to_base64(big))))
+        assert out.width * out.height <= 2822400

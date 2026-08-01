@@ -132,10 +132,11 @@ class StructuredExtractor:
         for label in self._labels:
             fields.append(self._merge(label, a_fields.get(label), b_fields.get(label)))
 
-        # Block 路径（P1 hook）：P0 阶段 line_boxes 恒为空（detect=None），完全跳过。
-        # Phase 4 接线：line_boxes 非空时用邻近逻辑定锚，field.bbox = 命中的行盒并集。
+        # Block 路径（P1）：line_boxes 非空（检测层已跑）时用文本包含匹配定锚，
+        # field.bbox = 命中的行盒并集（锚点标签盒 + 值盒）。检测关闭（detect=None）
+        # 时 line_boxes 恒为空，完全跳过，P0 行为不变。
         if page_result.line_boxes:
-            self._apply_block_hook(fields)
+            self._apply_block_hook(fields, page_result.line_boxes)
 
         # 校验委托 FinanceProcessor（发票号码/开票日期/金额/价税）
         warnings: List[str] = []
@@ -149,14 +150,39 @@ class StructuredExtractor:
         return StructuredResult(fields=fields, warnings=warnings)
 
     @staticmethod
-    def _apply_block_hook(fields: List[StructuredField]) -> None:
-        """P1 hook：Phase 4 用 ``finance_processor._find_neighbor`` 式邻近逻辑定锚。
+    def _apply_block_hook(fields: List[StructuredField], line_boxes) -> None:
+        """P1：用行盒匹配字段，``field.bbox`` = 命中的行盒并集。
 
-        P0 阶段为结构占位（无检测引擎，line_boxes 恒为空，实际不会走到这里），
-        仅保留扩展点，不执行任何坐标匹配。
+        语义与坐标解耦：坐标来自检测层（RapidOCR 行盒），字段语义来自启发式
+        锚点。对每个有值的字段，找包含其标签文本的行盒与包含其值文本的行盒，
+        二者并集作为 bbox（标签盒与值盒常为同一行，此时并集即该盒）。
+        值跨多行时取所有包含值子串的行盒并集。找不到 → bbox 保持 None。
+
+        Args:
+            fields: 已提取的结构化字段（in-place 修改 bbox）
+            line_boxes: 检测层行盒（Block 列表，content 为行文本）
         """
+        if not line_boxes:
+            return
         for f in fields:
             f.bbox = None
+            if not f.value:
+                continue
+            label_boxes = [b for b in line_boxes if f.label and f.label in b.content]
+            value_boxes = [b for b in line_boxes if f.value and f.value in b.content]
+            boxes = [b for b in (label_boxes + value_boxes) if b.bbox is not None]
+            if not boxes:
+                continue
+            f.bbox = StructuredExtractor._union_boxes(boxes)
+
+    @staticmethod
+    def _union_boxes(boxes) -> Optional[List[float]]:
+        """多个行盒 bbox 的并集（[min_x, min_y, max_x, max_y]）"""
+        xs1 = [b.bbox[0] for b in boxes]
+        ys1 = [b.bbox[1] for b in boxes]
+        xs2 = [b.bbox[2] for b in boxes]
+        ys2 = [b.bbox[3] for b in boxes]
+        return [min(xs1), min(ys1), max(xs2), max(ys2)]
 
     @classmethod
     def _merge(cls, label: str, av: Optional[str], bv: Optional[str]) -> StructuredField:

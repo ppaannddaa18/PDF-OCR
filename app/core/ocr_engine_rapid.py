@@ -7,6 +7,7 @@ from PIL import Image
 import numpy as np
 import threading
 from app.core.ocr_engine_base import OCREngineBase
+from app.models.page_result import Block
 from app.utils.image_utils import preprocess_for_ocr
 
 
@@ -134,6 +135,62 @@ class RapidOCREngine(OCREngineBase):
             text, conf = self.recognize(crop, region.ocr_mode)
             results[region.id] = (text, conf, 0, None)
         return results
+
+    def detect_lines(self, image: Image.Image) -> List[Block]:
+        """行级检测（P1 检测层）— 返回 Block 列表，bbox 为原始图像像素坐标。
+
+        设计（语义与坐标解耦）：坐标来自检测层（RapidOCR），不依赖 VLM。
+        画布场景坐标 == 原始页面图像像素，因此 bbox 可直接映射到画布。
+        注意：``preprocess_for_ocr`` 在 min(size)<100 时会放大 ×3，此时按
+        尺寸比把 bbox 缩放回原始图像坐标。引擎未就绪 / 任何异常 → 返回
+        ``[]``（启发式兜底，绝不抛异常）。
+
+        Returns:
+            行级 ``Block('text', ...)`` 列表（可能为空）
+        """
+        if not self._initialized:
+            # 自动重新初始化（与 recognize 一致）
+            try:
+                self.initialize()
+            except Exception:
+                pass
+            if not self._initialized:
+                return []
+
+        try:
+            img = preprocess_for_ocr(image, "general")
+            arr = np.array(img)
+            with self._ocr_lock:
+                if self._ocr is None:
+                    return []
+                result, _elapse = self._ocr(arr)
+        except Exception:
+            return []
+
+        if not result:
+            return []
+
+        # 预处理可能改变尺寸（min<100 时放大 3 倍）→ 缩放回原始图像坐标
+        sx = image.width / max(1, img.width)
+        sy = image.height / max(1, img.height)
+
+        blocks: List[Block] = []
+        for line in result:
+            try:
+                box, text, score = line[0], line[1], line[2]
+                xs = [p[0] for p in box]
+                ys = [p[1] for p in box]
+                x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+                blocks.append(Block(
+                    block_type="text",
+                    content=str(text),
+                    bbox=[x1 * sx, y1 * sy, x2 * sx, y2 * sy],
+                    confidence=float(score),
+                ))
+            except (TypeError, ValueError, IndexError):
+                # 单行解析失败不影响其余行
+                continue
+        return blocks
 
     @classmethod
     def reset_instance(cls) -> None:

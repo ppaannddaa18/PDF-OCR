@@ -18,7 +18,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTextEdit, QTableWidget,
     QTableWidgetItem, QPushButton, QFileDialog, QStackedWidget,
-    QTabBar, QMessageBox, QHeaderView,
+    QTabBar, QMessageBox, QHeaderView, QAbstractItemView,
 )
 from PyQt6.QtCore import Qt, pyqtSignal as Signal
 from PyQt6.QtGui import QColor
@@ -216,8 +216,18 @@ class ResultPanel(QWidget):
         self._field_table.resizeColumnsToContents()
 
     def _on_field_clicked(self, row: int, column: int):
-        """字段行点击 → field_selected 信号（Phase 4 hook）"""
+        """字段行点击 → field_selected 信号（P1：结果 → 画布联动）"""
         self.field_selected.emit(row)
+
+    def highlight_row(self, index: int):
+        """选中并滚动到字段行（P1：画布点击 → 结果联动）"""
+        if index < 0 or index >= self._field_table.rowCount():
+            return
+        self._field_table.selectRow(index)
+        item = self._field_table.item(index, 0)
+        if item is not None:
+            self._field_table.scrollToItem(
+                item, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     # ---------- 数据接口 ----------
 
