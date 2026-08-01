@@ -222,6 +222,22 @@ class PdfLoader:
         finally:
             self._release_document(pdf_path)
 
+    def page_count(self, pdf_path: str) -> int:
+        """返回 PDF 页数（复用 _get_document/_release_document，带引用计数）
+
+        任何异常（文件不存在/损坏）时返回 0，不向上抛出。
+        """
+        try:
+            doc = self._get_document(pdf_path)
+        except Exception:
+            return 0
+        try:
+            return len(doc)
+        except Exception:
+            return 0
+        finally:
+            self._release_document(pdf_path)
+
     def crop_region(
         self,
         pdf_path: str,

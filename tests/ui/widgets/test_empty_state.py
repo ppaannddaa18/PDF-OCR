@@ -43,6 +43,12 @@ class TestEmptyState:
         assert 'color: #ffffff' in stylesheet
         assert 'color: white' not in stylesheet
 
+    def test_action_button_uses_shared_primary_style(self, qapp):
+        """P2-a：空状态操作按钮复用共享 primary_qss（单一事实源）"""
+        from app.ui.widgets.button_style import primary_qss
+        state = EmptyState('no_files')
+        assert state.action_button.styleSheet().strip() == primary_qss().strip()
+
     def test_switch_variant_hides_action_button(self, qapp):
         # 从有按钮的变体切到 action 为 None 的变体时按钮必须隐藏
         state = EmptyState('no_files')

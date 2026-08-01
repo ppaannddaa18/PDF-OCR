@@ -311,6 +311,10 @@ class MainWindow(FluentWindow):
                 f"color: {ThemeManager.get_color('success')};")
             self.stat_fail.setStyleSheet(
                 f"color: {ThemeManager.get_color('error')};")
+        # P2-a: 主题切换时重建 _btn_parse 的 QSS（烘焙色字符串会过期）
+        if hasattr(self, '_btn_parse'):
+            from app.ui.widgets.button_style import primary_qss
+            self._btn_parse.setStyleSheet(primary_qss())
 
     def _setup_shortcuts(self):
         """设置快捷键
@@ -652,9 +656,12 @@ class MainWindow(FluentWindow):
         toolbar_layout.addWidget(self.toolbar, 1)
 
         # 解析按钮 — 仅 VLM 模式显示（CompactToolbar 之外的补充按钮）
+        # P2-a: 与「导出」一致的主操作按钮样式（共享 button_style.primary_qss）
+        from app.ui.widgets.button_style import primary_qss
         self._btn_parse = QPushButton("解析")
         self._btn_parse.setToolTip("解析当前页面 (VLM 模式)")
         self._btn_parse.setFixedHeight(28)
+        self._btn_parse.setStyleSheet(primary_qss())
         self._btn_parse.clicked.connect(self._on_parse_current_page)
         self._btn_parse.hide()  # 默认隐藏，VLM模式显示
         toolbar_layout.addWidget(self._btn_parse)
@@ -1036,7 +1043,9 @@ class MainWindow(FluentWindow):
 
     def _on_toolbar_engine_changed(self, label: str):
         """CompactToolbar 引擎选择变更（信号携带显示名标签）→ 委托既有引擎切换逻辑"""
-        index = {"GGUF (GPU)": 0, "GGUF (CPU)": 1, "RapidOCR (CPU)": 2}.get(label, -1)
+        index = {
+            "本地 GPU (GGUF)": 0, "本地 CPU (GGUF)": 1, "CPU (RapidOCR)": 2,
+        }.get(label, -1)
         if index >= 0:
             self._on_engine_switched(index)
 
@@ -1467,6 +1476,14 @@ class MainWindow(FluentWindow):
         from pathlib import Path
         self.status_label.setText(f"当前: {Path(pdf_path).name} - 在画布上拖拽框选区域")
 
+        # Task 3 / P2-c: 当前选中文件的页数（懒加载，仅当前文件不批量；
+        # page_count 内部失败返回 0，外层 try/except 兜底避免阻断 UI）
+        try:
+            self.file_panel.set_page_count(
+                pdf_path, self.pdf_loader.page_count(pdf_path))
+        except Exception:
+            pass
+
     def _on_preprocess_changed(self):
         """图像预处理参数改变"""
         if self._current_preprocessor:
@@ -1776,6 +1793,10 @@ class MainWindow(FluentWindow):
         from pathlib import Path
         self.status_label.setText(f"处理中: {Path(current_file).name} ({done}/{total})")
 
+        # Task 3 / P2-c: 正在处理的文件标记为解析中
+        if current_file:
+            self.file_panel.set_parse_status(current_file, 'parsing')
+
         # 更新进度对话框
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
             self.progress_bar_dialog.setValue(done)
@@ -1797,6 +1818,13 @@ class MainWindow(FluentWindow):
 
         self.results = results
         self.result_table.load_results(results)
+
+        # Task 3 / P2-c: 批量完成的文件标记解析结果（成功/失败）
+        for r in results:
+            sf = getattr(r, 'source_file', None)
+            if sf:
+                self.file_panel.set_parse_status(
+                    sf, 'success' if r.success else 'failed')
 
         # 保存到历史记录
         self.history_manager.add_record(results)
@@ -2420,6 +2448,10 @@ class MainWindow(FluentWindow):
             )
             return
 
+        # Task 3 / P2-c: 当前文件标记为解析中（徽标 ⟳）
+        if self._current_pdf:
+            self.file_panel.set_parse_status(self._current_pdf, 'parsing')
+
         self._btn_parse.setEnabled(False)
         self._btn_parse.setText("解析中...")
         self.status_label.setText("正在解析当前页面（最长等待 120 秒）...")
@@ -2439,10 +2471,16 @@ class MainWindow(FluentWindow):
     def _on_parse_worker_finished(self, result):
         """解析成功（主线程槽）"""
         self._current_page_result = result
+        # Task 3 / P2-c: 当前文件标记解析成功（徽标 ✓）
+        if self._current_pdf:
+            self.file_panel.set_parse_status(self._current_pdf, 'success')
         self._on_page_parsed(result)
 
     def _on_parse_worker_error(self, error_msg):
         """解析失败（主线程槽）"""
+        # Task 3 / P2-c: 当前文件标记解析失败（徽标 ⚠）
+        if self._current_pdf:
+            self.file_panel.set_parse_status(self._current_pdf, 'failed')
         InfoBar.error(
             title="解析失败",
             content=str(error_msg),

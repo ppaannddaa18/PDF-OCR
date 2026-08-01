@@ -1,6 +1,8 @@
 # app/ui/widgets/compact_toolbar.py
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QComboBox
+from PyQt6.QtWidgets import (
+    QWidget, QHBoxLayout, QPushButton, QComboBox, QLabel,
+)
 from app.ui.theme_manager import ThemeManager
 from app.ui.widgets.gpu_status import GpuStatusWidget
 
@@ -19,15 +21,16 @@ class CompactToolbar(QWidget):
     nav_toggle_clicked = pyqtSignal()  # 切换版面导航图显示/隐藏
 
     ENGINE_OPTIONS = [
-        'GGUF (GPU)',
-        'GGUF (CPU)',
-        'RapidOCR (CPU)',
+        '本地 GPU (GGUF)',
+        '本地 CPU (GGUF)',
+        'CPU (RapidOCR)',
     ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._icon_buttons = []  # 主题化图标按钮（apply_theme 时重建 QSS）
         self._separators = []    # 主题化分隔线（apply_theme 时重建 QSS）
+        self._captions = []      # 分组 caption（apply_theme 时统一上色）
         self._setup_ui()
         # Task 15：主题切换后由 ThemeManager 触发重建 QSS
         ThemeManager.register_refresh_callback(self.apply_theme)
@@ -44,24 +47,28 @@ class CompactToolbar(QWidget):
         )
         layout.setSpacing(ThemeManager.get_spacing('xs'))
 
-        # 主要操作组
+        # 主要操作组（caption: 操作）
+        self._add_caption(layout, '操作')
         self._create_icon_button(layout, '⬆️', '上传 PDF (Ctrl+O)', self.upload_clicked)
         self._create_icon_button(layout, '🔍', '试识别 (Ctrl+T)', self.test_ocr_clicked)
         self._create_icon_button(layout, '▶️', '批量识别 (Ctrl+Enter)', self.batch_ocr_clicked)
 
-        # 分隔线
-        layout.addSpacing(ThemeManager.get_spacing('sm'))
-        self._add_separator(layout)
-        layout.addSpacing(ThemeManager.get_spacing('sm'))
+        # 分隔线（加宽周围间距强化分组）
+        self._add_separator_with_spacing(layout)
 
-        # 模板操作组
+        # 模板操作组（caption: 模板）
+        self._add_caption(layout, '模板')
         self._create_icon_button(layout, '💾', '保存模板 (Ctrl+S)', self.save_template_clicked)
         self._create_icon_button(layout, '📂', '加载模板', self.load_template_clicked)
 
-        # 分隔线
-        layout.addSpacing(ThemeManager.get_spacing('sm'))
-        self._add_separator(layout)
-        layout.addSpacing(ThemeManager.get_spacing('sm'))
+        # 分隔线（加宽周围间距强化分组）
+        self._add_separator_with_spacing(layout)
+
+        # 推理后端组（caption: 推理后端: + GpuStatusWidget 圆点并入其旁 + 引擎选择）
+        self.engine_caption = QLabel('推理后端:')
+        self.engine_caption.setFont(ThemeManager.get_font('caption'))
+        layout.addWidget(self.engine_caption)
+        self._captions.append(self.engine_caption)
 
         # 引擎状态（集成 GpuStatusWidget：彩色圆点 + 引擎缩写）
         self.engine_status = GpuStatusWidget()
@@ -70,7 +77,7 @@ class CompactToolbar(QWidget):
         # 引擎选择
         self.engine_combo = QComboBox()
         self.engine_combo.addItems(self.ENGINE_OPTIONS)
-        self.engine_combo.setFixedWidth(120)
+        self.engine_combo.setFixedWidth(140)
         self.engine_combo.currentTextChanged.connect(self.engine_changed.emit)
         layout.addWidget(self.engine_combo)
 
@@ -108,6 +115,9 @@ class CompactToolbar(QWidget):
                 padding: 2px 4px;
                 font-size: 12px;
             }}
+            QComboBox:focus {{
+                border-color: {ThemeManager.get_color('border_focus')};
+            }}
         """)
         self._help_btn.setStyleSheet(f"""
             QPushButton {{
@@ -142,6 +152,10 @@ class CompactToolbar(QWidget):
             separator.setStyleSheet(
                 f"background-color: {ThemeManager.get_color('border')};"
             )
+        for caption in self._captions:
+            caption.setStyleSheet(
+                f"color: {ThemeManager.get_color('text_secondary')};"
+            )
 
     def _create_icon_button(self, layout, icon: str, tooltip: str, signal):
         """创建图标按钮"""
@@ -153,6 +167,21 @@ class CompactToolbar(QWidget):
         layout.addWidget(btn)
         self._icon_buttons.append(btn)
         return btn
+
+    def _add_caption(self, layout, text: str):
+        """添加分组 caption（ThemeManager caption 字体；apply_theme 时统一上色）"""
+        label = QLabel(text)
+        label.setFont(ThemeManager.get_font('caption'))
+        layout.addWidget(label)
+        self._captions.append(label)
+        return label
+
+    def _add_separator_with_spacing(self, layout):
+        """添加分隔线并加宽周围间距（强化分组）"""
+        gap = ThemeManager.get_spacing('lg')
+        layout.addSpacing(gap)
+        self._add_separator(layout)
+        layout.addSpacing(gap)
 
     def _add_separator(self, layout):
         """添加分隔线"""

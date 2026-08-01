@@ -21,7 +21,26 @@ class TestCompactToolbar:
     def test_engine_options(self, qapp):
         toolbar = CompactToolbar()
         assert toolbar.engine_combo.count() == 3
-        assert toolbar.engine_combo.itemText(0) == 'GGUF (GPU)'
+        assert toolbar.engine_combo.itemText(0) == '本地 GPU (GGUF)'
+        assert toolbar.engine_combo.itemText(1) == '本地 CPU (GGUF)'
+        assert toolbar.engine_combo.itemText(2) == 'CPU (RapidOCR)'
+
+    def test_engine_caption_before_combo(self, qapp):
+        """推理后端 caption QLabel 存在且位于引擎选择之前（圆点并入其旁）"""
+        toolbar = CompactToolbar()
+        assert hasattr(toolbar, 'engine_caption')
+        assert toolbar.engine_caption.text() == '推理后端:'
+        # caption 字体走 ThemeManager（非硬编码）
+        from app.ui.theme_manager import ThemeManager
+        assert toolbar.engine_caption.font().pointSize() == \
+            ThemeManager.get_font('caption').pointSize()
+
+    def test_group_captions_present(self, qapp):
+        """分组 caption（操作/模板）已加入工具栏"""
+        toolbar = CompactToolbar()
+        texts = [c.text() for c in toolbar._captions]
+        assert '操作' in texts
+        assert '模板' in texts
 
     def test_signals(self, qapp):
         toolbar = CompactToolbar()
@@ -48,7 +67,7 @@ class TestCompactToolbar:
         changed = []
         toolbar.engine_changed.connect(changed.append)
         toolbar.engine_combo.setCurrentIndex(1)
-        assert changed == ['GGUF (CPU)']
+        assert changed == ['本地 CPU (GGUF)']
 
     def test_nav_toggle_signal(self, qapp):
         """导航图开关按钮存在且点击发射 nav_toggle_clicked"""

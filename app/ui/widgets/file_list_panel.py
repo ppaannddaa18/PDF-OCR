@@ -2,9 +2,11 @@
 """Task 8 重构版 FileListPanel：紧凑设计 + 状态色条 + EmptyState 集成
 
 设计要点：
-- 36px 行高，左侧 3px 状态色条（QListWidgetItem 无 setStyleSheet API，
+- 44px 行高，左侧 3px 状态色条（QListWidgetItem 无 setStyleSheet API，
   故用自定义 delegate 绘制色条，颜色在 paint 时从 ThemeManager 解析，
   支持运行时主题切换）
+- Task 3 / P2-c：delegate 额外右对齐绘制页数「N 页」与解析徽标
+  （⟳ 解析中 / ✓ 成功 / ⚠ 失败），数据来自 PAGE_ROLE / PARSE_ROLE
 - 空状态复用统一 EmptyState 组件（'no_files' 变体）
 - 全部颜色/字体/间距来自 ThemeManager，禁止硬编码
 """
@@ -24,6 +26,8 @@ from app.ui.widgets.empty_state import EmptyState
 # 列表项数据角色
 PATH_ROLE = 256  # item.data(PATH_ROLE) -> 文件路径（沿用历史数值，兼容 Qt.UserRole）
 STATUS_ROLE = Qt.ItemDataRole.UserRole + 1  # item.data(STATUS_ROLE) -> 'custom'/'default'/'empty'
+PAGE_ROLE = Qt.ItemDataRole.UserRole + 2    # item.data(PAGE_ROLE) -> int 页数 / None
+PARSE_ROLE = Qt.ItemDataRole.UserRole + 3   # item.data(PARSE_ROLE) -> 'parsing'/'success'/'failed'/None
 
 
 def status_color(status: str) -> str:
@@ -55,14 +59,28 @@ def status_tooltip(filename: str, status: str) -> str:
 
 
 class _StatusBarDelegate(QStyledItemDelegate):
-    """在列表项左侧绘制 3px 状态色条（paint 时实时读取 ThemeManager 颜色）"""
+    """列表项绘制：左侧 3px 配置状态色条 + 右侧页数/解析徽标
+
+    - 左侧色条仍为配置状态（custom/default/empty），来自 STATUS_ROLE
+    - 右侧右对齐绘制「N 页」（text_disabled 小字号）与解析徽标
+      （⟳ 解析中 warning / ✓ 成功 success / ⚠ 失败 error），
+      均从 item 数据角色读取（自包含，不依赖面板 dict），
+      颜色/字体在 paint 时实时解析 ThemeManager，天然主题安全
+    """
 
     BAR_WIDTH = 3
+    RIGHT_OFFSET = 8  # 距右缘间距（px）
+
+    # 解析状态 → 徽标字符 / 主题色角色
+    _BADGE = {'parsing': '⟳', 'success': '✓', 'failed': '⚠'}
+    _BADGE_COLOR = {'parsing': 'warning', 'success': 'success', 'failed': 'error'}
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         super().paint(painter, option, index)
-        bar_color = status_color(index.data(STATUS_ROLE))
         painter.save()
+
+        # 左侧 3px 配置状态色条（沿用 STATUS_ROLE）
+        bar_color = status_color(index.data(STATUS_ROLE))
         painter.fillRect(
             QRect(
                 option.rect.left(), option.rect.top(),
@@ -70,6 +88,51 @@ class _StatusBarDelegate(QStyledItemDelegate):
             ),
             QColor(bar_color),
         )
+
+        # 右侧区域：页数 + 解析徽标（小一号字体，右对齐）
+        font = option.font
+        font.setPointSize(max(1, font.pointSize() - 1))
+        painter.setFont(font)
+
+        page_count = index.data(PAGE_ROLE)
+        parse_status = index.data(PARSE_ROLE)
+
+        # 页数文本「N 页」右对齐（text_disabled）
+        if page_count is not None:
+            text = f"{page_count} 页"
+            text_rect = QRect(
+                option.rect.right() - self.RIGHT_OFFSET
+                - painter.fontMetrics().horizontalAdvance(text),
+                option.rect.top(),
+                painter.fontMetrics().horizontalAdvance(text),
+                option.rect.height(),
+            )
+            painter.setPen(QColor(ThemeManager.get_color('text_disabled')))
+            painter.drawText(
+                text_rect,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                text,
+            )
+
+        # 解析徽标（在页数左侧）
+        if parse_status in self._BADGE:
+            badge = self._BADGE[parse_status]
+            badge_width = painter.fontMetrics().horizontalAdvance(badge) + 6
+            badge_rect = QRect(
+                text_rect.left() - badge_width if page_count is not None
+                else option.rect.right() - self.RIGHT_OFFSET - badge_width,
+                option.rect.top(),
+                badge_width,
+                option.rect.height(),
+            )
+            painter.setPen(QColor(
+                ThemeManager.get_color(self._BADGE_COLOR[parse_status])))
+            painter.drawText(
+                badge_rect,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                badge,
+            )
+
         painter.restore()
 
 
@@ -91,6 +154,8 @@ class FileListPanel(QWidget):
         # 启用拖拽
         self.setAcceptDrops(True)
         self._pdf_configs = {}  # pdf_path -> 配置状态 ("custom"/"default"/"empty")
+        self._page_counts = {}  # pdf_path -> int 页数
+        self._parse_status = {}  # pdf_path -> 'parsing'/'success'/'failed'
         self._pending_timers = []  # 待处理的定时器，用于组件销毁时清理
         self.files = []
 
@@ -111,8 +176,9 @@ class FileListPanel(QWidget):
         self.title.setFont(ThemeManager.get_font('subheading'))
         layout.addWidget(self.title)
 
-        # 文件列表（紧凑设计：36px 行高，悬停/选中背景；
-        # 状态色条由 _StatusBarDelegate paint 时实时解析 ThemeManager，天然主题安全）
+        # 文件列表（紧凑设计：44px 行高，悬停/选中背景；
+        # 状态色条/页数/解析徽标由 _StatusBarDelegate paint 时实时解析
+        # ThemeManager，天然主题安全）
         self.list_widget = QListWidget()
         self.list_widget.setItemDelegate(_StatusBarDelegate(self.list_widget))
         self.list_widget.setUniformItemSizes(True)
@@ -170,7 +236,7 @@ class FileListPanel(QWidget):
                 outline: none;
             }}
             QListWidget::item {{
-                height: 36px;
+                height: 44px;
                 padding-left: {ThemeManager.get_spacing('sm')}px;
                 color: {ThemeManager.get_color('text_primary')};
             }}
@@ -243,10 +309,13 @@ class FileListPanel(QWidget):
         self._add_files_batch(new_paths)
 
     def _add_item(self, path: str) -> QListWidgetItem:
-        """将文件路径加入列表并返回列表项（保持 PATH_ROLE / 状态数据一致）"""
+        """将文件路径加入列表并返回列表项（保持全部数据角色 / tooltip 一致）"""
         item = QListWidgetItem(Path(path).name)
         item.setData(PATH_ROLE, path)
         item.setData(STATUS_ROLE, self._pdf_configs.get(path))
+        item.setData(PAGE_ROLE, self._page_counts.get(path))
+        item.setData(PARSE_ROLE, self._parse_status.get(path))
+        item.setToolTip(self._build_tooltip(path))
         self.list_widget.addItem(item)
         return item
 
@@ -322,13 +391,60 @@ class FileListPanel(QWidget):
             status: 'custom', 'default', 'empty'（'none' 兼容为 'empty'）
         """
         self._pdf_configs[pdf_path] = status
-        # 更新列表项显示
+        self._refresh_item(pdf_path)
+
+    def set_page_count(self, pdf_path: str, n: int):
+        """设置文件页数（列表项右侧显示「N 页」）
+
+        Args:
+            pdf_path: 文件路径
+            n: 页数（None 时清除）
+        """
+        if n is None:
+            self._page_counts.pop(pdf_path, None)
+        else:
+            self._page_counts[pdf_path] = int(n)
+        self._refresh_item(pdf_path)
+
+    def set_parse_status(self, pdf_path: str, status):
+        """设置解析状态（列表项右侧显示解析徽标）
+
+        Args:
+            pdf_path: 文件路径
+            status: 'parsing' / 'success' / 'failed' / None（None 清除）
+        """
+        if status is None:
+            self._parse_status.pop(pdf_path, None)
+        else:
+            self._parse_status[pdf_path] = status
+        self._refresh_item(pdf_path)
+
+    def _build_tooltip(self, pdf_path: str) -> str:
+        """组合 tooltip：配置状态 + 页数 + 解析状态"""
+        name = Path(pdf_path).name
+        parts = [status_tooltip(name, self._pdf_configs.get(pdf_path))]
+        n = self._page_counts.get(pdf_path)
+        if n is not None:
+            parts.append(f"共 {n} 页")
+        parse_hints = {
+            'parsing': '解析中…',
+            'success': '解析成功',
+            'failed': '解析失败',
+        }
+        status = self._parse_status.get(pdf_path)
+        if status in parse_hints:
+            parts.append(parse_hints[status])
+        return "\n".join(parts)
+
+    def _refresh_item(self, pdf_path: str):
+        """刷新指定路径列表项的全部数据角色与 tooltip（局部刷新 viewport）"""
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             if item.data(PATH_ROLE) == pdf_path:
-                name = Path(pdf_path).name
-                item.setData(STATUS_ROLE, status)
-                item.setToolTip(status_tooltip(name, status))
+                item.setData(STATUS_ROLE, self._pdf_configs.get(pdf_path))
+                item.setData(PAGE_ROLE, self._page_counts.get(pdf_path))
+                item.setData(PARSE_ROLE, self._parse_status.get(pdf_path))
+                item.setToolTip(self._build_tooltip(pdf_path))
                 # Qt6 中 QWidget.update() 不接受 rect，需通过 viewport 局部刷新
                 self.list_widget.viewport().update(
                     self.list_widget.visualItemRect(item))
@@ -349,8 +465,8 @@ class FileListPanel(QWidget):
             path = item.data(PATH_ROLE)
             if path in self.files:
                 self.files.remove(path)
-            if path in self._pdf_configs:
-                del self._pdf_configs[path]
+            for d in (self._pdf_configs, self._page_counts, self._parse_status):
+                d.pop(path, None)
             self.list_widget.takeItem(self.list_widget.row(item))
             self._update_empty_state()
             # 发送文件移除信号
@@ -378,6 +494,8 @@ class FileListPanel(QWidget):
     def clear_files(self):
         self.files.clear()
         self._pdf_configs.clear()
+        self._page_counts.clear()
+        self._parse_status.clear()
         self.list_widget.clear()
         self._update_empty_state()
         # 清理待处理的定时器

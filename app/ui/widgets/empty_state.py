@@ -3,6 +3,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
 from PyQt6.QtGui import QFont
 from app.ui.theme_manager import ThemeManager
+from app.ui.widgets.button_style import primary_qss
 
 
 class EmptyState(QWidget):
@@ -87,18 +88,8 @@ class EmptyState(QWidget):
         self.desc_label.setStyleSheet(
             f"color: {ThemeManager.get_color('text_secondary')};"
         )
-        self.action_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('primary')};
-                color: {ThemeManager.get_color('white')};
-                border: none;
-                border-radius: {ThemeManager.get_radius('md')}px;
-                padding: {ThemeManager.get_spacing('sm')}px {ThemeManager.get_spacing('lg')}px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('primary_hover')};
-            }}
-        """)
+        # P2-a: 主操作按钮样式复用共享 single-source 样式（与导出/解析一致）
+        self.action_button.setStyleSheet(primary_qss())
         self.setStyleSheet(
             f"background-color: {ThemeManager.get_color('bg_surface')};"
         )

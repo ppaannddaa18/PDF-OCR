@@ -91,6 +91,12 @@ class TestTabBar:
         panel = ResultPanel()
         assert panel.export_btn.text() == "📥 导出"
 
+    def test_export_button_uses_shared_primary_style(self, qapp):
+        """P2-a：导出按钮复用共享 primary_qss（单一事实源）"""
+        from app.ui.widgets.button_style import primary_qss
+        panel = ResultPanel()
+        assert panel.export_btn.styleSheet().strip() == primary_qss().strip()
+
 
 class TestStructuredFields:
     def test_structured_fields_rendered_with_status_colors(self, qapp):

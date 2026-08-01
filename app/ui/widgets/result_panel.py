@@ -27,6 +27,7 @@ import json
 import logging
 
 from app.ui.theme_manager import ThemeManager
+from app.ui.widgets.button_style import primary_qss
 from app.models.page_result import StructuredResult, FinanceResult
 
 logger = logging.getLogger("PDFOCR")
@@ -135,19 +136,8 @@ class ResultPanel(QWidget):
                 background-color: {ThemeManager.get_color('bg_hover')};
             }}
         """)
-        self.export_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('primary')};
-                color: {ThemeManager.get_color('white')};
-                border: none;
-                border-radius: {ThemeManager.get_radius('md')}px;
-                padding: {ThemeManager.get_spacing('sm')}px
-                         {ThemeManager.get_spacing('lg')}px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('primary_hover')};
-            }}
-        """)
+        # P2-a: 主操作按钮样式复用共享 single-source 样式（与 _btn_parse 一致）
+        self.export_btn.setStyleSheet(primary_qss())
 
     # ---------- 视图切换 ----------
 

@@ -14,7 +14,7 @@ from PyQt6.QtTest import QTest
 
 from app.ui.theme_manager import ThemeManager
 from app.ui.widgets.file_list_panel import (
-    FileListPanel, STATUS_ROLE, PATH_ROLE, status_color,
+    FileListPanel, STATUS_ROLE, PATH_ROLE, PAGE_ROLE, PARSE_ROLE, status_color,
 )
 
 
@@ -192,6 +192,118 @@ class TestStatusIndicator:
             actual = img.pixelColor(1, y).name().lower()
             assert actual == expected[row].lower(), (
                 f"row {row} bar color {actual}, expected {expected[row]}")
+
+
+class TestPageAndParseStatus:
+    """Task 3 / P2-c：页数 + 解析状态数据角色与徽标绘制"""
+
+    def test_set_page_count_updates_item(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf'])
+        panel.set_page_count('a.pdf', 5)
+        item = panel.list_widget.item(0)
+        assert item.data(PAGE_ROLE) == 5
+        assert panel._page_counts['a.pdf'] == 5
+        assert '共 5 页' in item.toolTip()
+
+    def test_set_page_count_unknown_path_no_crash(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf'])
+        panel.set_page_count('ghost.pdf', 3)
+        assert panel.list_widget.item(0).data(PAGE_ROLE) is None
+
+    def test_set_parse_status_cycle(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf'])
+        item = panel.list_widget.item(0)
+        panel.set_parse_status('a.pdf', 'parsing')
+        assert item.data(PARSE_ROLE) == 'parsing'
+        assert '解析中' in item.toolTip()
+        panel.set_parse_status('a.pdf', 'success')
+        assert item.data(PARSE_ROLE) == 'success'
+        assert '解析成功' in item.toolTip()
+        panel.set_parse_status('a.pdf', 'failed')
+        assert item.data(PARSE_ROLE) == 'failed'
+        assert '解析失败' in item.toolTip()
+
+    def test_set_parse_status_none_clears(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf'])
+        panel.set_parse_status('a.pdf', 'success')
+        panel.set_parse_status('a.pdf', None)
+        assert 'a.pdf' not in panel._parse_status
+        assert panel.list_widget.item(0).data(PARSE_ROLE) is None
+
+    def test_add_item_carries_existing_page_and_parse_data(self, qapp):
+        """set_page_count/set_parse_status 后再添加重复路径应带上数据（路径去重不触发，
+        但重新加回文件时 dict 中数据应写入新 item）"""
+        panel = FileListPanel()
+        panel.add_files(['a.pdf'])
+        panel._page_counts['b.pdf'] = 7
+        panel._parse_status['b.pdf'] = 'success'
+        panel.add_files(['b.pdf'])
+        item = panel.list_widget.item(1)
+        assert item.data(PAGE_ROLE) == 7
+        assert item.data(PARSE_ROLE) == 'success'
+
+    def test_remove_selected_cleans_extra_dicts(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf', 'b.pdf'])
+        panel.set_page_count('a.pdf', 3)
+        panel.set_parse_status('a.pdf', 'success')
+        panel.list_widget.setCurrentRow(0)
+        panel.remove_selected()
+        assert 'a.pdf' not in panel._page_counts
+        assert 'a.pdf' not in panel._parse_status
+        assert 'a.pdf' not in panel._pdf_configs
+        assert panel.files == ['b.pdf']
+
+    def test_clear_files_cleans_extra_dicts(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf'])
+        panel.set_page_count('a.pdf', 3)
+        panel.set_parse_status('a.pdf', 'success')
+        panel.clear_files()
+        assert panel._page_counts == {}
+        assert panel._parse_status == {}
+
+    def test_page_and_badge_rendered_in_right_area(self, qapp):
+        """渲染验证：页数文本与解析徽标在行右侧绘制（非背景像素出现）"""
+        from PyQt6.QtGui import QPixmap
+
+        panel = FileListPanel()
+        panel.setFixedSize(240, 160)
+        panel.add_files(['a.pdf', 'b.pdf'])
+        panel.set_page_count('a.pdf', 5)
+        panel.set_parse_status('a.pdf', 'success')
+        panel.set_parse_status('b.pdf', 'parsing')
+        panel.show()
+        qapp.processEvents()
+
+        viewport_rect = panel.list_widget.viewport().rect()
+        visible = []
+        for row in range(panel.list_widget.count()):
+            r = panel.list_widget.visualItemRect(panel.list_widget.item(row))
+            if (viewport_rect.contains(r.topLeft())
+                    and viewport_rect.contains(r.bottomRight())):
+                visible.append(row)
+
+        pix = QPixmap(panel.list_widget.size())
+        panel.list_widget.render(pix)
+        img = pix.toImage()
+
+        bg = ThemeManager.get_color('bg_surface').lower()
+        for row in visible:
+            rect = panel.list_widget.visualItemRect(panel.list_widget.item(row))
+            # 行右侧区域（距右缘 ~40px）应出现非背景像素（徽标/页数文字）
+            right_area = img.copy(
+                max(0, rect.right() - 40), rect.top(), 40, rect.height())
+            colors = set()
+            for x in range(right_area.width()):
+                for y in range(right_area.height()):
+                    colors.add(right_area.pixelColor(x, y).name().lower())
+            assert any(c != bg for c in colors), \
+                f"row {row} right area has no drawn badge/page text"
 
 
 class TestBatchAdd:
