@@ -50,3 +50,21 @@ def test_first_only_returns_one(page):
     pg3.insert_text((72, 120), "X 111")
     assert len(locate_words(pg3, "111", first_only=True)) == 1
     assert len(locate_words(pg3, "111", first_only=False)) >= 2
+
+
+def test_rect_matches_word_not_line_prefix(page):
+    """矩形应从匹配文本开始，不含行首无关词（回归：行首拼接合并 bug）"""
+    words = page.get_text("words")
+    target = next(w for w in words if w[4] == "12345678")
+    x0, y0, x1, y1 = locate_words(page, "12345678")[0]
+    assert x0 >= target[0] - 2
+    assert x1 <= target[2] + 2
+
+
+def test_rect_not_merge_first_line(page):
+    """第二行值的矩形应位于第二行，不从第一行行首开始"""
+    target = next(w for w in page.get_text("words") if w[4] == "99.50")
+    x0, y0, x1, y1 = locate_words(page, "99.50")[0]
+    assert x0 >= target[0] - 2
+    assert x1 <= target[2] + 2
+    assert y0 >= target[1] - 2  # 修复前 y0 会取到第一行（合并了行首词）

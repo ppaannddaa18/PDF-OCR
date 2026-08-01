@@ -63,11 +63,15 @@ class KeywordInspectionPanel(QWidget):
         elif focus_keyword:
             focus = focus_keyword
         if focus:
-            self._highlight_on_text_layer(file_path, page_no, focus, dpi)
+            # 值优先；文本层未命中（OCR 值与文本层格式差异）→ 退而定位关键字本身
+            if not self._highlight_on_text_layer(file_path, page_no, focus, dpi) \
+                    and focus_keyword:
+                self._highlight_on_text_layer(file_path, page_no, focus_keyword, dpi)
         self._fill_table()
 
-    def _highlight_on_text_layer(self, file_path: str, page_no: int, text: str, dpi: int):
-        """fitz 文本层定位 → 画布高亮（pt→像素 scale = dpi/72）"""
+    def _highlight_on_text_layer(self, file_path: str, page_no: int, text: str,
+                                 dpi: int) -> bool:
+        """fitz 文本层定位 → 画布高亮（pt→像素 scale = dpi/72）；返回是否找到"""
         try:
             doc = fitz.open(file_path)
             try:
@@ -79,6 +83,7 @@ class KeywordInspectionPanel(QWidget):
             rects = []
         for r in rects:
             self.canvas.highlight_bbox(r)
+        return bool(rects)
 
     def _fill_table(self):
         self.cell_table.blockSignals(True)

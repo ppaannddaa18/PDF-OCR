@@ -597,6 +597,13 @@ class MainWindow(FluentWindow):
         )
 
         self.navigationInterface.addItem(
+            routeKey='keyword',
+            icon=_icon('fa5s.magic'),
+            text='关键字汇总',
+            onClick=lambda: self.switchTo(self.keyword_page)
+        )
+
+        self.navigationInterface.addItem(
             routeKey='result',
             icon=_icon('fa5s.table'),
             text='识别结果',
@@ -608,13 +615,6 @@ class MainWindow(FluentWindow):
             icon=_icon('fa5s.history'),
             text='历史记录',
             onClick=lambda: self.switchTo(self.history_page)
-        )
-
-        self.navigationInterface.addItem(
-            routeKey='keyword',
-            icon=_icon('fa5s.magic'),
-            text='关键字汇总',
-            onClick=lambda: self.switchTo(self.keyword_page)
         )
 
         # 隐藏返回按钮

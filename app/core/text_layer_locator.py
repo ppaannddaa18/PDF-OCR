@@ -40,10 +40,24 @@ def locate_words(page, text: str, scale: float = 1.0,
         for j in range(i, min(n, i + 64)):
             joined += seq[j]
             if needle in joined:
-                xs = [rects[k][0] for k in range(i, j + 1)]
-                ys = [rects[k][1] for k in range(i, j + 1)]
-                xe = [rects[k][2] for k in range(i, j + 1)]
-                ye = [rects[k][3] for k in range(i, j + 1)]
+                # needle 在拼接串中的字符范围 [pos, end)，映射回覆盖它的 word
+                # 下标 [k0, k1]（只取覆盖段，不从行首合并无关词）
+                pos = joined.find(needle)
+                end = pos + len(needle)
+                acc = 0
+                k0 = k1 = None
+                for k in range(i, j + 1):
+                    wlen = len(seq[k])
+                    if k0 is None and acc + wlen > pos:
+                        k0 = k
+                    if acc + wlen >= end:
+                        k1 = k
+                        break
+                    acc += wlen
+                xs = [rects[k][0] for k in range(k0, k1 + 1)]
+                ys = [rects[k][1] for k in range(k0, k1 + 1)]
+                xe = [rects[k][2] for k in range(k0, k1 + 1)]
+                ye = [rects[k][3] for k in range(k0, k1 + 1)]
                 found.append([min(xs) * scale, min(ys) * scale,
                               max(xe) * scale, max(ye) * scale])
                 break
