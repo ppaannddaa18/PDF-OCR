@@ -19,3 +19,28 @@ class OCRWorker(QThread):
             self.finished.emit(text, confidence)
         except Exception as e:
             self.error.emit(str(e))
+
+
+class ParseWorker(QThread):
+    """VLM 整页解析异步工作线程（recognize_page_auto → PageResult）"""
+    finished = Signal(object)  # PageResult
+    error = Signal(str)
+
+    def __init__(self, ocr_engine, image: Image.Image):
+        super().__init__()
+        self.ocr_engine = ocr_engine
+        self.image = image
+        self._is_cancelled = False
+
+    def cancel(self):
+        """请求取消解析"""
+        self._is_cancelled = True
+
+    def run(self):
+        if self._is_cancelled:
+            return
+        try:
+            result = self.ocr_engine.recognize_page_auto(self.image)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))

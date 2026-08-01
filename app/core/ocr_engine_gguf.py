@@ -142,6 +142,7 @@ class GGUFOCREngine(OCREngineBase):
             self._min_pixels = gguf_cfg.get("min_pixels", 147384)
             self._max_pixels = gguf_cfg.get("max_pixels", 2822400)
             self._nms_postprocess = gguf_cfg.get("nms_postprocess", True)
+            self._timeout = gguf_cfg.get("timeout_seconds", 120)
 
             # 状态
             self._server_process: Optional[subprocess.Popen] = None
@@ -251,11 +252,23 @@ class GGUFOCREngine(OCREngineBase):
             if server_dir not in current_path:
                 env["PATH"] = server_dir + os.pathsep + current_path
 
+            # 确保日志目录存在
+            import sys
+            if getattr(sys, 'frozen', False):
+                base_dir = os.path.dirname(sys.executable)
+            else:
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            os.makedirs(os.path.join(base_dir, "logs"), exist_ok=True)
+            log_path = os.path.join(base_dir, "logs", "llama-server.log")
+            log_file = open(log_path, "a", encoding="utf-8", errors="replace")
+            self._server_log_file = log_file
+            logger.info(f"llama-server output → {log_path}")
+
             # 启动进程（创建新进程组，确保可以整体终止）
             self._server_process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=log_file,
+                stderr=log_file,
                 text=True,
                 cwd=server_dir,
                 env=env,
@@ -285,6 +298,9 @@ class GGUFOCREngine(OCREngineBase):
         url = f"http://{self._host}:{self._port}/health"
 
         while time.time() - start_time < timeout:
+            if self._server_process is not None and self._server_process.poll() is not None:
+                logger.error(f"llama-server exited during startup (code={self._server_process.returncode})")
+                return False
             try:
                 response = requests.get(url, timeout=1)
                 if response.status_code == 200:
@@ -337,6 +353,12 @@ class GGUFOCREngine(OCREngineBase):
                 logger.warning(f"Error stopping server: {e}")
             finally:
                 self._server_process = None
+                if hasattr(self, '_server_log_file') and self._server_log_file is not None:
+                    try:
+                        self._server_log_file.close()
+                    except Exception:
+                        pass
+                    self._server_log_file = None
                 logger.info("llama-server stopped")
 
     def terminate_async(self, callback=None) -> None:
@@ -372,10 +394,12 @@ class GGUFOCREngine(OCREngineBase):
                 logger.info("GGUF OCR engine initializing...")
 
                 # 检查模型文件
-                if not os.path.exists(self._model_path):
-                    raise FileNotFoundError(f"Model not found: {self._model_path}")
-                if not os.path.exists(self._mmproj_path):
-                    raise FileNotFoundError(f"MMProj not found: {self._mmproj_path}")
+                resolved_model = self._resolve_model_path(self._model_path)
+                resolved_mmproj = self._resolve_model_path(self._mmproj_path)
+                if not os.path.exists(resolved_model):
+                    raise FileNotFoundError(f"Model not found: {resolved_model}")
+                if not os.path.exists(resolved_mmproj):
+                    raise FileNotFoundError(f"MMProj not found: {resolved_mmproj}")
 
                 # 启动服务器
                 if not self._start_server():
@@ -583,18 +607,32 @@ class GGUFOCREngine(OCREngineBase):
             debug_prompt = prompt[:200] + "..." if len(prompt) > 200 else prompt
             logger.debug(f"GGUF OCR prompt: {debug_prompt}")
 
-            response = requests.post(url, json=payload, timeout=300)
+            t0 = time.monotonic()
+            response = requests.post(url, json=payload, timeout=self._timeout)
             response.raise_for_status()
 
             result = response.json()
-            return result["choices"][0]["message"]["content"]
+            content = result["choices"][0]["message"]["content"]
+            elapsed = time.monotonic() - t0
+            if content:
+                logger.info(f"GGUF OCR 响应: {response.status_code} | "
+                            f"{len(response.content)} bytes | {len(content)} chars | "
+                            f"耗时 {elapsed:.1f}s | 摘要: {content[:100]!r}")
+            else:
+                logger.info(f"GGUF OCR 响应: {response.status_code} | "
+                            f"{len(response.content)} bytes | 0 chars | "
+                            f"耗时 {elapsed:.1f}s | content 为空")
+            return content
 
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
             logger.error("Cannot connect to llama-server")
-            return None
+            raise RuntimeError("无法连接 llama-server（请检查服务器是否启动）") from e
+        except requests.exceptions.Timeout as e:
+            logger.error(f"OCR request timeout ({self._timeout}s)")
+            raise RuntimeError(f"OCR 请求超时（{self._timeout}s）") from e
         except Exception as e:
             logger.error(f"OCR API error: {e}")
-            return None
+            raise RuntimeError(f"OCR API 错误: {e}") from e
 
     def recognize(self, image: Image.Image, mode: str = "general") -> Tuple[str, float]:
         """单图识别 - 使用配置构建的 prompt"""
@@ -611,6 +649,7 @@ class GGUFOCREngine(OCREngineBase):
         """
         整页自动解析 - 使用配置构建的 prompt
         """
+        self._ensure_loaded()
         t0 = time.monotonic()
         W, H = image.size
 
@@ -620,7 +659,7 @@ class GGUFOCREngine(OCREngineBase):
             text = self._call_ocr_api(image, prompt)
 
             if not text:
-                return PageResult(blocks=[], markdown="", image_size=(W, H))
+                raise RuntimeError("OCR 服务无响应（请检查 llama-server 状态）")
 
             # 根据 confidence_threshold 调整置信度
             # GGUF 模型没有逐字置信度，使用整体置信度
@@ -641,6 +680,7 @@ class GGUFOCREngine(OCREngineBase):
             )]
 
             elapsed = (time.monotonic() - t0) * 1000
+            logger.info(f"GGUF 页面解析完成: {len(blocks)} blocks, {elapsed:.0f}ms, 文本 {len(text)} 字符")
             return PageResult(
                 blocks=blocks,
                 markdown=text,
@@ -652,7 +692,7 @@ class GGUFOCREngine(OCREngineBase):
 
         except Exception as e:
             logger.error(f"GGUF page recognition failed: {e}")
-            return PageResult(blocks=[], markdown="", image_size=(W, H))
+            raise
 
     def recognize_page(
         self, image: Image.Image, regions: List[Any], page_dpi: float = 200
@@ -660,6 +700,7 @@ class GGUFOCREngine(OCREngineBase):
         """
         整页识别 — 委托给 recognize_page_auto，从 PageResult.blocks 做 FieldMatcher 匹配
         """
+        self._ensure_loaded()
         W, H = image.size
 
         # 为每个 region 计算像素坐标

@@ -36,6 +36,7 @@ def _get_ui_components():
         from app.ui.widgets.result_panel import ResultPanel
         from app.ui.widgets.status_bar import StatusBar
         from app.workers.batch_worker import BatchWorker
+        from app.workers.ocr_worker import ParseWorker
         from app.utils.command_history import AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
 
         _UiComponents = type('UiComponents', (), {
@@ -49,6 +50,7 @@ def _get_ui_components():
             'ResultPanel': ResultPanel,
             'StatusBar': StatusBar,
             'BatchWorker': BatchWorker,
+            'ParseWorker': ParseWorker,
             'AddRegionCommand': AddRegionCommand,
             'RemoveRegionCommand': RemoveRegionCommand,
             'UpdateRegionCommand': UpdateRegionCommand,
@@ -180,6 +182,7 @@ class MainWindow(FluentWindow):
 
         self.results = []
         self.worker = None
+        self._parse_worker = None  # 当前页VLM解析 worker（QThread）
         self.state_tooltip = None
         self._last_engine_status = ("", "unavailable")  # GpuStatusWidget.status_changed 最新值
         # 模板名称标签当前是否为默认态（apply_theme 重绘颜色时使用）
@@ -2345,6 +2348,19 @@ class MainWindow(FluentWindow):
 
     def _on_parse_current_page(self):
         """点击'解析'按钮 — 触发当前页VLM解析"""
+        # 防止重复点击启动多个 Worker
+        if self._parse_worker and self._parse_worker.isRunning():
+            InfoBar.warning(
+                title="提示",
+                content="解析正在进行中，请等待完成",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+            return
+
         engine = self.ocr_engine
         if not hasattr(engine, 'recognize_page_auto'):
             InfoBar.error(
@@ -2373,41 +2389,40 @@ class MainWindow(FluentWindow):
 
         self._btn_parse.setEnabled(False)
         self._btn_parse.setText("解析中...")
-        self.status_label.setText("正在解析当前页面...")
+        self.status_label.setText("正在解析当前页面（最长等待 120 秒）...")
 
-        # 在工作线程中执行（避免阻塞UI）
-        import threading
+        # 在 QThread 中执行（避免阻塞UI）；图像在主线程先 copy，防止与主线程修改产生竞态
+        ui = _get_ui_components()
+        self._parse_worker = ui.ParseWorker(engine, self._current_page_image.copy())
+        self._parse_worker.finished.connect(self._on_parse_worker_finished)
+        self._parse_worker.error.connect(self._on_parse_worker_error)
+        self._parse_worker.finished.connect(self._on_parse_worker_cleanup)
+        self._parse_worker.error.connect(self._on_parse_worker_cleanup)
+        self._parse_worker.start()
 
-        def _do_parse():
-            # 复制图像，防止主线程修改导致竞态
-            page_image = self._current_page_image.copy() if self._current_page_image else None
-            try:
-                result = engine.recognize_page_auto(page_image)
-                self._current_page_result = result
+    def _on_parse_worker_finished(self, result):
+        """解析成功（主线程槽）"""
+        self._current_page_result = result
+        self._on_page_parsed(result)
 
-                def _on_done():
-                    self._on_page_parsed(result)
-                QTimer.singleShot(0, _on_done)
-            except Exception as e:
-                def _on_error():
-                    InfoBar.error(
-                        title="解析失败",
-                        content=str(e),
-                        orient=Qt.Orientation.Horizontal,
-                        isClosable=True,
-                        position=InfoBarPosition.TOP,
-                        duration=5000,
-                        parent=self
-                    )
-                    self.status_label.setText("解析失败")
-                QTimer.singleShot(0, _on_error)
-            finally:
-                def _on_finish():
-                    self._btn_parse.setEnabled(True)
-                    self._btn_parse.setText("解析")
-                QTimer.singleShot(0, _on_finish)
+    def _on_parse_worker_error(self, error_msg):
+        """解析失败（主线程槽）"""
+        InfoBar.error(
+            title="解析失败",
+            content=str(error_msg),
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=5000,
+            parent=self
+        )
+        self.status_label.setText("解析失败")
 
-        threading.Thread(target=_do_parse, daemon=True, name="ParsePage").start()
+    def _on_parse_worker_cleanup(self):
+        """解析 worker 结束后的统一清理：恢复按钮、释放引用（参照 _clear_worker）"""
+        self._btn_parse.setEnabled(True)
+        self._btn_parse.setText("解析")
+        self._parse_worker = None
 
     def _on_page_parsed(self, result):
         """解析完成回调"""
@@ -2518,6 +2533,11 @@ class MainWindow(FluentWindow):
                 except Exception:
                     pass
             self.worker.wait(3000)
+
+        # 3.5 停止解析中的 worker（与批量 worker 保持一致：cancel + 最多等3秒）
+        if self._parse_worker and self._parse_worker.isRunning():
+            self._parse_worker.cancel()
+            self._parse_worker.wait(3000)
 
         # 4. 关闭进度对话框
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
