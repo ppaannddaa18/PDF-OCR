@@ -1,0 +1,50 @@
+"""PDF 文本层定位 — fitz 词级坐标匹配（核对高亮的唯一坐标源）
+
+PDF 文本层坐标为 pt（72dpi 基准）；画布场景坐标是渲染 DPI 的图像像素。
+调用方传 scale = render_dpi / 72 换算，与 PdfCanvas 场景一致。
+无文本层 / 未找到 → 返回 []（调用方只渲染不高亮）。
+"""
+from typing import List, Optional
+
+
+def locate_words(page, text: str, scale: float = 1.0,
+                 first_only: bool = True) -> List[List[float]]:
+    """在 PDF 页文本层定位 text（跨词匹配，忽略空白差异）。
+
+    Args:
+        page: fitz.Page 对象
+        text: 要定位的文本（关键字或提取值）
+        scale: pt → 像素换算系数（render_dpi / 72）
+        first_only: True 只返回首现矩形；False 返回全部
+
+    Returns:
+        矩形列表 [x0, y0, x1, y1]（像素坐标）；未找到 → []
+    """
+    if not text:
+        return []
+    try:
+        words = page.get_text("words")  # (x0,y0,x1,y1,word,block,line,no)
+    except Exception:
+        return []
+    if not words:
+        return []
+    needle = text.replace(" ", "")
+    rects = [(w[0], w[1], w[2], w[3]) for w in words]
+    seq = [w[4].replace(" ", "") for w in words]
+    n = len(words)
+    found: List[List[float]] = []
+    for i in range(n):
+        if found and first_only:
+            break
+        joined = ""
+        for j in range(i, min(n, i + 64)):
+            joined += seq[j]
+            if needle in joined:
+                xs = [rects[k][0] for k in range(i, j + 1)]
+                ys = [rects[k][1] for k in range(i, j + 1)]
+                xe = [rects[k][2] for k in range(i, j + 1)]
+                ye = [rects[k][3] for k in range(i, j + 1)]
+                found.append([min(xs) * scale, min(ys) * scale,
+                              max(xe) * scale, max(ye) * scale])
+                break
+    return found
