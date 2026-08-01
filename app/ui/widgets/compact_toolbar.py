@@ -16,6 +16,7 @@ class CompactToolbar(QWidget):
     load_template_clicked = pyqtSignal()
     settings_clicked = pyqtSignal()
     engine_changed = pyqtSignal(str)
+    nav_toggle_clicked = pyqtSignal()  # 切换版面导航图显示/隐藏
 
     ENGINE_OPTIONS = [
         'GGUF (GPU)',
@@ -74,6 +75,10 @@ class CompactToolbar(QWidget):
         layout.addWidget(self.engine_combo)
 
         layout.addStretch()
+
+        # 导航图切换按钮（仅 VLM 模式显示，由主窗口 _switch_ui_mode 控制显隐）
+        self.nav_toggle_btn = self._create_icon_button(
+            layout, '🗺', '切换版面导航图', self.nav_toggle_clicked)
 
         # 设置按钮
         self._create_icon_button(layout, '⚙️', '设置', self.settings_clicked)

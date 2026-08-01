@@ -50,6 +50,16 @@ class TestCompactToolbar:
         toolbar.engine_combo.setCurrentIndex(1)
         assert changed == ['GGUF (CPU)']
 
+    def test_nav_toggle_signal(self, qapp):
+        """导航图开关按钮存在且点击发射 nav_toggle_clicked"""
+        toolbar = CompactToolbar()
+        emitted = []
+        toolbar.nav_toggle_clicked.connect(lambda: emitted.append(True))
+        assert hasattr(toolbar, 'nav_toggle_btn')
+        assert toolbar.nav_toggle_btn.toolTip() == '切换版面导航图'
+        toolbar.nav_toggle_btn.click()
+        assert emitted == [True]
+
     def test_set_engine_status(self, qapp):
         toolbar = CompactToolbar()
         toolbar.set_engine_status('GGUF', 'ready')

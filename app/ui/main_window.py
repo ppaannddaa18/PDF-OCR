@@ -684,6 +684,11 @@ class MainWindow(FluentWindow):
             elif tip == '批量识别 (Ctrl+Enter)' and not hasattr(self, '_btn_batch'):
                 self._btn_batch = btn
 
+        # 导航图切换按钮（仅 VLM 模式显示）
+        self._btn_nav_toggle = self.toolbar.nav_toggle_btn
+        self._btn_nav_toggle.hide()
+        self.toolbar.nav_toggle_clicked.connect(self._on_nav_toggle_clicked)
+
         # 引擎状态桥接（GpuStatusWidget.status_changed 信号：
         # _refresh 发小写 engine_name，set_engine_status 发显示名；
         # Task 13 状态栏重构时将消费该信号）
@@ -754,6 +759,14 @@ class MainWindow(FluentWindow):
         self._layout_view.scrolled.connect(
             self.pdf_canvas.verticalScrollBar().setValue
         )
+
+        # 导航图同步：画布视口矩形 -> 导航图指示矩形（单向，画布为唯一发射源）
+        self.pdf_canvas.viewport_rect_changed.connect(
+            self._layout_view.set_viewport_rect
+        )
+        # 导航图点击 -> 画布 centerOn；关闭按钮 -> 隐藏导航图
+        self._layout_view.navigate.connect(self._on_minimap_navigate)
+        self._layout_view.close_requested.connect(self._hide_layout_view)
 
         workspace_layout.addWidget(canvas_area, 1)
 
@@ -1416,13 +1429,15 @@ class MainWindow(FluentWindow):
                 'sharpen_applied': False,
             })
 
-        self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
         self._current_page_image = self._current_preprocessor.get_current_image()
-        self.preprocess_toolbar.setEnabled(True)
 
-        # 同步设置版面可视化背景图
+        # 同步设置版面可视化背景图（先于 load_image 发射 viewport_rect_changed，
+        # 保证导航图指示矩形在首帧即就绪）
         if self._layout_view is not None:
             self._layout_view.set_page_image_from_pil(self._current_page_image)
+
+        self.pdf_canvas.load_image(self._current_page_image)
+        self.preprocess_toolbar.setEnabled(True)
 
         # 加载该PDF的字段配置（默认或特殊配置）
         template = self._get_effective_template(pdf_path)
@@ -2295,6 +2310,20 @@ class MainWindow(FluentWindow):
         from PyQt6.QtWidgets import QApplication
         QApplication.quit()
 
+    def _on_minimap_navigate(self, pt):
+        """导航图点击 -> 画布 centerOn（pt 为图像像素场景坐标）"""
+        self.pdf_canvas.centerOn(pt)
+
+    def _on_nav_toggle_clicked(self):
+        """导航图开关按钮 -> 切换 _layout_view 显示/隐藏"""
+        if self._layout_view is not None:
+            self._layout_view.setVisible(not self._layout_view.isVisible())
+
+    def _hide_layout_view(self):
+        """导航图 ✕ 关闭按钮 -> 隐藏 _layout_view"""
+        if self._layout_view is not None:
+            self._layout_view.hide()
+
     def _switch_ui_mode(self, mode: str):
         """切换 UI 模式：auto(VLM) ↔ manual(RapidOCR)"""
         if mode == "auto":
@@ -2314,13 +2343,15 @@ class MainWindow(FluentWindow):
             if hasattr(self, 'pdf_canvas') and self.pdf_canvas:
                 if hasattr(self.pdf_canvas, 'set_drawing_enabled'):
                     self.pdf_canvas.set_drawing_enabled(False)
-            # 工具栏切换：隐藏手动OCR按钮，显示解析按钮
+            # 工具栏切换：隐藏手动OCR按钮，显示解析按钮；显示导航图开关
             if hasattr(self, '_btn_try'):
                 self._btn_try.hide()
             if hasattr(self, '_btn_batch'):
                 self._btn_batch.hide()
             if hasattr(self, '_btn_parse'):
                 self._btn_parse.show()
+            if hasattr(self, '_btn_nav_toggle'):
+                self._btn_nav_toggle.show()
         else:
             # 切换到字段面板
             if hasattr(self, '_right_content_stack') and self._right_content_stack is not None:
@@ -2338,13 +2369,15 @@ class MainWindow(FluentWindow):
             if hasattr(self, 'pdf_canvas') and self.pdf_canvas:
                 if hasattr(self.pdf_canvas, 'set_drawing_enabled'):
                     self.pdf_canvas.set_drawing_enabled(True)
-            # 工具栏切换：显示手动OCR按钮，隐藏解析按钮
+            # 工具栏切换：显示手动OCR按钮，隐藏解析按钮；隐藏导航图开关
             if hasattr(self, '_btn_try'):
                 self._btn_try.show()
             if hasattr(self, '_btn_batch'):
                 self._btn_batch.show()
             if hasattr(self, '_btn_parse'):
                 self._btn_parse.hide()
+            if hasattr(self, '_btn_nav_toggle'):
+                self._btn_nav_toggle.hide()
 
     def _on_parse_current_page(self):
         """点击'解析'按钮 — 触发当前页VLM解析"""
