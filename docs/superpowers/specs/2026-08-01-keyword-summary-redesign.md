@@ -87,3 +87,27 @@ UI（qapp）：summary_tree（折叠/底色/徽标/编辑）/summary_page（守�
 ## 9. 约束
 
 颜色走 ThemeManager；`venv/Scripts/python.exe -m pytest tests/`；工作树脏只 add 明确路径；UI 测试复用 conftest qapp fixture。
+
+## 10. 实现偏差记录（Task 1–11 实际实现 vs 本 spec / 实现计划）
+
+| # | 偏差 | 原因与处理 |
+|---|---|---|
+| 1 | `_extract_value` 非模块级函数 | 它是 `StructuredExtractor` 的 staticmethod；`keyword_extractor` 用 `_extract_value = StructuredExtractor._extract_value` 取用，行为不变 |
+| 2 | 精确 pass 跨行锚点跳过 | `_SEP` 尾部 `\s*` 贪婪吞换行符（`价税合计\n¥1,234.56` 的 m.end() 越过行尾），行尾截断失效 → 宽松 L2 永远无法触发。`_exact_pass` 检查 `m.group(0)` 含 `\n` 则跳过交宽松 pass（恢复 spec 决策 12 两级语义） |
+| 3 | 宽松 L3 blob 兜底实际冗余 | 单行时精确 pass 与 L3 等价或更优（`_SEP` 容忍无分隔符），L3 在两级语义下无独有成功场景；保留为安全网，测试改为断言「精确优先」 |
+| 4 | `KeywordBatchWorker._completed_results` 成功路径赋值 | 计划实现只 clear 不赋值，Task 10 取消分支取不到部分结果；`run()` 成功时 `self._completed_results = results` |
+| 5 | tests/conftest.py 新增 | `qapp` fixture 原只在 tests/ui/conftest.py（目录级）；根目录 worker 测试需要，新建根 conftest 提供（tests/ui 的目录级 fixture 优先，无冲突） |
+| 6 | 汇总树 apply_theme 重建整树 | 计划实现 `_refresh_subtree` 只清空不重涂，主题切换后状态底色丢失；改为 `load_results(self._results)` 幂等重建 |
+| 7 | `_KW_SPLIT_RE` 补全角分号 | 计划正则漏 `；`（仅 `;`），用户输入"报关单号,价税合计；发票号码"会切不开 |
+| 8 | Task 10 页面数为 **4 页** 非 3 页 | 模板工作区页保留（方案 B 的"单据处理"），加关键字汇总后 stackedWidget 共 4 页（工作区/识别结果/历史记录/关键字汇总） |
+| 9 | `right_panel`（SlidablePanel）**保留** | 计划 3e 误判"right_panel 已删"；它承载字段面板（模板模式核心），`test_theme_refresh` 的 right_panel 断言保留 |
+| 10 | `_switch_ui_mode` 整体删除 | auto/manual 模式切换 UI（结果面板/解析按钮/导航图）随删除组件失效；模板模式 UI 不随引擎切换，引擎切换仅更新 `_current_mode` 状态 |
+| 11 | `_right_content_stack` 删除 | 删 ResultPanel 后栈中只剩字段面板，直接布局替代 QStackedWidget |
+| 12 | `_invalidate_current_result` 删除 | 双向高亮删除后无高亮源，预处理换图路径的清理调用一并移除（`PdfCanvas.load_image` 内部 `scene_.clear()` 已清所有 item） |
+| 13 | `compact_toolbar` 删除 nav_toggle 按钮/信号 | 导航图删除后按钮残留显示且无连接，一并删除（含其测试） |
+| 14 | 测试修正（计划测试与实现/spec 矛盾处） | blob 截断需列入后文锚点（keywords 加"预录入编号"）；纯汉字剔除行输入改为无标点行（含"：" 按 spec 决策 12 属可信）；`fail_render` 0-based 页码笔误；PyQt6 `QBrush.style()` 返回枚举 `bool()` 恒 True 改用 `== Qt.BrushStyle.NoBrush`；setCurrentText 需切换项才触发信号；无窗口环境用 isHidden 断言显隐 |
+
+### deferred（spec 范围外，后续迭代）
+- 关键字结果进历史记录（HistoryManager 整合）
+- 校验委托 `FinanceProcessor.validate_field` 接入汇总表单元格
+- 关键字集导入/导出文件
