@@ -182,3 +182,29 @@ class TestReviewFixes:
         w._on_preprocess_changed()
         assert w._current_page_result is None
         assert w.pdf_canvas._highlight_items == []
+
+    @pytest.mark.parametrize("action", ["auto_contrast", "sharpen"])
+    def test_preprocess_image_change_paths_clear_stale_result(self, main_window, action):
+        """评审复评：自动对比度/锐化同样换图，旧结果必须一并清除（不漏入口）"""
+        w = main_window
+        w._current_page_result = _make_result()
+        _load_canvas_image(w)
+        w.pdf_canvas.highlight_bbox([10, 10, 110, 30])
+
+        class FakePreprocessor:
+            def auto_contrast(self):
+                pass
+
+            def sharpen(self):
+                pass
+
+            def get_current_image(self):
+                return Image.new("RGB", (200, 150), "white")
+
+        w._current_preprocessor = FakePreprocessor()
+        if action == "auto_contrast":
+            w._on_preprocess_auto_contrast()
+        else:
+            w._on_preprocess_sharpen()
+        assert w._current_page_result is None
+        assert w.pdf_canvas._highlight_items == []

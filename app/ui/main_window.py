@@ -1486,6 +1486,15 @@ class MainWindow(FluentWindow):
         except Exception:
             pass
 
+    def _invalidate_current_result(self):
+        """图像已变：旧解析结果的 bbox 不再对应新图坐标，必须清除。
+
+        所有会替换画布图像的预处理路径（changed/reset/auto_contrast/sharpen）
+        都必须调用本方法，否则旧图坐标的 bbox 会画到新图上（评审 Important #2）。
+        """
+        self._current_page_result = None
+        self.pdf_canvas.clear_highlights()
+
     def _on_preprocess_changed(self):
         """图像预处理参数改变"""
         if self._current_preprocessor:
@@ -1493,9 +1502,7 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.set_params(params)
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
-            # P1: 图像已变，旧解析结果的 bbox 不再对应新图坐标，必须清除
-            self._current_page_result = None
-            self.pdf_canvas.clear_highlights()
+            self._invalidate_current_result()
 
     def _on_preprocess_apply_to_all(self):
         """将当前预处理应用到所有文件"""
@@ -1522,9 +1529,7 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.reset()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
-            # P1: 图像已变，旧解析结果的 bbox 不再对应新图坐标，必须清除
-            self._current_page_result = None
-            self.pdf_canvas.clear_highlights()
+            self._invalidate_current_result()
 
     def _on_preprocess_auto_contrast(self):
         """[修复] 应用自动对比度"""
@@ -1532,6 +1537,7 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.auto_contrast()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
+            self._invalidate_current_result()
 
     def _on_preprocess_sharpen(self):
         """[修复] 应用锐化"""
@@ -1539,6 +1545,7 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.sharpen()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
+            self._invalidate_current_result()
 
     def on_try_ocr(self):
         # 检查OCR引擎是否已初始化且 BatchProcessor 已创建
