@@ -325,6 +325,9 @@ class PdfCanvas(QGraphicsView):
             QPushButton:pressed {{
                 background-color: {ThemeManager.get_color('bg_selected')};
             }}
+            QPushButton:focus {{
+                border: 1px solid {ThemeManager.get_color('border_focus')};
+            }}
         """)
 
     def eventFilter(self, watched, event):

@@ -111,10 +111,10 @@ class TestStructuredFields:
         assert table.item(0, 2).text() == "✓ 已确认"
         assert table.item(0, 2).foreground().color().name() == \
             QColor(ThemeManager.get_color('success')).name()
-        # pending → ⚠ 待确认（warning 色）
+        # pending → ⚠ 待确认（warning_text 色：P3 文本用途压暗版）
         assert table.item(1, 2).text() == "⚠ 待确认"
         assert table.item(1, 2).foreground().color().name() == \
-            QColor(ThemeManager.get_color('warning')).name()
+            QColor(ThemeManager.get_color('warning_text')).name()
         # conflict → ⚠ 冲突（error 色）
         assert table.item(2, 2).text() == "⚠ 冲突"
         assert table.item(2, 2).foreground().color().name() == \

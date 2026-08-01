@@ -27,6 +27,10 @@ def primary_qss() -> str:
         QPushButton:hover {{
             background-color: {ThemeManager.get_color('primary_hover')};
         }}
+        QPushButton:focus {{
+            /* 焦点环：primary 底色上用白环保证键盘导航可见性 */
+            border: 1px solid {ThemeManager.get_color('white')};
+        }}
     """
 
 
@@ -43,6 +47,9 @@ def secondary_qss() -> str:
         }}
         QPushButton:hover {{
             background-color: {ThemeManager.get_color('bg_hover')};
+        }}
+        QPushButton:focus {{
+            border-color: {ThemeManager.get_color('border_focus')};
         }}
         QPushButton:disabled {{
             color: {ThemeManager.get_color('text_disabled')};

@@ -193,6 +193,9 @@ class FieldPanel(QWidget):
                 gridline-color: {ThemeManager.get_color('border')};
                 alternate-background-color: {ThemeManager.get_color('bg_hover')};
             }}
+            QTableWidget:focus {{
+                border: 1px solid {ThemeManager.get_color('border_focus')};
+            }}
             QTableWidget::item {{
                 height: {ROW_HEIGHT}px;
                 padding: {ThemeManager.get_spacing('xs')}px;
@@ -473,9 +476,9 @@ class FieldPanel(QWidget):
                             QBrush(QColor(ThemeManager.get_color('error'))))
                         tooltip += f"\n⚠ 格式错误: {error_msg}"
                     elif fr.confidence < 0.7:
-                        # 置信度低 - 警告色浅底
+                        # 置信度低 - 警告色浅底（文本用途 → warning_text 压暗版）
                         result_item.setBackground(
-                            _translucent('warning', 40))
+                            _translucent('warning_text', 40))
                         tooltip += "\n(置信度较低，建议核对)"
 
                     result_item.setToolTip(tooltip)

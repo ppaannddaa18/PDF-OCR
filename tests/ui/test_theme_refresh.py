@@ -104,6 +104,75 @@ class TestGlobalRefresh:
         assert '#ffffff' in es.styleSheet()
 
 
+class TestFocusRing:
+    """Task 5 焦点环：明暗两主题下组件 QSS 均含 :focus 规则与 border_focus"""
+
+    def test_file_list_focus_qss(self, qapp):
+        from app.ui.widgets.file_list_panel import FileListPanel
+        ThemeManager.set_theme('light')
+        panel = FileListPanel()
+        ss = panel.list_widget.styleSheet()
+        assert ':focus' in ss
+        assert ThemeManager.get_color('border_focus') in ss
+        ThemeManager.set_theme('dark')
+        ss = panel.list_widget.styleSheet()
+        assert ':focus' in ss
+        assert ThemeManager.get_color('border_focus') in ss
+
+    def test_field_panel_focus_qss(self, qapp):
+        from app.ui.widgets.field_panel import FieldPanel
+        ThemeManager.set_theme('light')
+        panel = FieldPanel()
+        ss = panel.table.styleSheet()
+        assert ':focus' in ss
+        assert ThemeManager.get_color('border_focus') in ss
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('border_focus') in panel.table.styleSheet()
+
+    def test_result_panel_focus_qss(self, qapp):
+        from app.ui.widgets.result_panel import ResultPanel
+        ThemeManager.set_theme('light')
+        panel = ResultPanel()
+        table_ss, tab_ss = panel._field_table.styleSheet(), panel.tab_bar.styleSheet()
+        assert ':focus' in table_ss and ':focus' in tab_ss
+        assert ThemeManager.get_color('border_focus') in table_ss
+        assert ThemeManager.get_color('border_focus') in tab_ss
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('border_focus') in panel._field_table.styleSheet()
+        assert ThemeManager.get_color('border_focus') in panel.tab_bar.styleSheet()
+
+    def test_compact_toolbar_focus_qss(self, qapp):
+        from app.ui.widgets.compact_toolbar import CompactToolbar
+        ThemeManager.set_theme('light')
+        bar = CompactToolbar()
+        ss = bar._icon_buttons[0].styleSheet()
+        assert ':focus' in ss
+        assert ThemeManager.get_color('border_focus') in ss
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('border_focus') in bar._icon_buttons[0].styleSheet()
+
+    def test_canvas_zoom_buttons_focus_qss(self, qapp):
+        from app.ui.widgets.pdf_canvas import PdfCanvas
+        ThemeManager.set_theme('light')
+        canvas = PdfCanvas()
+        ss = canvas._btn_fit_width.styleSheet()
+        assert ':focus' in ss
+        assert ThemeManager.get_color('border_focus') in ss
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('border_focus') in canvas._btn_fit_width.styleSheet()
+
+    def test_empty_state_action_button_focus_qss(self, qapp):
+        """primary 按钮焦点环用 white（primary 底色上 border_focus 不可见）"""
+        from app.ui.widgets.empty_state import EmptyState
+        ThemeManager.set_theme('light')
+        es = EmptyState('no_files')
+        ss = es.action_button.styleSheet()
+        assert ':focus' in ss
+        assert ThemeManager.get_color('white') in ss
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('white') in es.action_button.styleSheet()
+
+
 class TestSettingsDialogTheme:
     """设置对话框主题选项：加载 / 即时应用 / 保存"""
 

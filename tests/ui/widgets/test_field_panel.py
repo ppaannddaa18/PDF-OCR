@@ -206,8 +206,9 @@ class TestPreviewResult:
         panel.add_region(make_region('r1', '姓名', 'text'))
         panel.show_preview_result(make_result('r1', '姓名', '张三', 0.5))
         item = panel.table.item(0, 2)
+        # P3: 文本用途改 warning_text（压暗版，圆点用途仍用 warning）
         assert item.background().color().name() == \
-            ThemeManager.get_color('warning').lower()
+            ThemeManager.get_color('warning_text').lower()
         assert '置信度较低' in item.toolTip()
 
     def test_cell_click_shows_detail(self, qapp):

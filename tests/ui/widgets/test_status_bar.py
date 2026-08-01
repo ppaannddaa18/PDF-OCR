@@ -31,6 +31,51 @@ class TestGeometry:
         assert bar.maximumHeight() == 24
 
 
+class TestThreeSections:
+    """Task 5 三区拆分：运行状态 | 操作提示 | 后端状态"""
+
+    def test_three_sections_present(self, qapp):
+        bar = StatusBar()
+        # 区1：运行状态
+        assert isinstance(bar.status_icon, QLabel)
+        assert bar.status_text.text() == '就绪 - 请上传 PDF 文件开始'
+        # 区2：操作提示（「提示:」caption + shortcut_hint）
+        assert bar.hint_caption.text() == '提示:'
+        assert bar.shortcut_hint.text() != ''
+        # 区3：后端状态
+        assert bar.engine_label.text() == '引擎未初始化'
+
+    def test_two_separators_between_sections(self, qapp):
+        bar = StatusBar()
+        assert len(bar._separators) == 2
+        for sep in bar._separators:
+            assert ThemeManager.get_color('border') in sep.styleSheet()
+
+    def test_separators_follow_dark_theme(self, qapp):
+        ThemeManager.set_theme('dark')
+        bar = StatusBar()
+        assert ThemeManager.get_color('border') in bar._separators[0].styleSheet()
+
+    def test_hint_caption_follows_theme(self, qapp):
+        bar = StatusBar()
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('text_disabled') in bar.hint_caption.styleSheet()
+
+
+class TestSetOperationHint:
+    def test_set_operation_hint_text(self, qapp):
+        bar = StatusBar()
+        bar.set_operation_hint('按 F2 快速解析')
+        assert bar.shortcut_hint.text() == '按 F2 快速解析'
+
+    def test_focus_area_overwrites_operation_hint(self, qapp):
+        """set_focus_area 与 set_operation_hint 共用 shortcut_hint，后者最后生效"""
+        bar = StatusBar()
+        bar.set_operation_hint('临时提示')
+        bar.set_focus_area('file_list')
+        assert bar.shortcut_hint.text() == 'Ctrl+O 上传 | Delete 移除 | Space 预览'
+
+
 class TestSetStatus:
     def test_set_status_text(self, qapp):
         bar = StatusBar()

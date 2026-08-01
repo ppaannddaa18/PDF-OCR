@@ -72,8 +72,9 @@ class _StatusBarDelegate(QStyledItemDelegate):
     RIGHT_OFFSET = 8  # 距右缘间距（px）
 
     # 解析状态 → 徽标字符 / 主题色角色
+    # （parsing 是文本徽标 → warning_text 压暗版；圆点用途仍用 warning）
     _BADGE = {'parsing': '⟳', 'success': '✓', 'failed': '⚠'}
-    _BADGE_COLOR = {'parsing': 'warning', 'success': 'success', 'failed': 'error'}
+    _BADGE_COLOR = {'parsing': 'warning_text', 'success': 'success', 'failed': 'error'}
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         super().paint(painter, option, index)
@@ -234,6 +235,9 @@ class FileListPanel(QWidget):
                 background-color: {ThemeManager.get_color('bg_surface')};
                 border: none;
                 outline: none;
+            }}
+            QListWidget:focus {{
+                border: 1px solid {ThemeManager.get_color('border_focus')};
             }}
             QListWidget::item {{
                 height: 44px;

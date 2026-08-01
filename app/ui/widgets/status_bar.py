@@ -1,10 +1,14 @@
-"""StatusBar — 底部状态栏组件（Task 13 重构版：24px 高度 + 动态快捷键提示）
+"""StatusBar — 底部状态栏组件（Task 13 重构 + Task 5 三区版：24px 高度）
 
 设计要点：
-- 24px 固定高度，QHBoxLayout：左侧状态圆点 + 状态文本，右侧引擎状态 + 动态快捷键提示
+- 24px 固定高度，QHBoxLayout 三区 + 1px 分隔线：
+  区1 运行状态（圆点 + 状态文本，可伸展）|
+  区2 操作提示（「提示:」caption + shortcut_hint）|
+  区3 后端状态（引擎圆点 + engine_label）
 - set_status(text, status_type) 设置状态文本与彩色圆点
   （info/success/warning/error → text_secondary/success/warning/error）
-- set_focus_area(area) 动态切换快捷键提示（file_list / pdf_preview / field_panel / global）
+- set_focus_area(area) 动态切换快捷键提示（file_list / pdf_preview / field_panel / global）；
+  set_operation_hint(text) 直接设置操作提示文本（新 API）
 - set_engine_status(engine, status) 消费 GpuStatusWidget.status_changed 信号：
   status 词汇 'ready'|'initializing'|'unavailable'|'cpu_mode' →
   success/warning/error/text_disabled，engine 兼容小写 engine_name（'gguf'）
@@ -64,6 +68,7 @@ class StatusBar(QWidget):
         self._current_focus = 'global'
         self._status_icon_role = 'text_secondary'
         self._engine_icon_role = 'text_disabled'
+        self._separators = []  # 三区之间的 1px 分隔线（apply_theme 时重刷颜色）
         self._setup_ui()
         self.set_focus_area('global')
         # Task 15：主题切换后由 ThemeManager 触发重建 QSS
@@ -79,7 +84,7 @@ class StatusBar(QWidget):
         )
         layout.setSpacing(ThemeManager.get_spacing('sm'))
 
-        # 左侧状态圆点 + 状态文本
+        # ── 区1：运行状态（圆点 + 状态文本，可伸展） ──
         self.status_icon = QLabel('●')
         self._set_dot_color(self.status_icon, 'text_secondary')
         layout.addWidget(self.status_icon)
@@ -93,7 +98,25 @@ class StatusBar(QWidget):
 
         layout.addStretch()
 
-        # 右侧引擎状态（圆点 + 名称，消费 GpuStatusWidget.status_changed）
+        # ── 区1 | 区2 分隔线 ──
+        layout.addWidget(self._make_separator())
+
+        # ── 区2：操作提示（「提示:」caption + shortcut_hint） ──
+        self.hint_caption = QLabel('提示:')
+        self.hint_caption.setFont(ThemeManager.get_font('caption'))
+        layout.addWidget(self.hint_caption)
+
+        self.shortcut_hint = QLabel()
+        self.shortcut_hint.setFont(ThemeManager.get_font('caption'))
+        self.shortcut_hint.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_disabled')};"
+        )
+        layout.addWidget(self.shortcut_hint)
+
+        # ── 区2 | 区3 分隔线 ──
+        layout.addWidget(self._make_separator())
+
+        # ── 区3：后端状态（引擎圆点 + engine_label） ──
         self.engine_icon = QLabel('●')
         self._set_dot_color(self.engine_icon, 'text_disabled')
         layout.addWidget(self.engine_icon)
@@ -104,14 +127,6 @@ class StatusBar(QWidget):
             f"color: {ThemeManager.get_color('text_disabled')};"
         )
         layout.addWidget(self.engine_label)
-
-        # 右侧动态快捷键提示
-        self.shortcut_hint = QLabel()
-        self.shortcut_hint.setFont(ThemeManager.get_font('caption'))
-        self.shortcut_hint.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_disabled')};"
-        )
-        layout.addWidget(self.shortcut_hint)
 
         # 构造时烘焙样式（在全部子控件创建后调用，可安全重复执行）
         self.apply_theme()
@@ -137,6 +152,10 @@ class StatusBar(QWidget):
         """
         self._current_focus = area
         self.shortcut_hint.setText(_FOCUS_HINTS.get(area, _FOCUS_HINTS['global']))
+
+    def set_operation_hint(self, text: str):
+        """设置操作提示文本（区2；与 set_focus_area 共用 shortcut_hint）"""
+        self.shortcut_hint.setText(text)
 
     def set_engine_status(self, engine: str, status: str):
         """显示引擎状态（桥接 GpuStatusWidget.status_changed）
@@ -175,6 +194,13 @@ class StatusBar(QWidget):
         self.shortcut_hint.setStyleSheet(
             f"color: {ThemeManager.get_color('text_disabled')};"
         )
+        self.hint_caption.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_disabled')};"
+        )
+        for separator in self._separators:
+            separator.setStyleSheet(
+                f"background-color: {ThemeManager.get_color('border')};"
+            )
         # 圆点颜色按当前状态角色重绘
         self._set_dot_color(self.status_icon, self._status_icon_role)
         self._set_dot_color(self.engine_icon, self._engine_icon_role)
@@ -191,6 +217,14 @@ class StatusBar(QWidget):
         self.status_text.setText(text)
 
     # ── 内部工具 ──────────────────────────────────────────────
+
+    def _make_separator(self) -> QWidget:
+        """创建 1px 垂直分隔线（主题色 border；apply_theme 重刷）"""
+        separator = QWidget()
+        separator.setFixedWidth(1)
+        separator.setFixedHeight(16)
+        self._separators.append(separator)
+        return separator
 
     def _set_dot_color(self, label: QLabel, color_role: str):
         # 记录当前角色，主题刷新时可重绘

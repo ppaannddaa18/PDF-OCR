@@ -12,7 +12,7 @@ class ToastNotification(QWidget):
 
     TYPE_COLORS = {
         'success': 'success',
-        'warning': 'warning',
+        'warning': 'warning_text',  # 文本/边框用途 → 压暗版；圆点用途仍用 warning
         'error': 'error',
         'info': 'primary',
     }

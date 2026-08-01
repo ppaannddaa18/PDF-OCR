@@ -44,7 +44,7 @@ _STATUS_TEXT = {
 }
 _STATUS_COLOR = {
     "confirmed": "success",
-    "pending": "warning",
+    "pending": "warning_text",  # 文本用途 → 压暗版；圆点用途仍用 warning
     "conflict": "error",
     "not_found": "text_disabled",
 }
@@ -134,6 +134,30 @@ class ResultPanel(QWidget):
             }}
             QTabBar::tab:hover:!selected {{
                 background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QTabBar::tab:focus {{
+                /* 焦点环：键盘 Tab 聚焦的标签页显示焦点色下划线 */
+                border-bottom: 2px solid {ThemeManager.get_color('border_focus')};
+            }}
+        """)
+        # P1 字段表格：基础配色 + 焦点环（键盘导航可见性）
+        self._field_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {ThemeManager.get_color('bg_surface')};
+                border: none;
+                outline: none;
+                gridline-color: {ThemeManager.get_color('border')};
+                alternate-background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QTableWidget:focus {{
+                border: 1px solid {ThemeManager.get_color('border_focus')};
+            }}
+            QTableWidget::item {{
+                padding: {ThemeManager.get_spacing('xs')}px;
+                color: {ThemeManager.get_color('text_primary')};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {ThemeManager.get_color('bg_selected')};
             }}
         """)
         # P2-a: 主操作按钮样式复用共享 single-source 样式（与 _btn_parse 一致）

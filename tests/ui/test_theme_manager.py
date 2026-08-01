@@ -25,6 +25,46 @@ class TestThemeManager:
         with pytest.raises(ValueError, match="Unknown color role"):
             ThemeManager.get_color('nonexistent')
 
+    # ── Task 5 (P3) 对比度 ───────────────────────────────────
+
+    @staticmethod
+    def _relative_luminance(hex_color: str) -> float:
+        """WCAG 相对亮度（sRGB 线性化）"""
+        def channel(c):
+            v = int(c, 16) / 255.0
+            return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b = hex_color[1:3], hex_color[3:5], hex_color[5:7]
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+    @classmethod
+    def _contrast_ratio(cls, fg: str, bg: str) -> float:
+        l1, l2 = cls._relative_luminance(fg), cls._relative_luminance(bg)
+        if l1 < l2:
+            l1, l2 = l2, l1
+        return (l1 + 0.05) / (l2 + 0.05)
+
+    def test_warning_text_role(self):
+        # warning（圆点，亮色）与 warning_text（文本用途，压暗）两角色共存
+        ThemeManager.set_theme('light')
+        assert ThemeManager.get_color('warning') == '#f59e0b'
+        assert ThemeManager.get_color('warning_text') == '#b45309'
+        ThemeManager.set_theme('dark')
+        assert ThemeManager.get_color('warning_text') == '#fbbf24'
+
+    def test_dark_disabled_text_contrast_meets_aa(self):
+        """P3: dark text_disabled on bg_surface 对比度必须 ≥ 4.5:1"""
+        ThemeManager.set_theme('dark')
+        fg = ThemeManager.get_color('text_disabled')
+        bg = ThemeManager.get_color('bg_surface')
+        assert self._contrast_ratio(fg, bg) >= 4.5
+
+    def test_light_warning_text_contrast_meets_aa(self):
+        """P3: light warning_text on white 对比度必须 ≥ 4.5:1（文本用途可读）"""
+        ThemeManager.set_theme('light')
+        fg = ThemeManager.get_color('warning_text')
+        bg = ThemeManager.get_color('bg_surface')
+        assert self._contrast_ratio(fg, bg) >= 4.5
+
     def test_get_font(self):
         font = ThemeManager.get_font('heading')
         assert font.pointSize() == 18
