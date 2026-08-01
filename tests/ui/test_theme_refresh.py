@@ -129,18 +129,6 @@ class TestFocusRing:
         ThemeManager.set_theme('dark')
         assert ThemeManager.get_color('border_focus') in panel.table.styleSheet()
 
-    def test_result_panel_focus_qss(self, qapp):
-        from app.ui.widgets.result_panel import ResultPanel
-        ThemeManager.set_theme('light')
-        panel = ResultPanel()
-        table_ss, tab_ss = panel._field_table.styleSheet(), panel.tab_bar.styleSheet()
-        assert ':focus' in table_ss and ':focus' in tab_ss
-        assert ThemeManager.get_color('border_focus') in table_ss
-        assert ThemeManager.get_color('border_focus') in tab_ss
-        ThemeManager.set_theme('dark')
-        assert ThemeManager.get_color('border_focus') in panel._field_table.styleSheet()
-        assert ThemeManager.get_color('border_focus') in panel.tab_bar.styleSheet()
-
     def test_compact_toolbar_focus_qss(self, qapp):
         from app.ui.widgets.compact_toolbar import CompactToolbar
         ThemeManager.set_theme('light')
@@ -348,5 +336,14 @@ class TestMainWindowSmoke:
             assert '#1f2937' in w.field_panel.table.styleSheet()
             # close 不崩溃
             w.close()
+        finally:
+            w.gpu_status.cleanup()
+
+    def test_keyword_page_present_in_main_window(self, qapp, monkeypatch):
+        """Task 10: 主窗口含关键字汇总页（导航第 3 项）"""
+        w = _construct_main_window(monkeypatch, _make_config(theme='light'))
+        try:
+            assert hasattr(w, "keyword_page")
+            assert w.keyword_page is not None
         finally:
             w.gpu_status.cleanup()

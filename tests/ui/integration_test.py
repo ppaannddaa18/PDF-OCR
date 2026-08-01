@@ -123,10 +123,10 @@ class TestMainWindowCreation:
         assert w.stackedWidget is not None
         assert w.navigationInterface is not None
 
-    def test_three_pages_registered(self, main_window):
-        """三个子页面（工作区/结果/历史）均已加入 stackedWidget"""
+    def test_four_pages_registered(self, main_window):
+        """四个子页面（工作区/结果/历史/关键字汇总）均已加入 stackedWidget"""
         w = main_window
-        assert w.stackedWidget.count() == 3
+        assert w.stackedWidget.count() == 4
         assert w.stackedWidget.currentWidget() is w.template_page
 
     def test_core_layout_widgets_present(self, main_window):
@@ -142,24 +142,6 @@ class TestMainWindowCreation:
         # 状态栏为独立 StatusBar 组件（Task 13），非裸 QLabel
         assert isinstance(w.status_bar, StatusBar)
         assert w.status_label is w.status_bar.status_text  # 兼容属性指向内部文本
-
-    def test_mode_switch_shows_parse_button(self, main_window):
-        """auto(VLM)/manual 模式切换：右面板栈、模板信息、解析按钮联动（可自动化部分）"""
-        w = main_window
-        w.show()  # offscreen：show 后 isVisible 断言才有意义
-        w._switch_ui_mode('auto')
-        assert w._right_content_stack.currentIndex() == 1  # 结果面板
-        assert not w._template_info_widget.isVisible()
-        assert not w._btn_try.isVisible()
-        assert not w._btn_batch.isVisible()
-        assert w._btn_parse.isVisible()
-        w._switch_ui_mode('manual')
-        assert w._right_content_stack.currentIndex() == 0  # 字段面板
-        assert w._template_info_widget.isVisible()
-        assert w._btn_try.isVisible()
-        assert w._btn_batch.isVisible()
-        assert not w._btn_parse.isVisible()
-
 
 class TestPanelToggle:
     def test_left_panel_collapse_expand(self, main_window):

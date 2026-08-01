@@ -5,9 +5,9 @@
 """
 # 核心导入（必须同步加载）
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QStackedWidget, QSplitter, QDialog
+    QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QSplitter, QDialog
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, QEvent, QPointF
+from PyQt6.QtCore import Qt, QSize, QTimer, QEvent
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition,
     TransparentToolButton, TransparentPushButton, SubtitleLabel,
@@ -33,10 +33,8 @@ def _get_ui_components():
         from app.ui.widgets.history_panel import HistoryPanel
         from app.ui.widgets.preprocess_toolbar import ImagePreprocessToolbar
         from app.ui.widgets.loading_overlay import LoadingOverlay
-        from app.ui.widgets.result_panel import ResultPanel
         from app.ui.widgets.status_bar import StatusBar
         from app.workers.batch_worker import BatchWorker
-        from app.workers.ocr_worker import ParseWorker
         from app.utils.command_history import AddRegionCommand, RemoveRegionCommand, UpdateRegionCommand, ClearAllCommand
 
         _UiComponents = type('UiComponents', (), {
@@ -47,10 +45,8 @@ def _get_ui_components():
             'HistoryPanel': HistoryPanel,
             'ImagePreprocessToolbar': ImagePreprocessToolbar,
             'LoadingOverlay': LoadingOverlay,
-            'ResultPanel': ResultPanel,
             'StatusBar': StatusBar,
             'BatchWorker': BatchWorker,
-            'ParseWorker': ParseWorker,
             'AddRegionCommand': AddRegionCommand,
             'RemoveRegionCommand': RemoveRegionCommand,
             'UpdateRegionCommand': UpdateRegionCommand,
@@ -104,8 +100,6 @@ class MainWindow(FluentWindow):
 
         # 双模式状态
         self._current_mode = "auto" if self.config.get("ocr", {}).get("engine") == "gguf" else "manual"
-        # 中面板（版面可视化）— VLM模式下显示
-        self._layout_view = None  # QGraphicsView，延迟创建
         # 右面板 StackedWidget — 根据模式切换子面板
         self._result_stack = None  # QStackedWidget
 
@@ -182,7 +176,6 @@ class MainWindow(FluentWindow):
 
         self.results = []
         self.worker = None
-        self._parse_worker = None  # 当前页VLM解析 worker（QThread）
         self.state_tooltip = None
         self._last_engine_status = ("", "unavailable")  # GpuStatusWidget.status_changed 最新值
         # 模板名称标签当前是否为默认态（apply_theme 重绘颜色时使用）
@@ -201,7 +194,6 @@ class MainWindow(FluentWindow):
         # 图像预处理
         self._current_preprocessor = None
         self._current_page_image = None  # 当前显示的PIL Image
-        self._current_page_result = None  # VLM解析结果（PageResult）
         self._pdf_preprocessors = LRUCache(max_size=20)  # pdf_path -> ImagePreprocessor，使用LRU缓存
 
         # 历史记录管理器
@@ -212,6 +204,14 @@ class MainWindow(FluentWindow):
         self.result_page = self._create_result_page()
         self.history_page = self._create_history_page()
 
+        # 关键字汇总子系统（不依赖引擎，可提前创建；处理器在 _on_ocr_ready 创建）
+        from app.utils.keyword_set_manager import KeywordSetManager
+        self.keyword_set_manager = KeywordSetManager()
+        self.keyword_page = self._create_keyword_summary_page()
+        self._keyword_worker = None
+        self._keyword_results = []
+        self._keyword_processor = None  # _on_ocr_ready 时创建
+
         # 初始化导航
         self._init_navigation()
 
@@ -219,6 +219,7 @@ class MainWindow(FluentWindow):
         self.stackedWidget.addWidget(self.template_page)
         self.stackedWidget.addWidget(self.result_page)
         self.stackedWidget.addWidget(self.history_page)
+        self.stackedWidget.addWidget(self.keyword_page)
         self.stackedWidget.setCurrentWidget(self.template_page)
 
         self._connect_signals()
@@ -231,9 +232,6 @@ class MainWindow(FluentWindow):
 
         # 检查是否有待恢复的任务
         QTimer.singleShot(500, self._check_pending_task)
-
-        # 初始模式同步（引擎切换触发 UI 模式调整）
-        QTimer.singleShot(100, lambda: self._switch_ui_mode(self._current_mode))
 
         # Task 15：注册自身主题刷新（子组件已在构造时注册，先于本行执行）
         ThemeManager.register_refresh_callback(self.apply_theme)
@@ -304,10 +302,6 @@ class MainWindow(FluentWindow):
                 f"color: {ThemeManager.get_color('success')};")
             self.stat_fail.setStyleSheet(
                 f"color: {ThemeManager.get_color('error')};")
-        # P2-a: 主题切换时重建 _btn_parse 的 QSS（烘焙色字符串会过期）
-        if hasattr(self, '_btn_parse'):
-            from app.ui.widgets.button_style import primary_qss
-            self._btn_parse.setStyleSheet(primary_qss())
 
     def _setup_shortcuts(self):
         """设置快捷键
@@ -484,6 +478,10 @@ class MainWindow(FluentWindow):
                 self.pdf_loader, self.ocr_engine, self.config,
                 max_workers=self.config.get("batch", {}).get("max_workers", 4)
             )
+            from app.core.keyword_batch_processor import KeywordBatchProcessor
+            self._keyword_processor = KeywordBatchProcessor(
+                self.pdf_loader, self.ocr_engine, self.config,
+                max_workers=self.config.get("batch", {}).get("max_workers", 4))
         else:
             # 初始化失败，显示错误面板
             error_msg = self.ocr_engine.init_error or "未知错误"
@@ -612,6 +610,13 @@ class MainWindow(FluentWindow):
             onClick=lambda: self.switchTo(self.history_page)
         )
 
+        self.navigationInterface.addItem(
+            routeKey='keyword',
+            icon=_icon('fa5s.magic'),
+            text='关键字汇总',
+            onClick=lambda: self.switchTo(self.keyword_page)
+        )
+
         # 隐藏返回按钮
         self.navigationInterface.setReturnButtonVisible(False)
 
@@ -625,7 +630,6 @@ class MainWindow(FluentWindow):
         from app.ui.widgets.collapsible_panel import CollapsiblePanel
         from app.ui.widgets.slidable_panel import SlidablePanel
         from app.ui.widgets.compact_toolbar import CompactToolbar
-        from app.ui.widgets.layout_visualizer import LayoutVisualizer
 
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -647,17 +651,6 @@ class MainWindow(FluentWindow):
         self.toolbar.settings_clicked.connect(self._on_settings_clicked)
         self.toolbar.engine_changed.connect(self._on_toolbar_engine_changed)
         toolbar_layout.addWidget(self.toolbar, 1)
-
-        # 解析按钮 — 仅 VLM 模式显示（CompactToolbar 之外的补充按钮）
-        # P2-a: 与「导出」一致的主操作按钮样式（共享 button_style.primary_qss）
-        from app.ui.widgets.button_style import primary_qss
-        self._btn_parse = QPushButton("解析")
-        self._btn_parse.setToolTip("解析当前页面 (VLM 模式)")
-        self._btn_parse.setFixedHeight(28)
-        self._btn_parse.setStyleSheet(primary_qss())
-        self._btn_parse.clicked.connect(self._on_parse_current_page)
-        self._btn_parse.hide()  # 默认隐藏，VLM模式显示
-        toolbar_layout.addWidget(self._btn_parse)
 
         # 引擎/GPU 状态别名（兼容既有引用：_on_engine_switched / _on_ocr_ready / closeEvent）
         self.engine_combo = self.toolbar.engine_combo
@@ -683,11 +676,6 @@ class MainWindow(FluentWindow):
                 self._btn_try = btn
             elif tip == '批量识别 (Ctrl+Enter)' and not hasattr(self, '_btn_batch'):
                 self._btn_batch = btn
-
-        # 导航图切换按钮（仅 VLM 模式显示）
-        self._btn_nav_toggle = self.toolbar.nav_toggle_btn
-        self._btn_nav_toggle.hide()
-        self.toolbar.nav_toggle_clicked.connect(self._on_nav_toggle_clicked)
 
         # 引擎状态桥接（GpuStatusWidget.status_changed 信号：
         # _refresh 发小写 engine_name，set_engine_status 发显示名；
@@ -747,30 +735,6 @@ class MainWindow(FluentWindow):
         self.pdf_canvas = ui.PdfCanvas()
         canvas_area_layout.addWidget(self.pdf_canvas, 1)
 
-        self._layout_view = LayoutVisualizer()
-        self._layout_view.setMinimumWidth(200)
-        self._layout_view.hide()  # 默认隐藏，VLM模式显示
-        canvas_area_layout.addWidget(self._layout_view)
-
-        # 滚动同步：pdf_canvas <-> layout_visualizer
-        self.pdf_canvas.verticalScrollBar().valueChanged.connect(
-            self._layout_view.scroll_to
-        )
-        self._layout_view.scrolled.connect(
-            self.pdf_canvas.verticalScrollBar().setValue
-        )
-
-        # 导航图同步：画布视口矩形 -> 导航图指示矩形（单向，画布为唯一发射源）
-        self.pdf_canvas.viewport_rect_changed.connect(
-            self._layout_view.set_viewport_rect
-        )
-        # 导航图点击 -> 画布 centerOn；关闭按钮 -> 隐藏导航图
-        self._layout_view.navigate.connect(self._on_minimap_navigate)
-        self._layout_view.close_requested.connect(self._hide_layout_view)
-
-        # P1 双向高亮：画布点击行盒 -> 右侧选中对应字段行
-        self.pdf_canvas.bbox_clicked.connect(self._on_canvas_bbox_clicked)
-
         workspace_layout.addWidget(canvas_area, 1)
 
         # 底部状态栏（Task 13 将重构为 StatusBar 组件）
@@ -814,21 +778,11 @@ class MainWindow(FluentWindow):
 
         right_content_layout.addWidget(self._template_info_widget)
 
-        # 使用 QStackedWidget 切换手动/自动面板
-        self._right_content_stack = QStackedWidget()
-
-        # 页0：字段面板（手动模式）
+        # 字段面板（模板框选模式）
         self.field_panel = ui.FieldPanel()
         self.field_panel.setMinimumWidth(320)
-        self._right_content_stack.addWidget(self.field_panel)
+        right_content_layout.addWidget(self.field_panel, 1)
 
-        # 页1：结果面板（自动模式）
-        self._result_panel = ui.ResultPanel()
-        self._right_content_stack.addWidget(self._result_panel)
-        # P1 双向高亮：字段行点击 -> 画布高亮对应原文区域并居中
-        self._result_panel.field_selected.connect(self._on_result_field_selected)
-
-        right_content_layout.addWidget(self._right_content_stack, 1)
         self.right_panel.set_content(right_content)
         content_layout.addWidget(self.right_panel)
 
@@ -1398,10 +1352,6 @@ class MainWindow(FluentWindow):
             self._pdf_preview_results[self._current_pdf] = self._current_preview_result
 
         self._current_pdf = pdf_path
-        # P1：切换文件后旧解析结果/高亮不再对应当前页，清理之
-        self._current_page_result = None
-        if hasattr(self, 'pdf_canvas') and self.pdf_canvas:
-            self.pdf_canvas.clear_highlights()
 
         # 加载新 PDF 预览（自动保留已有的框选区域）
         try:
@@ -1442,11 +1392,6 @@ class MainWindow(FluentWindow):
 
         self._current_page_image = self._current_preprocessor.get_current_image()
 
-        # 同步设置版面可视化背景图（先于 load_image 发射 viewport_rect_changed，
-        # 保证导航图指示矩形在首帧即就绪）
-        if self._layout_view is not None:
-            self._layout_view.set_page_image_from_pil(self._current_page_image)
-
         self.pdf_canvas.load_image(self._current_page_image)
         self.preprocess_toolbar.setEnabled(True)
 
@@ -1486,15 +1431,6 @@ class MainWindow(FluentWindow):
         except Exception:
             pass
 
-    def _invalidate_current_result(self):
-        """图像已变：旧解析结果的 bbox 不再对应新图坐标，必须清除。
-
-        所有会替换画布图像的预处理路径（changed/reset/auto_contrast/sharpen）
-        都必须调用本方法，否则旧图坐标的 bbox 会画到新图上（评审 Important #2）。
-        """
-        self._current_page_result = None
-        self.pdf_canvas.clear_highlights()
-
     def _on_preprocess_changed(self):
         """图像预处理参数改变"""
         if self._current_preprocessor:
@@ -1502,7 +1438,6 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.set_params(params)
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
-            self._invalidate_current_result()
 
     def _on_preprocess_apply_to_all(self):
         """将当前预处理应用到所有文件"""
@@ -1529,7 +1464,6 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.reset()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
-            self._invalidate_current_result()
 
     def _on_preprocess_auto_contrast(self):
         """[修复] 应用自动对比度"""
@@ -1537,7 +1471,6 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.auto_contrast()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
-            self._invalidate_current_result()
 
     def _on_preprocess_sharpen(self):
         """[修复] 应用锐化"""
@@ -1545,7 +1478,6 @@ class MainWindow(FluentWindow):
             self._current_preprocessor.sharpen()
             self.pdf_canvas.load_image(self._current_preprocessor.get_current_image())
             self._current_page_image = self._current_preprocessor.get_current_image()
-            self._invalidate_current_result()
 
     def on_try_ocr(self):
         # 检查OCR引擎是否已初始化且 BatchProcessor 已创建
@@ -1619,6 +1551,12 @@ class MainWindow(FluentWindow):
         # 防止重复点击启动多个 Worker
         if self.worker and self.worker.isRunning():
             InfoBar.warning(title="提示", content="批量识别正在进行中，请等待完成",
+                            orient=Qt.Orientation.Horizontal, isClosable=True,
+                            position=InfoBarPosition.TOP, duration=2000, parent=self)
+            return
+        # 互斥守卫：关键字提取进行中不允许启动模板批量识别
+        if self._keyword_worker and self._keyword_worker.isRunning():
+            InfoBar.warning(title="提示", content="关键字提取进行中，请等待完成",
                             orient=Qt.Orientation.Horizontal, isClosable=True,
                             position=InfoBarPosition.TOP, duration=2000, parent=self)
             return
@@ -1881,6 +1819,122 @@ class MainWindow(FluentWindow):
             duration=3000,
             parent=self
         )
+
+    # ---------- 关键字汇总子系统 ----------
+
+    def _create_keyword_summary_page(self) -> QWidget:
+        from app.ui.widgets.keyword_summary_page import KeywordSummaryPage
+        page = KeywordSummaryPage(self.keyword_set_manager)
+        page.extract_requested.connect(self._on_keyword_extract)
+        page.export_requested.connect(self.on_keyword_export)
+        page.save_set_requested.connect(self._on_keyword_save_set)
+        page.manage_sets_requested.connect(self._on_keyword_manage_sets)
+        page.cancel_requested.connect(self._on_keyword_cancel)
+        page.tree.cell_inspect_requested.connect(self._on_cell_inspect)
+        page.inspection.value_edited.connect(self._on_inspection_value_edited)
+        return page
+
+    def _on_keyword_extract(self, keywords: list):
+        if self._keyword_worker and self._keyword_worker.isRunning():
+            InfoBar.warning(title="提示", content="关键字提取正在进行中",
+                            parent=self, duration=2000)
+            return
+        if getattr(self, "worker", None) and self.worker.isRunning():
+            InfoBar.warning(title="提示", content="模板批量识别进行中，请等待完成",
+                            parent=self, duration=2000)
+            return
+        if self._keyword_processor is None:
+            InfoBar.error(title="引擎未就绪", content="请等待 OCR 引擎初始化完成",
+                          parent=self, duration=3000)
+            return
+        files = self.file_panel.all_files()
+        if not files:
+            InfoBar.warning(title="提示", content="请先在文件列表上传 PDF",
+                            parent=self, duration=2000)
+            return
+        from app.workers.keyword_batch_worker import KeywordBatchWorker
+        self.keyword_page.set_running(True)
+        self._keyword_worker = KeywordBatchWorker(self._keyword_processor, files, keywords)
+        self._keyword_worker.progress.connect(self.keyword_page.set_progress)
+        self._keyword_worker.finished_all.connect(self._on_keyword_done)
+        self._keyword_worker.cancelled.connect(self._on_keyword_cancelled)
+        self._keyword_worker.start()
+
+    def _on_keyword_done(self, results):
+        self._keyword_results = results
+        self.keyword_page.set_running(False)
+        self.keyword_page.load_results(results)
+        self.keyword_page.enable_export(True)
+        self.status_label.setText(f"关键字提取完成：{len(results)} 个文件")
+
+    def _on_keyword_cancelled(self):
+        self.keyword_page.set_running(False)
+        partial = list(getattr(self._keyword_worker, "_completed_results", []) or [])
+        if partial:
+            self.keyword_page.load_results(partial)
+            self.keyword_page.enable_export(True)
+        self.status_label.setText("关键字提取已取消")
+
+    def _on_keyword_cancel(self):
+        if self._keyword_worker and self._keyword_worker.isRunning():
+            self._keyword_worker.cancel()
+
+    def _on_keyword_save_set(self, name: str, keywords: list):
+        self.keyword_set_manager.save(name, keywords)
+        self.keyword_page.refresh_sets()
+        InfoBar.success(title="已保存", content=f"关键字集「{name}」",
+                        parent=self, duration=2000)
+
+    def _on_keyword_manage_sets(self):
+        from app.ui.widgets.keyword_set_dialog import KeywordSetDialog
+        dlg = KeywordSetDialog(self.keyword_set_manager, self)
+        dlg.exec()
+        if dlg.result_value():
+            name, kws = dlg.result_value()
+            self.keyword_page.set_combo.setCurrentText(name)
+            self.keyword_page.keyword_input.setText("，".join(kws))
+        self.keyword_page.refresh_sets()
+
+    def on_keyword_export(self):
+        results = self.keyword_page.current_results()
+        if not results:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出关键字汇总", "keyword_summary.xlsx", "Excel (*.xlsx)")
+        if not path:
+            return
+        try:
+            from app.core.keyword_exporter import KeywordExporter
+            KeywordExporter().to_excel(results, path)
+        except Exception as e:
+            InfoBar.error(title="导出失败", content=str(e), parent=self, duration=3000)
+            return
+        InfoBar.success(title="已导出", content=path, parent=self, duration=3000)
+
+    def _on_cell_inspect(self, file_index: int, page_no: int, keyword: str):
+        if file_index < 0 or file_index >= len(self._keyword_results):
+            return
+        fr = self._keyword_results[file_index]
+        if page_no < 1 or page_no > len(fr.pages):
+            return
+        dpi = int(self.config.get("pdf", {}).get("render_dpi", 200))
+        self.keyword_page.inspection._file_index = file_index
+        self.keyword_page.inspection.show_inspection(
+            fr.source_file, page_no, self.pdf_loader, dpi,
+            fr.pages[page_no - 1].cells, keyword)
+        self.keyword_page.inspection.setVisible(True)
+
+    def _on_inspection_value_edited(self, file_index, page_no, keyword, new_value):
+        if file_index < 0 or file_index >= len(self._keyword_results):
+            return
+        fr = self._keyword_results[file_index]
+        if page_no < 1 or page_no > len(fr.pages):
+            return
+        cell = fr.pages[page_no - 1].cells.get(keyword)
+        if cell is not None:
+            cell.value = new_value
+            cell.manually_edited = True
+        self.keyword_page.tree.load_results(self._keyword_results)  # 刷新树
 
     def on_export(self):
         if not self.results:
@@ -2263,11 +2317,10 @@ class MainWindow(FluentWindow):
             parent=self
         )
 
-        # 判断新模式并切换UI
+        # 判断新模式（模板模式 UI 不随引擎切换；_current_mode 供状态追踪）
         new_mode = "auto" if new_engine_type == "gguf" else "manual"
         if new_mode != self._current_mode:
             self._current_mode = new_mode
-            self._switch_ui_mode(new_mode)
 
         # 热切换成功后写入配置文件
         try:
@@ -2353,262 +2406,6 @@ class MainWindow(FluentWindow):
         from PyQt6.QtWidgets import QApplication
         QApplication.quit()
 
-    def _on_minimap_navigate(self, pt):
-        """导航图点击 -> 画布 centerOn（pt 为图像像素场景坐标）"""
-        self.pdf_canvas.centerOn(pt)
-
-    def _on_nav_toggle_clicked(self):
-        """导航图开关按钮 -> 切换 _layout_view 显示/隐藏"""
-        if self._layout_view is not None:
-            self._layout_view.setVisible(not self._layout_view.isVisible())
-
-    def _hide_layout_view(self):
-        """导航图 ✕ 关闭按钮 -> 隐藏 _layout_view"""
-        if self._layout_view is not None:
-            self._layout_view.hide()
-
-    def _switch_ui_mode(self, mode: str):
-        """切换 UI 模式：auto(VLM) ↔ manual(RapidOCR)"""
-        if mode == "auto":
-            # 切换到结果面板
-            if hasattr(self, '_right_content_stack') and self._right_content_stack is not None:
-                self._right_content_stack.setCurrentIndex(1)
-            # 更新标题
-            if hasattr(self, '_right_title'):
-                self._right_title.setText("解析结果")
-            # 隐藏模板信息
-            if hasattr(self, '_template_info_widget'):
-                self._template_info_widget.hide()
-            # 显示版面可视化面板
-            if self._layout_view is not None:
-                self._layout_view.show()
-            # 禁用 PDF canvas 的框选功能
-            if hasattr(self, 'pdf_canvas') and self.pdf_canvas:
-                if hasattr(self.pdf_canvas, 'set_drawing_enabled'):
-                    self.pdf_canvas.set_drawing_enabled(False)
-            # 工具栏切换：隐藏手动OCR按钮，显示解析按钮；显示导航图开关
-            if hasattr(self, '_btn_try'):
-                self._btn_try.hide()
-            if hasattr(self, '_btn_batch'):
-                self._btn_batch.hide()
-            if hasattr(self, '_btn_parse'):
-                self._btn_parse.show()
-            if hasattr(self, '_btn_nav_toggle'):
-                self._btn_nav_toggle.show()
-        else:
-            # 切换到字段面板
-            if hasattr(self, '_right_content_stack') and self._right_content_stack is not None:
-                self._right_content_stack.setCurrentIndex(0)
-            # 更新标题
-            if hasattr(self, '_right_title'):
-                self._right_title.setText("字段配置")
-            # 显示模板信息
-            if hasattr(self, '_template_info_widget'):
-                self._template_info_widget.show()
-            # 隐藏版面可视化
-            if self._layout_view is not None:
-                self._layout_view.hide()
-            # 启用框选
-            if hasattr(self, 'pdf_canvas') and self.pdf_canvas:
-                if hasattr(self.pdf_canvas, 'set_drawing_enabled'):
-                    self.pdf_canvas.set_drawing_enabled(True)
-            # 工具栏切换：显示手动OCR按钮，隐藏解析按钮；隐藏导航图开关
-            if hasattr(self, '_btn_try'):
-                self._btn_try.show()
-            if hasattr(self, '_btn_batch'):
-                self._btn_batch.show()
-            if hasattr(self, '_btn_parse'):
-                self._btn_parse.hide()
-            if hasattr(self, '_btn_nav_toggle'):
-                self._btn_nav_toggle.hide()
-
-    def _on_parse_current_page(self):
-        """点击'解析'按钮 — 触发当前页VLM解析"""
-        # 防止重复点击启动多个 Worker
-        if self._parse_worker and self._parse_worker.isRunning():
-            InfoBar.warning(
-                title="提示",
-                content="解析正在进行中，请等待完成",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=2000,
-                parent=self
-            )
-            return
-
-        engine = self.ocr_engine
-        if not hasattr(engine, 'recognize_page_auto'):
-            InfoBar.error(
-                title="错误",
-                content="当前引擎不支持自动解析",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=3000,
-                parent=self
-            )
-            return
-
-        # 获取当前页图片
-        if self._current_page_image is None:
-            InfoBar.warning(
-                title="提示",
-                content="请先加载PDF文件",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=2000,
-                parent=self
-            )
-            return
-
-        # Task 3 / P2-c: 当前文件标记为解析中（徽标 ⟳）
-        if self._current_pdf:
-            self.file_panel.set_parse_status(self._current_pdf, 'parsing')
-
-        self._btn_parse.setEnabled(False)
-        self._btn_parse.setText("解析中...")
-        self.status_label.setText("正在解析当前页面（最长等待 120 秒）...")
-
-        # 在 QThread 中执行（避免阻塞UI）；图像在主线程先 copy，防止与主线程修改产生竞态
-        # 结构化字段/表格解析/校验在 worker 线程内完成（StructuredExtractor.enrich），不阻塞 UI
-        # P1 检测层：structured.detection=true 时附加 RapidOCR 行盒检测（默认关，探针通过才开）
-        ui = _get_ui_components()
-        from app.core.structured_extractor import StructuredExtractor
-        extractor = StructuredExtractor(self.config)
-        detect_fn = self._get_detection_fn()
-        enricher = lambda pr, img: extractor.enrich(pr, img, detect=detect_fn)
-        self._parse_worker = ui.ParseWorker(engine, self._current_page_image.copy(), enricher)
-        self._parse_worker.finished.connect(self._on_parse_worker_finished)
-        self._parse_worker.error.connect(self._on_parse_worker_error)
-        self._parse_worker.finished.connect(self._on_parse_worker_cleanup)
-        self._parse_worker.error.connect(self._on_parse_worker_cleanup)
-        self._parse_worker.start()
-
-    def _on_parse_worker_finished(self, result):
-        """解析成功（主线程槽）"""
-        self._current_page_result = result
-        # Task 3 / P2-c: 当前文件标记解析成功（徽标 ✓）
-        if self._current_pdf:
-            self.file_panel.set_parse_status(self._current_pdf, 'success')
-        self._on_page_parsed(result)
-
-    def _on_parse_worker_error(self, error_msg):
-        """解析失败（主线程槽）"""
-        # Task 3 / P2-c: 当前文件标记解析失败（徽标 ⚠）
-        if self._current_pdf:
-            self.file_panel.set_parse_status(self._current_pdf, 'failed')
-        InfoBar.error(
-            title="解析失败",
-            content=str(error_msg),
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=5000,
-            parent=self
-        )
-        self.status_label.setText("解析失败")
-
-    def _on_parse_worker_cleanup(self):
-        """解析 worker 结束后的统一清理：恢复按钮、释放引用（参照 _clear_worker）"""
-        self._btn_parse.setEnabled(True)
-        self._btn_parse.setText("解析")
-        self._parse_worker = None
-
-    def _get_detection_fn(self):
-        """P1 检测层：RapidOCR 行盒检测（``structured.detection=true`` 时启用）。
-
-        语义与坐标解耦：坐标来自检测层（RapidOCR），不依赖 VLM。模型加载
-        必须且只在 worker 线程惰性完成（detect_lines 内部懒初始化，主线程
-        绝不 initialize —— 否则 ONNX 加载 0.5–2s+ 会冻结 UI）；初始化失败
-        时 detect_lines 返回 []，启发式兜底，绝不阻断解析流程。
-        """
-        if not self.config.get("structured", {}).get("detection", False):
-            return None
-        try:
-            from app.core.ocr_engine_rapid import RapidOCREngine
-            ocr_cfg = self.config.get("ocr", {})
-            rapid_cfg = ocr_cfg.get("rapidocr", {})
-            engine = RapidOCREngine(
-                lang=rapid_cfg.get("lang", "ch"),
-                use_gpu=rapid_cfg.get("use_gpu", False),
-                use_angle_cls=ocr_cfg.get("use_angle_cls", True),
-            )
-            return engine.detect_lines
-        except Exception:
-            logging.getLogger("PDFOCR").debug(
-                "P1 detection init failed, falling back to heuristic", exc_info=True)
-        return None
-
-    def _on_result_field_selected(self, row: int):
-        """P1 结果→画布：字段行点击 -> 画布高亮对应原文区域并居中
-
-        bbox 为图像像素场景坐标（检测层/Block 路径填充）；无 bbox（检测关闭）
-        时只清除高亮，功能自然降级。
-        """
-        result = getattr(self, '_current_page_result', None)
-        if result is None or result.structured is None:
-            return
-        fields = result.structured.fields
-        if row < 0 or row >= len(fields):
-            return
-        bbox = fields[row].bbox
-        canvas = getattr(self, 'pdf_canvas', None)
-        if canvas is None:
-            return
-        if not bbox or len(bbox) != 4:
-            canvas.clear_highlights()
-            return
-        # 先清旧高亮再画新：连续点击字段行不叠加累积（当前选中语义）
-        canvas.clear_highlights()
-        canvas.highlight_bbox(bbox)
-        canvas.centerOn(QPointF((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2))
-
-    def _on_canvas_bbox_clicked(self, bbox):
-        """P1 画布→结果：点击行盒 -> 右侧选中对应字段行（中心包含判定）"""
-        result = getattr(self, '_current_page_result', None)
-        panel = getattr(self, '_result_panel', None)
-        if result is None or result.structured is None or panel is None:
-            return
-        if not bbox or len(bbox) != 4:
-            return
-        cx = (bbox[0] + bbox[2]) / 2
-        cy = (bbox[1] + bbox[3]) / 2
-        for i, f in enumerate(result.structured.fields):
-            fb = f.bbox
-            if (fb and len(fb) == 4
-                    and fb[0] <= cx <= fb[2] and fb[1] <= cy <= fb[3]):
-                panel.highlight_row(i)
-                return
-
-    def _on_page_parsed(self, result):
-        """解析完成回调"""
-        # 更新版面可视化：检测层开启时有 line_boxes（行级盒），否则退回 blocks
-        # （GGUF 整页大框会被 update_blocks 跳过，导航图退化为纯导航）
-        if self._layout_view is not None:
-            if hasattr(self._layout_view, 'update_blocks'):
-                self._layout_view.update_blocks(result.line_boxes or result.blocks)
-
-        # 更新结果面板（结构化字段已在 worker 线程由 StructuredExtractor.enrich 填充，
-        # 校验逻辑并入 extractor，此处不再调用 finance_processor.process）
-        if hasattr(self, '_result_panel') and self._result_panel is not None:
-            self._result_panel.load_result(result)
-
-        self.status_label.setText(
-            f"解析完成 — 识别 {len(result.blocks)} 个元素, "
-            f"耗时 {result.inference_time_ms:.0f}ms"
-        )
-        InfoBar.success(
-            title="解析完成",
-            content=f"识别 {len(result.blocks)} 个元素, 耗时 {result.inference_time_ms:.0f}ms",
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.BOTTOM_RIGHT,
-            duration=3000,
-            parent=self
-        )
-
     def closeEvent(self, event):
         """窗口关闭时异步执行清理，避免UI冻结"""
         # 防止重复触发
@@ -2684,11 +2481,6 @@ class MainWindow(FluentWindow):
                 except Exception:
                     pass
             self.worker.wait(3000)
-
-        # 3.5 停止解析中的 worker（与批量 worker 保持一致：cancel + 最多等3秒）
-        if self._parse_worker and self._parse_worker.isRunning():
-            self._parse_worker.cancel()
-            self._parse_worker.wait(3000)
 
         # 4. 关闭进度对话框
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
