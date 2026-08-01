@@ -2392,8 +2392,11 @@ class MainWindow(FluentWindow):
         self.status_label.setText("正在解析当前页面（最长等待 120 秒）...")
 
         # 在 QThread 中执行（避免阻塞UI）；图像在主线程先 copy，防止与主线程修改产生竞态
+        # 结构化字段/表格解析/校验在 worker 线程内完成（StructuredExtractor.enrich），不阻塞 UI
         ui = _get_ui_components()
-        self._parse_worker = ui.ParseWorker(engine, self._current_page_image.copy())
+        from app.core.structured_extractor import StructuredExtractor
+        enricher = lambda pr, img: StructuredExtractor(self.config).enrich(pr, img)
+        self._parse_worker = ui.ParseWorker(engine, self._current_page_image.copy(), enricher)
         self._parse_worker.finished.connect(self._on_parse_worker_finished)
         self._parse_worker.error.connect(self._on_parse_worker_error)
         self._parse_worker.finished.connect(self._on_parse_worker_cleanup)
@@ -2431,18 +2434,10 @@ class MainWindow(FluentWindow):
             if hasattr(self._layout_view, 'update_blocks'):
                 self._layout_view.update_blocks(result.blocks)
 
-        # 财务字段提取
-        finance_result = None
-        if result.blocks:
-            try:
-                if self._finance_processor is not None:
-                    finance_result = self._finance_processor.process(result.blocks)
-            except Exception:
-                pass
-
-        # 更新结果面板
+        # 更新结果面板（结构化字段已在 worker 线程由 StructuredExtractor.enrich 填充，
+        # 校验逻辑并入 extractor，此处不再调用 finance_processor.process）
         if hasattr(self, '_result_panel') and self._result_panel is not None:
-            self._result_panel.load_result(result, finance_result)
+            self._result_panel.load_result(result)
 
         self.status_label.setText(
             f"解析完成 — 识别 {len(result.blocks)} 个元素, "

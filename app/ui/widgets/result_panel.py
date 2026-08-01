@@ -1,11 +1,14 @@
 """ResultPanel — VLM解析结果展示 + 导出（Task 12 重构版：QTabBar 标签页切换视图）
 
 设计要点：
-- QTabBar（3 个标签：Markdown预览/字段提取/表格数据）替代原下拉框视图切换，
+- QTabBar（3 个标签：字段提取/Markdown预览/表格数据）替代原下拉框视图切换，
   标签页与 QStackedWidget 内容区通过 currentChanged 信号联动
-- set_view() 保留按索引/名称切换视图的接口语义
-- 三个视图内容组件完整保留：Markdown 预览、字段提取表格（3 列+校验状态）、
-  表格数据预览
+- P0-a 结构化默认视图：字段提取为默认 Tab 0，Markdown 降为非默认原文视图
+- 字段表格 3 列（字段/值/状态），状态文案 ✓ 已确认 / ⚠ 待确认 / ⚠ 冲突 / — 未找到，
+  颜色走 ThemeManager 的 success/warning/error/text_disabled
+- 数据源 page_result.structured.fields（StructuredResult）；兼容旧 2 参
+  load_result(pr, finance_result) 的 FinanceResult 路径
+- field_selected(row) 信号：字段行点击（Phase 4 hook）
 - 导出按钮保留（📥 导出），支持 md/json/docx/xlsx 四种格式
 - 全部颜色/字体/间距来自 ThemeManager，禁止硬编码颜色
   （原校验失败硬编码红色 QColor(0xd1,0x34,0x38) → 主题 error 色）
@@ -17,27 +20,44 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QPushButton, QFileDialog, QStackedWidget,
     QTabBar, QMessageBox, QHeaderView,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal as Signal
 from PyQt6.QtGui import QColor
 from typing import Optional
 import json
 import logging
 
 from app.ui.theme_manager import ThemeManager
+from app.models.page_result import StructuredResult, FinanceResult
 
 logger = logging.getLogger("PDFOCR")
 
-# 标签页顺序（索引即 content_stack 页面索引）
-TAB_LABELS = ["Markdown预览", "字段提取", "表格数据"]
+# 标签页顺序（索引即 content_stack 页面索引）：结构化字段为默认 Tab 0
+TAB_LABELS = ["字段提取", "Markdown预览", "表格数据"]
+
+# 结构化字段状态 → 展示文案 / 主题色角色（禁止硬编码颜色）
+_STATUS_TEXT = {
+    "confirmed": "✓ 已确认",
+    "pending": "⚠ 待确认",
+    "conflict": "⚠ 冲突",
+    "not_found": "— 未找到",
+}
+_STATUS_COLOR = {
+    "confirmed": "success",
+    "pending": "warning",
+    "conflict": "error",
+    "not_found": "text_disabled",
+}
 
 
 class ResultPanel(QWidget):
-    """右面板：Markdown预览 / 字段提取 / 表格数据 + 导出（标签页切换）"""
+    """右面板：字段提取 / Markdown预览 / 表格数据 + 导出（标签页切换）"""
+
+    field_selected = Signal(int)  # 字段行点击（Phase 4 hook）
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._page_result = None
-        self._finance_result = None
+        self._structured = None  # StructuredResult | FinanceResult | None
         self._init_ui()
         # Task 15：主题切换后由 ThemeManager 触发重建 QSS
         ThemeManager.register_refresh_callback(self.apply_theme)
@@ -53,15 +73,11 @@ class ResultPanel(QWidget):
             self.tab_bar.addTab(label)
         layout.addWidget(self.tab_bar)
 
-        # 内容区（堆叠视图）
+        # 内容区（堆叠视图）— 顺序必须与 TAB_LABELS 一致：
+        # 索引0=字段提取 / 1=Markdown预览 / 2=表格数据
         self.content_stack = QStackedWidget()
 
-        # 视图0: Markdown预览
-        self._md_view = QTextEdit()
-        self._md_view.setReadOnly(True)
-        self.content_stack.addWidget(self._md_view)
-
-        # 视图1: 字段提取表格
+        # 视图0: 字段提取表格（结构化默认视图）
         self._field_table = QTableWidget()
         self._field_table.setColumnCount(3)
         self._field_table.setHorizontalHeaderLabels(["字段", "值", "状态"])
@@ -74,7 +90,13 @@ class ResultPanel(QWidget):
         )
         self._field_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._field_table.setAlternatingRowColors(True)
+        self._field_table.cellClicked.connect(self._on_field_clicked)
         self.content_stack.addWidget(self._field_table)
+
+        # 视图1: Markdown预览（原文视图）
+        self._md_view = QTextEdit()
+        self._md_view.setReadOnly(True)
+        self.content_stack.addWidget(self._md_view)
 
         # 视图2: 表格数据预览
         self._table_view = QTextEdit()
@@ -143,23 +165,11 @@ class ResultPanel(QWidget):
         if self._page_result is None:
             return
         if idx == 0:
-            # Markdown
-            self._md_view.setMarkdown(self._page_result.markdown or "(无内容)")
+            # 字段提取（结构化默认视图）
+            self._render_fields()
         elif idx == 1:
-            # 字段提取
-            if self._finance_result and self._finance_result.fields:
-                self._field_table.setRowCount(len(self._finance_result.fields))
-                for i, f in enumerate(self._finance_result.fields):
-                    self._field_table.setItem(i, 0, QTableWidgetItem(f.label))
-                    self._field_table.setItem(i, 1, QTableWidgetItem(str(f.value or "")))
-                    status = "✓" if f.validated else f"⚠ {f.validation_msg}"
-                    item = QTableWidgetItem(status)
-                    if not f.validated:
-                        item.setForeground(QColor(ThemeManager.get_color('error')))
-                    self._field_table.setItem(i, 2, item)
-                self._field_table.resizeColumnsToContents()
-            else:
-                self._field_table.setRowCount(0)
+            # Markdown 原文视图
+            self._md_view.setMarkdown(self._page_result.markdown or "(无内容)")
         elif idx == 2:
             # 表格数据
             if self._page_result.tables:
@@ -175,18 +185,66 @@ class ResultPanel(QWidget):
             else:
                 self._table_view.setPlainText("(未检测到表格)")
 
+    def _render_fields(self):
+        """渲染字段表格：StructuredResult → 新状态语义；FinanceResult → 旧路径；None → 空"""
+        st = self._structured
+        if isinstance(st, StructuredResult):
+            self._render_structured_fields(st)
+        elif isinstance(st, FinanceResult):
+            self._render_finance_fields(st)
+        else:
+            self._field_table.setRowCount(0)
+
+    def _render_structured_fields(self, st: StructuredResult):
+        """新状态语义：✓ 已确认 / ⚠ 待确认 / ⚠ 冲突 / — 未找到（主题色）"""
+        fields = st.fields
+        self._field_table.setRowCount(len(fields))
+        for i, f in enumerate(fields):
+            self._field_table.setItem(i, 0, QTableWidgetItem(f.label))
+            self._field_table.setItem(i, 1, QTableWidgetItem(str(f.value or "")))
+            item = QTableWidgetItem(_STATUS_TEXT.get(f.status, f.status))
+            color_role = _STATUS_COLOR.get(f.status)
+            if color_role:
+                item.setForeground(QColor(ThemeManager.get_color(color_role)))
+            self._field_table.setItem(i, 2, item)
+        self._field_table.resizeColumnsToContents()
+
+    def _render_finance_fields(self, st: FinanceResult):
+        """兼容旧 2 参 load_result(pr, FinanceResult) 的 FinanceField 渲染路径"""
+        if not st.fields:
+            self._field_table.setRowCount(0)
+            return
+        self._field_table.setRowCount(len(st.fields))
+        for i, f in enumerate(st.fields):
+            self._field_table.setItem(i, 0, QTableWidgetItem(f.label))
+            self._field_table.setItem(i, 1, QTableWidgetItem(str(f.value or "")))
+            status = "✓" if f.validated else f"⚠ {f.validation_msg}"
+            item = QTableWidgetItem(status)
+            if not f.validated:
+                item.setForeground(QColor(ThemeManager.get_color('error')))
+            self._field_table.setItem(i, 2, item)
+        self._field_table.resizeColumnsToContents()
+
+    def _on_field_clicked(self, row: int, column: int):
+        """字段行点击 → field_selected 信号（Phase 4 hook）"""
+        self.field_selected.emit(row)
+
     # ---------- 数据接口 ----------
 
-    def load_result(self, page_result, finance_result=None):
-        """加载解析结果"""
+    def load_result(self, page_result, structured_result=None):
+        """加载解析结果（兼容旧 2 参调用：结构化缺失时回退用 page_result.structured）"""
         self._page_result = page_result
-        self._finance_result = finance_result
+        if structured_result is None and page_result.structured is not None:
+            self._structured = page_result.structured
+        else:
+            # 可能为 None / StructuredResult / 旧 FinanceResult
+            self._structured = structured_result
         self._on_tab_changed(self.tab_bar.currentIndex())
 
     def clear(self):
         """清空所有视图"""
         self._page_result = None
-        self._finance_result = None
+        self._structured = None
         self._md_view.clear()
         self._field_table.setRowCount(0)
         self._table_view.clear()

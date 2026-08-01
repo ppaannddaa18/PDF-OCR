@@ -1,7 +1,7 @@
 """FinanceProcessor — 引擎无关的财务字段抽取与校验"""
 import re
 from datetime import date
-from typing import List, Optional, Dict, Set
+from typing import List, Optional, Dict, Set, Tuple
 from app.models.page_result import Block, FinanceResult, FinanceField, VALID_INVOICE_LEN
 
 
@@ -52,6 +52,17 @@ class FinanceProcessor:
                 _validate_date(f, warnings)
             elif "金额" in f.label or "价税" in f.label:
                 _validate_amount(f, warnings)
+
+    def validate_field(self, label: str, value: str) -> Tuple[bool, str]:
+        """对单个字段执行校验（供 StructuredExtractor 委托，不重复实现规则）
+
+        Returns:
+            (validated, validation_msg)
+        """
+        f = FinanceField(label=label, value=value)
+        warnings: List[str] = []
+        self._validate([f], warnings)
+        return f.validated, f.validation_msg
 
 
 # --- 坐标邻近查找 ---

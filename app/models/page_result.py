@@ -27,6 +27,8 @@ class PageResult:
     raw_json: Dict[str, Any] = field(default_factory=dict)  # VLM原始json
     image_size: tuple = (0, 0)       # (width, height)
     inference_time_ms: float = 0.0   # 推理耗时（毫秒）
+    structured: Optional["StructuredResult"] = None  # 结构化字段（StructuredExtractor.enrich 填充）
+    line_boxes: List[Block] = field(default_factory=list)  # 行盒检测结果（Phase 4 接线，P0 恒空）
 
 
 @dataclass
@@ -50,3 +52,23 @@ class FinanceResult:
             if f.label == label:
                 return f.value
         return None
+
+
+@dataclass
+class StructuredField:
+    """结构化字段（报关单/发票键值对）"""
+    label: str
+    value: str
+    confidence: float = 1.0
+    source: str = "heuristic"      # 'heuristic' | 'vlm' | 'tables' | 'none'
+    status: str = "confirmed"      # 'confirmed' | 'pending' | 'conflict' | 'not_found'
+    validated: bool = True
+    validation_msg: str = ""
+    bbox: Optional[List[float]] = None   # P1 用：匹配到的行盒并集（图像像素）
+
+
+@dataclass
+class StructuredResult:
+    """结构化字段提取结果"""
+    fields: List[StructuredField] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)  # 校验异常
