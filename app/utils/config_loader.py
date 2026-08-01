@@ -1,10 +1,14 @@
 """
 配置加载器 - 支持PyInstaller打包
 """
+import threading
 import yaml
 import sys
 import os
 from pathlib import Path
+
+# 写盘锁：防止多线程并发写 config.yaml 写半截
+_config_write_lock = threading.Lock()
 
 
 def get_base_path() -> Path:
@@ -51,13 +55,23 @@ def load_config(path: str = None) -> dict:
 
     # 启动器环境变量覆盖（优先级高于配置文件）
     env_engine = os.environ.get("PDFOCR_ENGINE", "")
-    if env_engine in ("paddleocr_vl", "paddleocr_vl_cpu", "rapidocr"):
+    if env_engine in ("gguf", "rapidocr"):
         config.setdefault("ocr", {})["engine"] = env_engine
-        if env_engine == "paddleocr_vl_cpu":
-            config.setdefault("ocr", {}).setdefault("paddleocr_vl", {})["device"] = "cpu"
-            config.setdefault("ocr", {}).setdefault("paddleocr_vl", {})["precision"] = "fp32"
 
     return config
+
+
+def save_config(config: dict) -> None:
+    """
+    将配置写回 config.yaml（与 load_config 的读取路径一致）
+
+    线程安全：加锁防止并发写盘写半截。main_window.py 中散落的 yaml.safe_dump
+    调用点迁移由后续任务完成。
+    """
+    config_path = get_base_path() / "config.yaml"
+    with _config_write_lock:
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(config, f, allow_unicode=True, default_flow_style=False)
 
 
 def _validate_config(config: dict) -> None:
@@ -78,7 +92,7 @@ def _validate_config(config: dict) -> None:
 
     # 检查必要子键
     if "engine" not in config.get("ocr", {}):
-        config.setdefault("ocr", {})["engine"] = "paddleocr_vl"
+        config.setdefault("ocr", {})["engine"] = "gguf"
 
 
 def get_default_config() -> dict:
@@ -94,52 +108,58 @@ def get_default_config() -> dict:
             "max_preview_size": 2000,
         },
         "ocr": {
-            "engine": "paddleocr_vl",       # "paddleocr_vl" | "paddleocr_vl_cpu" | "rapidocr"
+            "engine": "gguf",       # "gguf" | "rapidocr"
             "lang": "ch",
             "use_gpu": True,
             "use_angle_cls": True,
             "det_db_box_thresh": 0.5,
             "drop_score": 0.5,
-            # PaddleOCR-VL 专属（官方 API: PaddleOCRVL(vl_rec_model_name, device, precision)）
-            "paddleocr_vl": {
-                "vl_rec_model_name": "PaddleOCR-VL-1.6-0.9B",
-                "device": "gpu:0",
-                "precision": "fp16",
-                "use_layout_detection": False,  # 默认关闭，VLM自带版面理解，省~3GB显存
-                "warmup_on_startup": False,  # 8GB显卡建议关闭
-                "use_tensorrt": False,
-                "enable_hpi": False,
-                "max_new_tokens": 2048,
-                "min_pixels": 262144,
-                "vlm_resolution": {
-                    "text": {
-                        "min_pixels": 262144,
-                        "max_pixels": 1048576,
-                    },
-                    "table": {
-                        "min_pixels": 524288,
-                        "max_pixels": 4194304,
-                    },
-                    "formula": {
-                        "min_pixels": 524288,
-                        "max_pixels": 4194304,
-                    },
-                    "chart": {
-                        "min_pixels": 524288,
-                        "max_pixels": 4194304,
-                    },
-                    "seal": {
-                        "min_pixels": 65536,
-                        "max_pixels": 262144,
-                    },
-                },
+            # GGUF 专属配置
+            "gguf": {
+                "device": "gpu",  # "gpu" 或 "cpu"
+                "server_path": "llama-b9969/llama-server.exe",
+                "model_path": "models/PaddleOCR-VL-1.6-GGUF.gguf",
+                "mmproj_path": "models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf",
+                "port": 8080,
+                "host": "127.0.0.1",
+                "n_gpu_layers": 999,
+                "mmproj_offload": True,
+                "max_tokens": 512,
+                "temperature": 0.0,
                 "idle_unload_seconds": 300,
-                "page_dpi": 200,
-                "high_quality_dpi": 300,
-                "match_iou_threshold": 0.5,
-                "match_neighbor_radius": 50,
-                "max_vram_gb": 7.8,         # VRAM用量上限(GB), 防止爆显存
-                "min_free_vram_gb": 0.1,    # 最小保留显存(GB), 不足时降分辨率或跳过
+                # 辅助内容解析
+                "auxiliary_parsing": {
+                    "header": False,
+                    "footer": False,
+                    "page_number": True,
+                    "footnote": False,
+                    "margin_text": False,
+                    "header_image": False,
+                    "footer_image": False,
+                },
+                # 模型参数设置
+                "model_params": {
+                    "orientation_correction": False,
+                    "distortion_correction": False,
+                    "layout_analysis": True,
+                    "chart_recognition": True,
+                    "seal_recognition": True,
+                    "image_text_recognition": True,
+                    "cross_page_table_merge": True,
+                    "heading_level_recognition": True,
+                },
+                # 版面检测结果几何形状
+                "layout_geometry": "auto",
+                # prompt 类型
+                "prompt_type": "text",
+                # 滑块参数
+                "repetition_penalty": 1.00,
+                "stability": 0.00,
+                "confidence_threshold": 1.0,
+                "min_pixels": 147384,
+                "max_pixels": 2822400,
+                # NMS 后处理
+                "nms_postprocess": True,
             },
             # RapidOCR 专属
             "rapidocr": {
