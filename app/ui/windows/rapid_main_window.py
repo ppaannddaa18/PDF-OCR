@@ -202,6 +202,9 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         self.left_panel = CollapsiblePanel(expanded_width=240, collapsed_width=48)
         self.file_panel = ui.FileListPanel()
         self.left_panel.set_content(self.file_panel)
+        # P6 签名：Rapid 卡片阴影（构造期 design 尚未切换，按类属性判断）
+        if self.DESIGN == 'rapid':
+            ThemeManager.apply_card_shadow(self.left_panel)
         content_layout.addWidget(self.left_panel)
 
         # 中央工作区
@@ -278,6 +281,8 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         right_content_layout.addWidget(self.field_panel, 1)
 
         self.right_panel.set_content(right_content)
+        if self.DESIGN == 'rapid':
+            ThemeManager.apply_card_shadow(self.right_panel)
         content_layout.addWidget(self.right_panel)
 
         layout.addWidget(content, 1)

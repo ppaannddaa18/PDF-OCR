@@ -133,7 +133,8 @@ class ThemeManager:
                 'border': '#E3E9F2',
                 'border_focus': '#0C8CE9',        # = accent
                 'accent': '#0C8CE9',              # 简报（新增 role）
-                'accent_alt': '#5EEAD4',          # 推导（简报未给，保持结构对称）
+                'accent_alt': '#14B8A6',          # P6：teal-500（浅底可读；
+                                                  # 原推导 #5EEAD4 对比度不足）
             },
         },
     }

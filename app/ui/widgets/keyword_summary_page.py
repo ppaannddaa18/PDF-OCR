@@ -179,6 +179,12 @@ class KeywordSummaryPage(QWidget):
     def apply_theme(self):
         self.stats_label.setStyleSheet(
             f"color: {ThemeManager.get_color('text_secondary')};")
+        # P6 签名：GGUF 深色操作台统计数字用等宽字体
+        if ThemeManager.current_design() == 'gguf':
+            self.stats_label.setFont(ThemeManager.get_font('mono'))
+        else:
+            from PyQt6.QtGui import QFont
+            self.stats_label.setFont(QFont())
         self.btn_extract.setStyleSheet(primary_qss())
         self.btn_export.setStyleSheet(primary_qss())
         self.inspection.apply_theme()

@@ -421,6 +421,10 @@ class AppBaseWindowMixin:
                 f"color: {ThemeManager.get_color('success')};")
             self.stat_fail.setStyleSheet(
                 f"color: {ThemeManager.get_color('error')};")
+            # P6 签名：GGUF 深色操作台数字指标用等宽字体
+            if ThemeManager.current_design() == 'gguf':
+                for label in (self.stat_total, self.stat_success, self.stat_fail):
+                    label.setFont(ThemeManager.get_font('mono'))
 
     # ── LoadingOverlay 创建/缩放（机械提取） ─────────────────────
 

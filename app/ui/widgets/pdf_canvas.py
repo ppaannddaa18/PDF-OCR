@@ -918,10 +918,22 @@ class PdfCanvas(QGraphicsView):
         return x1 <= pt.x() <= x2 and y1 <= pt.y() <= y2
 
     def _add_region_item(self, region: Region):
-        """添加区域项到场景"""
+        """添加区域项到场景
+
+        P6 签名元素 3（Rapid 荧光笔）：design='rapid' 时框选区域使用
+        半透明黄填充 rgba(255,213,0,45) + #F5C518 描边；其余设计保持
+        region.color 原行为。
+        """
         rect = QRectF(region.x * self.img_w, region.y * self.img_h,
                       region.w * self.img_w, region.h * self.img_h)
-        item = SelectableRectItem(rect, region.color, region.id)
+        if ThemeManager.current_design() == 'rapid':
+            display_color = '#F5C518'
+        else:
+            display_color = region.color
+        item = SelectableRectItem(rect, display_color, region.id)
+        if ThemeManager.current_design() == 'rapid':
+            fill = QColor(255, 213, 0, 45)
+            item.setBrush(fill)
         self.scene_.addItem(item)
         self.region_items[region.id] = item
         self.regions_data[region.id] = region
