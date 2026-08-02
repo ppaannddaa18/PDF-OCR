@@ -1,308 +1,71 @@
 """
-OCR 引擎设置对话框
-类似 PaddleOCR-VL 1.6 官网的解析配置界面
+OCR 引擎设置对话框（Deprecated，Task P5）
+
+OcrSettingsDialog 已重构为可嵌入的 GgufSettingsForm（gguf_settings_page.py）。
+本文件保留 thin wrapper：内部包一层 GgufSettingsForm（show_theme_options=True，
+保留主题三单选供旧 MainWindow / Rapid 窗口使用），并通过 __getattr__ 代理
+表单属性（rb_theme_* / sw_animations / _theme_sliders / _on_default 等），
+保证旧引用与 tests/ui/test_theme_refresh.py 不断。P7 统一删除。
 """
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QSlider, QFrame, QButtonGroup, QWidget, QGridLayout,
-    QScrollArea, QSizePolicy
-)
-from PyQt6.QtCore import Qt, pyqtSignal as Signal
-from PyQt6.QtGui import QFont
-from qfluentwidgets import (
-    SwitchButton, RadioButton, PushButton, SubtitleLabel,
-    BodyLabel, InfoBar, InfoBarPosition, HorizontalSeparator
-)
-import copy
+import warnings
+
+from PyQt6.QtCore import pyqtSignal as Signal
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout
+from qfluentwidgets import PushButton
 
 from app.ui.animation_manager import AnimationManager
 from app.ui.theme_manager import ThemeManager
+from app.ui.widgets.gguf_settings_page import GgufSettingsForm
 
 
 class OcrSettingsDialog(QDialog):
-    """OCR 引擎设置对话框"""
+    """OCR 引擎设置对话框（Deprecated: use GgufSettingsPage/GgufSettingsForm）"""
 
-    # 信号：设置已应用
     settings_applied = Signal(dict)
 
-    # 主题模式（与 config appearance.theme 取值一致）
-    THEME_OPTIONS = ['light', 'dark', 'auto']
-    THEME_LABELS = ['浅色', '深色', '跟随系统']
-
     def __init__(self, config: dict, parent=None):
+        warnings.warn(
+            "OcrSettingsDialog is deprecated; use GgufSettingsPage/GgufSettingsForm",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(parent)
-        self._original_config = copy.deepcopy(config)
-        self._config = copy.deepcopy(config)
-        self._init_ui()
-        self._load_settings()
-        # Task 15：主题切换后由 ThemeManager 触发重建本对话框内嵌 QSS
-        ThemeManager.register_refresh_callback(self._apply_theme_styles)
-
-    def _init_ui(self):
-        """初始化 UI"""
         self.setWindowTitle("PaddleOCR-VL-1.6 解析配置")
         self.setMinimumSize(600, 700)
         self.resize(650, 750)
         self.setModal(True)
 
-        # 主题化输入/滑块（Task 15：主题切换时重建 QSS）
-        self._theme_inputs = []   # QLineEdit（数值输入框）
-        self._theme_sliders = []  # QSlider（滑块）
+        self.form = GgufSettingsForm(config, self, show_theme_options=True)
 
-        # 主布局
-        main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(0)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.form, 1)
 
-        # 滚动区域（容纳大量设置项）
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-
-        # 内容容器
-        content_widget = QWidget()
-        content_layout = QVBoxLayout(content_widget)
-        content_layout.setSpacing(16)
-        content_layout.setContentsMargins(24, 24, 24, 24)
-
-        # 标题
-        title_layout = QHBoxLayout()
-        title = SubtitleLabel("PaddleOCR-VL-1.6 解析配置")
-        title.setStyleSheet("font-weight: bold; font-size: 18px;")
-        title_layout.addWidget(title)
-        title_layout.addStretch()
-        content_layout.addLayout(title_layout)
-
-        # 提示文本（颜色走 ThemeManager，主题切换时随 _apply_theme_styles 重建）
-        hint = BodyLabel("设置变化将自动同步到当前 API")
-        hint.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_disabled')}; font-size: 12px;")
-        content_layout.addWidget(hint)
-        self._hint_label = hint
-
-        content_layout.addWidget(HorizontalSeparator())
-
-        # ===== 外观设置 =====
-        content_layout.addLayout(self._create_section_title("外观设置"))
-
-        # 主题选择（浅色/深色/跟随系统；选择即时生效）
-        theme_layout = QHBoxLayout()
-        theme_layout.setSpacing(16)
-        self.bg_theme = QButtonGroup(self)
-        self.rb_theme_light = RadioButton(self.THEME_LABELS[0])
-        self.rb_theme_dark = RadioButton(self.THEME_LABELS[1])
-        self.rb_theme_auto = RadioButton(self.THEME_LABELS[2])
-        self.bg_theme.addButton(self.rb_theme_light, 0)
-        self.bg_theme.addButton(self.rb_theme_dark, 1)
-        self.bg_theme.addButton(self.rb_theme_auto, 2)
-        theme_layout.addWidget(self.rb_theme_light)
-        theme_layout.addWidget(self.rb_theme_dark)
-        theme_layout.addWidget(self.rb_theme_auto)
-        theme_layout.addStretch()
-        content_layout.addLayout(theme_layout)
-
-        # 主题单选即时应用（checked=True 时触发；加载配置时 blockSignals 防副作用）
-        self.rb_theme_light.toggled.connect(
-            lambda checked: checked and self._on_theme_changed('light'))
-        self.rb_theme_dark.toggled.connect(
-            lambda checked: checked and self._on_theme_changed('dark'))
-        self.rb_theme_auto.toggled.connect(
-            lambda checked: checked and self._on_theme_changed('auto'))
-
-        self.sw_animations = self._create_switch(
-            "禁用动画",
-            tooltip="关闭折叠、滑入滑出等界面动画，界面变化即时生效（尊重系统动画偏好）"
-        )
-        content_layout.addLayout(self.sw_animations["layout"])
-        content_layout.addWidget(HorizontalSeparator())
-
-        # ===== 辅助内容解析 =====
-        content_layout.addLayout(self._create_section_title("辅助内容解析"))
-        content_layout.addWidget(BodyLabel("模型自动识别并过滤辅助内容，开启后将恢复解析"))
-
-        aux_grid = QGridLayout()
-        aux_grid.setSpacing(12)
-        aux_grid.setColumnStretch(0, 1)
-        aux_grid.setColumnStretch(1, 1)
-
-        self.sw_header = self._create_switch("页眉")
-        self.sw_footer = self._create_switch("页脚")
-        self.sw_page_number = self._create_switch("页码")
-        self.sw_footnote = self._create_switch("脚注")
-        self.sw_margin_text = self._create_switch("旁注文本")
-        self.sw_header_image = self._create_switch("页眉图片")
-        self.sw_footer_image = self._create_switch("页脚图片")
-
-        aux_grid.addLayout(self.sw_header["layout"], 0, 0)
-        aux_grid.addLayout(self.sw_header_image["layout"], 0, 1)
-        aux_grid.addLayout(self.sw_footer["layout"], 1, 0)
-        aux_grid.addLayout(self.sw_footer_image["layout"], 1, 1)
-        aux_grid.addLayout(self.sw_page_number["layout"], 2, 0)
-        aux_grid.addLayout(self.sw_footnote["layout"], 2, 1)
-        aux_grid.addLayout(self.sw_margin_text["layout"], 3, 0)
-
-        content_layout.addLayout(aux_grid)
-        content_layout.addWidget(HorizontalSeparator())
-
-        # ===== 模型参数设置 =====
-        content_layout.addLayout(self._create_section_title("模型参数设置"))
-
-        model_grid = QGridLayout()
-        model_grid.setSpacing(12)
-        model_grid.setColumnStretch(0, 1)
-        model_grid.setColumnStretch(1, 1)
-
-        self.sw_orientation = self._create_switch("图片方向矫正", tooltip="自动检测并矫正图片旋转角度")
-        self.sw_distortion = self._create_switch("图片扭曲矫正", tooltip="矫正透视扭曲和变形")
-        self.sw_layout = self._create_switch("版面分析", tooltip="识别文档版面结构")
-        self.sw_chart = self._create_switch("图表识别", tooltip="识别图表和数据可视化")
-        self.sw_seal = self._create_switch("印章识别", tooltip="识别印章和签章")
-        self.sw_image_text = self._create_switch("图片文字识别", tooltip="识别嵌入图片中的文字")
-        self.sw_cross_page = self._create_switch("跨页表格合并", tooltip="合并跨页的表格")
-        self.sw_heading = self._create_switch("段落标题级别识别", tooltip="识别标题层级结构")
-
-        model_grid.addLayout(self.sw_orientation["layout"], 0, 0)
-        model_grid.addLayout(self.sw_distortion["layout"], 0, 1)
-        model_grid.addLayout(self.sw_layout["layout"], 1, 0)
-        model_grid.addLayout(self.sw_chart["layout"], 1, 1)
-        model_grid.addLayout(self.sw_seal["layout"], 2, 0)
-        model_grid.addLayout(self.sw_image_text["layout"], 2, 1)
-        model_grid.addLayout(self.sw_cross_page["layout"], 3, 0)
-        model_grid.addLayout(self.sw_heading["layout"], 3, 1)
-
-        content_layout.addLayout(model_grid)
-        content_layout.addWidget(HorizontalSeparator())
-
-        # ===== 版面检测结果几何形状 =====
-        content_layout.addLayout(self._create_section_title("版面检测结果的几何形状"))
-
-        geo_layout = QHBoxLayout()
-        geo_layout.setSpacing(16)
-
-        self.bg_geometry = QButtonGroup(self)
-        self.rb_geo_auto = RadioButton("自动")
-        self.rb_geo_rect = RadioButton("矩形")
-        self.rb_geo_quad = RadioButton("四边形")
-        self.rb_geo_poly = RadioButton("多边形")
-
-        self.bg_geometry.addButton(self.rb_geo_auto, 0)
-        self.bg_geometry.addButton(self.rb_geo_rect, 1)
-        self.bg_geometry.addButton(self.rb_geo_quad, 2)
-        self.bg_geometry.addButton(self.rb_geo_poly, 3)
-
-        geo_layout.addWidget(self.rb_geo_auto)
-        geo_layout.addWidget(self.rb_geo_rect)
-        geo_layout.addWidget(self.rb_geo_quad)
-        geo_layout.addWidget(self.rb_geo_poly)
-        geo_layout.addStretch()
-
-        content_layout.addLayout(geo_layout)
-        content_layout.addWidget(HorizontalSeparator())
-
-        # ===== prompt 类型设置 =====
-        content_layout.addLayout(self._create_section_title("prompt 类型设置"))
-
-        prompt_layout = QHBoxLayout()
-        prompt_layout.setSpacing(12)
-
-        self.bg_prompt = QButtonGroup(self)
-        self.rb_prompt_text = RadioButton("文本")
-        self.rb_prompt_formula = RadioButton("公式")
-        self.rb_prompt_table = RadioButton("表格")
-        self.rb_prompt_chart = RadioButton("图表")
-        self.rb_prompt_seal = RadioButton("印章")
-        self.rb_prompt_detection = RadioButton("文本检测与识别")
-
-        self.bg_prompt.addButton(self.rb_prompt_text, 0)
-        self.bg_prompt.addButton(self.rb_prompt_formula, 1)
-        self.bg_prompt.addButton(self.rb_prompt_table, 2)
-        self.bg_prompt.addButton(self.rb_prompt_chart, 3)
-        self.bg_prompt.addButton(self.rb_prompt_seal, 4)
-        self.bg_prompt.addButton(self.rb_prompt_detection, 5)
-
-        prompt_layout.addWidget(self.rb_prompt_text)
-        prompt_layout.addWidget(self.rb_prompt_formula)
-        prompt_layout.addWidget(self.rb_prompt_table)
-        prompt_layout.addWidget(self.rb_prompt_chart)
-        prompt_layout.addWidget(self.rb_prompt_seal)
-        prompt_layout.addWidget(self.rb_prompt_detection)
-        prompt_layout.addStretch()
-
-        content_layout.addLayout(prompt_layout)
-        content_layout.addWidget(HorizontalSeparator())
-
-        # ===== 滑块参数 =====
-        content_layout.addLayout(self._create_section_title("高级参数"))
-
-        # 重复抑制强度
-        self.slider_repetition = self._create_slider_row(
-            "重复抑制强度", 0.0, 2.0, 1.00, 0.01,
-            tooltip="抑制重复内容的强度，值越大重复越少"
-        )
-        content_layout.addLayout(self.slider_repetition["layout"])
-
-        # 识别稳定性
-        self.slider_stability = self._create_slider_row(
-            "识别稳定性", 0.0, 1.0, 0.00, 0.01,
-            tooltip="提高稳定性可减少随机性，但可能降低创造力"
-        )
-        content_layout.addLayout(self.slider_stability["layout"])
-
-        # 结果可信范围
-        self.slider_confidence = self._create_slider_row(
-            "结果可信范围", 0.0, 1.0, 1.0, 0.01,
-            tooltip="过滤低置信度结果的阈值"
-        )
-        content_layout.addLayout(self.slider_confidence["layout"])
-
-        # 图像最小总像素数
-        self.slider_min_pixels = self._create_slider_row(
-            "图像最小总像素数", 65536, 1048576, 147384, 1024,
-            tooltip="输入图像的最小像素数，低于此值将放大"
-        )
-        content_layout.addLayout(self.slider_min_pixels["layout"])
-
-        # 图像最大总像素数
-        self.slider_max_pixels = self._create_slider_row(
-            "图像最大总像素数", 524288, 8388608, 2822400, 1024,
-            tooltip="输入图像的最大像素数，高于此值将缩小"
-        )
-        content_layout.addLayout(self.slider_max_pixels["layout"])
-
-        content_layout.addWidget(HorizontalSeparator())
-
-        # ===== NMS 后处理 =====
-        nms_layout = QHBoxLayout()
-        nms_label = BodyLabel("NMS后处理")
-        nms_label.setToolTip("非极大值抑制后处理，去除重叠检测框")
-        self.sw_nms = SwitchButton()
-        self.sw_nms.setOnText("开")
-        self.sw_nms.setOffText("关")
-        nms_layout.addWidget(nms_label)
-        nms_layout.addStretch()
-        nms_layout.addWidget(self.sw_nms)
-        content_layout.addLayout(nms_layout)
-
-        content_layout.addStretch()
-
-        scroll.setWidget(content_widget)
-        main_layout.addWidget(scroll)
-
-        # ===== 底部按钮 =====
+        # 底部按钮
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
         btn_layout.setContentsMargins(24, 12, 24, 24)
 
         self.btn_default = PushButton("恢复默认")
         self.btn_default.setFixedWidth(100)
-        self.btn_default.clicked.connect(self._on_default)
+        self.btn_default.clicked.connect(self.form._on_default)
         btn_layout.addWidget(self.btn_default)
 
         btn_layout.addStretch()
 
         self.btn_apply = PushButton("应用并重启")
         self.btn_apply.setFixedWidth(120)
+        self.btn_apply.setStyleSheet(f"""
+            PushButton {{
+                background-color: {ThemeManager.get_color('primary')};
+                color: {ThemeManager.get_color('white')};
+                font-weight: bold;
+            }}
+            PushButton:hover {{
+                background-color: {ThemeManager.get_color('primary_hover')};
+            }}
+        """)
         self.btn_apply.clicked.connect(self._on_apply)
         btn_layout.addWidget(self.btn_apply)
 
@@ -311,358 +74,40 @@ class OcrSettingsDialog(QDialog):
         self.btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(self.btn_cancel)
 
-        main_layout.addLayout(btn_layout)
+        layout.addLayout(btn_layout)
 
-        # 构造时烘焙全部内嵌样式（btn_apply 等此时已创建，可安全重复执行）
-        self._apply_theme_styles()
+        # 主题切换后重烘焙 btn_apply QSS（与旧对话框行为一致）
+        ThemeManager.register_refresh_callback(self._refresh_apply_button)
 
-    def _create_section_title(self, text: str) -> QHBoxLayout:
-        """创建区域标题"""
-        layout = QHBoxLayout()
-        label = SubtitleLabel(text)
-        label.setStyleSheet("font-weight: bold; font-size: 15px; margin-top: 8px;")
-        layout.addWidget(label)
-        layout.addStretch()
-        return layout
-
-    def _create_switch(self, text: str, tooltip: str = "") -> dict:
-        """创建开关行组件"""
-        layout = QHBoxLayout()
-        layout.setSpacing(8)
-
-        label = BodyLabel(text)
-        if tooltip:
-            label.setToolTip(tooltip)
-
-        switch = SwitchButton()
-        switch.setOnText("开")
-        switch.setOffText("关")
-
-        layout.addWidget(label)
-        layout.addStretch()
-        layout.addWidget(switch)
-
-        return {"layout": layout, "switch": switch, "label": label}
-
-    def _create_slider_row(self, text: str, min_val: float, max_val: float,
-                           default: float, step: float, tooltip: str = "") -> dict:
-        """创建滑块行组件（标签 + 数值输入 + 滑块）"""
-        layout = QVBoxLayout()
-        layout.setSpacing(4)
-
-        # 标签行
-        label_layout = QHBoxLayout()
-        label = BodyLabel(text)
-        if tooltip:
-            label.setToolTip(tooltip)
-        label_layout.addWidget(label)
-        label_layout.addStretch()
-        layout.addLayout(label_layout)
-
-        # 输入 + 滑块行
-        input_layout = QHBoxLayout()
-        input_layout.setSpacing(8)
-
-        # 数值输入框
-        line_edit = QLineEdit()
-        line_edit.setFixedWidth(80)
-        line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # 滑块
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setMinimum(int(min_val / step))
-        slider.setMaximum(int(max_val / step))
-        slider.setValue(int(default / step))
-
-        # 主题化样式（_apply_theme_styles 会在主题切换时重建）
-        self._theme_inputs.append(line_edit)
-        self._theme_sliders.append(slider)
-        self._apply_theme_styles()
-
-        # 同步数值和滑块
-        def update_from_slider():
-            val = slider.value() * step
-            line_edit.setText(f"{val:.2f}" if step < 1 else str(int(val)))
-
-        def update_from_edit():
-            try:
-                val = float(line_edit.text())
-                val = max(min_val, min(max_val, val))
-                slider.setValue(int(val / step))
-            except ValueError:
-                pass
-
-        slider.valueChanged.connect(update_from_slider)
-        line_edit.editingFinished.connect(update_from_edit)
-
-        # 初始化显示
-        update_from_slider()
-
-        input_layout.addWidget(line_edit)
-        input_layout.addWidget(slider, 1)
-
-        layout.addLayout(input_layout)
-
-        return {
-            "layout": layout,
-            "slider": slider,
-            "line_edit": line_edit,
-            "min": min_val,
-            "max": max_val,
-            "step": step
-        }
-
-    def _on_theme_changed(self, theme: str):
-        """主题单选变化：立即应用（ThemeManager + qfluentwidgets 双轨同步）
-
-        'auto' 模式先解析系统主题，再设置 ThemeManager（解析结果）；
-        qfluentwidgets 侧设 Theme.AUTO 由库自身跟随系统。
-        顺序注意：先 setFluentTheme（qfluentwidgets 重排会覆盖其控件上的
-        内嵌 QSS，如本对话框 btn_apply 的自定义色），再 ThemeManager.set_theme
-        （触发全局刷新回调，含本对话框自身——烘焙颜色最后写入、生效）。
-        """
-        from qfluentwidgets import Theme as FluentTheme
-        from qfluentwidgets import setTheme as setFluentTheme
-        setFluentTheme({
-            'light': FluentTheme.LIGHT,
-            'dark': FluentTheme.DARK,
-            'auto': FluentTheme.AUTO,
-        }[theme])
-        effective = ThemeManager.resolve_theme(theme)
-        ThemeManager.set_theme(effective)
-
-    def _apply_theme_styles(self):
-        """重建本对话框内嵌 QSS（Task 15：ThemeManager.set_theme 后调用；
-        _create_slider_row 中途调用时部分控件尚未创建，需防御式访问）"""
-        hint = getattr(self, '_hint_label', None)
-        if hint is not None:
-            hint.setStyleSheet(
-                f"color: {ThemeManager.get_color('text_disabled')}; font-size: 12px;"
-            )
+    def _refresh_apply_button(self):
+        """重建应用按钮主题色 QSS"""
         btn_apply = getattr(self, 'btn_apply', None)
-        if btn_apply is not None:
-            btn_apply.setStyleSheet(f"""
-                PushButton {{
-                    background-color: {ThemeManager.get_color('primary')};
-                    color: {ThemeManager.get_color('white')};
-                    font-weight: bold;
-                }}
-                PushButton:hover {{
-                    background-color: {ThemeManager.get_color('primary_hover')};
-                }}
-            """)
-        border = ThemeManager.get_color('border')
-        bg = ThemeManager.get_color('bg_surface')
-        primary = ThemeManager.get_color('primary')
-        for line_edit in self._theme_inputs:
-            line_edit.setStyleSheet(f"""
-                QLineEdit {{
-                    border: 1px solid {border};
-                    border-radius: 4px;
-                    padding: 4px 8px;
-                    background: {bg};
-                }}
-            """)
-        for slider in self._theme_sliders:
-            slider.setStyleSheet(f"""
-                QSlider::groove:horizontal {{
-                    height: 6px;
-                    background: {border};
-                    border-radius: 3px;
-                }}
-                QSlider::sub-page:horizontal {{
-                    background: {primary};
-                    border-radius: 3px;
-                }}
-                QSlider::handle:horizontal {{
-                    width: 16px;
-                    height: 16px;
-                    background: {bg};
-                    border: 2px solid {primary};
-                    border-radius: 8px;
-                    margin: -5px 0;
-                }}
-            """)
+        if btn_apply is None:
+            return
+        btn_apply.setStyleSheet(f"""
+            PushButton {{
+                background-color: {ThemeManager.get_color('primary')};
+                color: {ThemeManager.get_color('white')};
+                font-weight: bold;
+            }}
+            PushButton:hover {{
+                background-color: {ThemeManager.get_color('primary_hover')};
+            }}
+        """)
 
-    def _load_settings(self):
-        """从配置加载设置"""
-        gguf_cfg = self._config.get("ocr", {}).get("gguf", {})
-
-        # 外观设置：appearance.theme（缺省 auto 跟随系统）与
-        # appearance.animations_enabled（缺省启用）
-        appearance = self._config.get("appearance", {})
-        theme = appearance.get("theme", "auto")
-        # 注意：QButtonGroup.blockSignals 只屏蔽组自身信号，radio 的 toggled
-        # 仍会触发 _on_theme_changed（打开对话框即应用主题）；须逐个 block
-        for rb in (self.rb_theme_light, self.rb_theme_dark, self.rb_theme_auto):
-            rb.blockSignals(True)
-        try:
-            self.bg_theme.button(self.THEME_OPTIONS.index(theme)).setChecked(True)
-        except ValueError:
-            # 配置含未知主题值：回退跟随系统
-            self.bg_theme.button(2).setChecked(True)
-        finally:
-            for rb in (self.rb_theme_light, self.rb_theme_dark, self.rb_theme_auto):
-                rb.blockSignals(False)
-        self.sw_animations["switch"].setChecked(
-            not appearance.get("animations_enabled", True)
-        )
-
-        # 辅助内容解析
-        aux = gguf_cfg.get("auxiliary_parsing", {})
-        self.sw_header["switch"].setChecked(aux.get("header", False))
-        self.sw_footer["switch"].setChecked(aux.get("footer", False))
-        self.sw_page_number["switch"].setChecked(aux.get("page_number", True))
-        self.sw_footnote["switch"].setChecked(aux.get("footnote", False))
-        self.sw_margin_text["switch"].setChecked(aux.get("margin_text", False))
-        self.sw_header_image["switch"].setChecked(aux.get("header_image", False))
-        self.sw_footer_image["switch"].setChecked(aux.get("footer_image", False))
-
-        # 模型参数
-        model = gguf_cfg.get("model_params", {})
-        self.sw_orientation["switch"].setChecked(model.get("orientation_correction", False))
-        self.sw_distortion["switch"].setChecked(model.get("distortion_correction", False))
-        self.sw_layout["switch"].setChecked(model.get("layout_analysis", True))
-        self.sw_chart["switch"].setChecked(model.get("chart_recognition", True))
-        self.sw_seal["switch"].setChecked(model.get("seal_recognition", True))
-        self.sw_image_text["switch"].setChecked(model.get("image_text_recognition", True))
-        self.sw_cross_page["switch"].setChecked(model.get("cross_page_table_merge", True))
-        self.sw_heading["switch"].setChecked(model.get("heading_level_recognition", True))
-
-        # 几何形状
-        geometry = gguf_cfg.get("layout_geometry", "auto")
-        geo_map = {"auto": 0, "rectangle": 1, "quadrilateral": 2, "polygon": 3}
-        idx = geo_map.get(geometry, 0)
-        self.bg_geometry.button(idx).setChecked(True)
-
-        # prompt 类型
-        prompt = gguf_cfg.get("prompt_type", "text")
-        prompt_map = {
-            "text": 0, "formula": 1, "table": 2,
-            "chart": 3, "seal": 4, "detection": 5
-        }
-        idx = prompt_map.get(prompt, 0)
-        self.bg_prompt.button(idx).setChecked(True)
-
-        # 滑块参数
-        self._set_slider_value(self.slider_repetition, gguf_cfg.get("repetition_penalty", 1.00))
-        self._set_slider_value(self.slider_stability, gguf_cfg.get("stability", 0.00))
-        self._set_slider_value(self.slider_confidence, gguf_cfg.get("confidence_threshold", 1.0))
-        self._set_slider_value(self.slider_min_pixels, gguf_cfg.get("min_pixels", 147384))
-        self._set_slider_value(self.slider_max_pixels, gguf_cfg.get("max_pixels", 2822400))
-
-        # NMS
-        self.sw_nms.setChecked(gguf_cfg.get("nms_postprocess", True))
-
-    def _set_slider_value(self, slider_data: dict, value: float):
-        """设置滑块数值"""
-        step = slider_data["step"]
-        slider = slider_data["slider"]
-        line_edit = slider_data["line_edit"]
-
-        val = max(slider_data["min"], min(slider_data["max"], value))
-        slider.setValue(int(val / step))
-        line_edit.setText(f"{val:.2f}" if step < 1 else str(int(val)))
-
-    def _get_slider_value(self, slider_data: dict) -> float:
-        """获取滑块数值"""
-        return slider_data["slider"].value() * slider_data["step"]
-
-    def _get_settings(self) -> dict:
-        """获取当前设置"""
-        settings = {
-            "auxiliary_parsing": {
-                "header": self.sw_header["switch"].isChecked(),
-                "footer": self.sw_footer["switch"].isChecked(),
-                "page_number": self.sw_page_number["switch"].isChecked(),
-                "footnote": self.sw_footnote["switch"].isChecked(),
-                "margin_text": self.sw_margin_text["switch"].isChecked(),
-                "header_image": self.sw_header_image["switch"].isChecked(),
-                "footer_image": self.sw_footer_image["switch"].isChecked(),
-            },
-            "model_params": {
-                "orientation_correction": self.sw_orientation["switch"].isChecked(),
-                "distortion_correction": self.sw_distortion["switch"].isChecked(),
-                "layout_analysis": self.sw_layout["switch"].isChecked(),
-                "chart_recognition": self.sw_chart["switch"].isChecked(),
-                "seal_recognition": self.sw_seal["switch"].isChecked(),
-                "image_text_recognition": self.sw_image_text["switch"].isChecked(),
-                "cross_page_table_merge": self.sw_cross_page["switch"].isChecked(),
-                "heading_level_recognition": self.sw_heading["switch"].isChecked(),
-            },
-            "layout_geometry": ["auto", "rectangle", "quadrilateral", "polygon"][self.bg_geometry.checkedId()],
-            "prompt_type": ["text", "formula", "table", "chart", "seal", "detection"][self.bg_prompt.checkedId()],
-            "repetition_penalty": self._get_slider_value(self.slider_repetition),
-            "stability": self._get_slider_value(self.slider_stability),
-            "confidence_threshold": self._get_slider_value(self.slider_confidence),
-            "min_pixels": int(self._get_slider_value(self.slider_min_pixels)),
-            "max_pixels": int(self._get_slider_value(self.slider_max_pixels)),
-            "nms_postprocess": self.sw_nms.isChecked(),
-        }
-        return settings
-
-    def _on_default(self):
-        """恢复默认设置"""
-        # 辅助内容解析默认
-        self.sw_header["switch"].setChecked(False)
-        self.sw_footer["switch"].setChecked(False)
-        self.sw_page_number["switch"].setChecked(True)
-        self.sw_footnote["switch"].setChecked(False)
-        self.sw_margin_text["switch"].setChecked(False)
-        self.sw_header_image["switch"].setChecked(False)
-        self.sw_footer_image["switch"].setChecked(False)
-
-        # 模型参数默认
-        self.sw_orientation["switch"].setChecked(False)
-        self.sw_distortion["switch"].setChecked(False)
-        self.sw_layout["switch"].setChecked(True)
-        self.sw_chart["switch"].setChecked(True)
-        self.sw_seal["switch"].setChecked(True)
-        self.sw_image_text["switch"].setChecked(True)
-        self.sw_cross_page["switch"].setChecked(True)
-        self.sw_heading["switch"].setChecked(True)
-
-        # 几何形状默认
-        self.rb_geo_auto.setChecked(True)
-
-        # prompt 默认
-        self.rb_prompt_text.setChecked(True)
-
-        # 滑块默认
-        self._set_slider_value(self.slider_repetition, 1.00)
-        self._set_slider_value(self.slider_stability, 0.00)
-        self._set_slider_value(self.slider_confidence, 1.0)
-        self._set_slider_value(self.slider_min_pixels, 147384)
-        self._set_slider_value(self.slider_max_pixels, 2822400)
-
-        # NMS 默认
-        self.sw_nms.setChecked(True)
-
-        # 外观默认：主题跟随系统 + 动画启用
-        self.bg_theme.button(2).setChecked(True)
-        self.sw_animations["switch"].setChecked(False)
-
-        InfoBar.success(
-            title="已恢复默认",
-            content="所有设置已恢复为默认值",
-            duration=2000,
-            parent=self
-        )
+    def __getattr__(self, name: str):
+        """代理表单属性（rb_theme_* / sw_animations / _theme_sliders / _on_default…）"""
+        if name.startswith('__'):
+            raise AttributeError(name)
+        form = object.__getattribute__(self, 'form')
+        return getattr(form, name)
 
     def _on_apply(self):
         """应用设置"""
-        settings = self._get_settings()
-        self.settings_applied.emit(settings)
-        # 应用动画开关：appearance.animations_enabled（开关勾选 = 禁用动画）
-        AnimationManager.set_enabled(not self.sw_animations["switch"].isChecked())
+        self.settings_applied.emit(self.form._get_settings())
+        self.form.apply_animations()
         self.accept()
 
     def get_config_patch(self) -> dict:
         """获取配置补丁（用于合并到主配置）"""
-        return {
-            "ocr": {"gguf": self._get_settings()},
-            "appearance": {
-                "animations_enabled": not self.sw_animations["switch"].isChecked(),
-                "theme": self.THEME_OPTIONS[self.bg_theme.checkedId()],
-            },
-        }
+        return self.form.get_config_patch()

@@ -22,11 +22,11 @@ MRO 契约（硬性，详见 base_window.py 顶部注释）：
 import logging
 import re
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 from qfluentwidgets import (
     FluentWindow,
-    BodyLabel, InfoBar, InfoBarPosition, Theme,
+    InfoBar, InfoBarPosition, Theme,
 )
 
 from app.ui.theme_manager import ThemeManager
@@ -119,14 +119,109 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         return page
 
     def _create_settings_page(self) -> QWidget:
-        """创建模型设置页（P5 替换为 GgufSettingsPage）"""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label = BodyLabel("模型设置（P5 实现）")
-        label.setStyleSheet(f"color: {ThemeManager.get_color('text_secondary')};")
-        layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignCenter)
-        return page
+        """创建模型设置页（GgufSettingsPage：表单 + 操作带）"""
+        from app.ui.widgets.gguf_settings_page import GgufSettingsPage
+        self.settings_page = GgufSettingsPage(self.config, self)
+        self.settings_page.save_requested.connect(self._on_settings_save)
+        self.settings_page.restart_requested.connect(self._on_settings_restart)
+        self.settings_page.test_connection_requested.connect(
+            self._on_settings_test_connection)
+        return self.settings_page
+
+    # ── 模型设置页动作（P5） ────────────────────────────────────
+
+    def _on_settings_save(self, patch: dict):
+        """保存并应用：合并配置 + 写盘（下次启动/重启引擎生效）"""
+        self._merge_config_patch(self.config, patch)
+        try:
+            from app.utils.config_loader import save_config
+            save_config(self.config)
+        except Exception as e:
+            InfoBar.error(title="保存失败", content=f"无法保存设置: {e}",
+                          parent=self, duration=5000)
+            return
+        InfoBar.success(
+            title="设置已保存",
+            content="配置已写入 config.yaml，重启引擎后生效",
+            parent=self, duration=3000)
+
+    def _on_settings_restart(self, patch: dict):
+        """重启引擎：合并配置 + 写盘；设备（GPU/CPU）变更走程序重启，
+        其余参数进程内卸载重初始化"""
+        old_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
+        self._merge_config_patch(self.config, patch)
+        new_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
+        try:
+            from app.utils.config_loader import save_config
+            save_config(self.config)
+        except Exception as e:
+            InfoBar.error(title="保存失败", content=f"无法保存设置: {e}",
+                          parent=self, duration=5000)
+            return
+
+        if new_device != old_device:
+            # GPU↔CPU 需重启程序（llama-server 参数在启动时确定）
+            self._restart_with_engine("gguf", new_device)
+            return
+        self._reinit_engine_in_process()
+        InfoBar.success(
+            title="引擎已重启",
+            content="参数已应用，llama-server 重新初始化中",
+            parent=self, duration=3000)
+
+    def _reinit_engine_in_process(self):
+        """进程内重启引擎（卸载 + 世代计数 + 后台重新初始化）"""
+        if hasattr(self.ocr_engine, 'unload'):
+            self.ocr_engine.unload()
+        if hasattr(type(self.ocr_engine), 'reset_instance'):
+            type(self.ocr_engine).reset_instance()
+        from app.core.ocr_engine import get_ocr_engine
+        self.ocr_engine = get_ocr_engine(self.config)
+
+        if hasattr(self, 'engine_band'):
+            self.engine_band.set_status('initializing')
+        if hasattr(self, 'status_bar'):
+            self.status_bar.set_engine_status(self.ocr_engine.engine_name, 'initializing')
+
+        import threading
+        self._init_gen += 1
+        gen = self._init_gen
+        ocr = self.ocr_engine
+
+        def _reinit():
+            if self._init_gen != gen:
+                return
+            ocr.initialize()
+            if self._init_gen == gen:
+                self._ready_gen = gen
+                QTimer.singleShot(0, self._on_ocr_ready)
+
+        threading.Thread(target=_reinit, daemon=True, name="OCR-Restart").start()
+
+    def _on_settings_test_connection(self):
+        """测试连接：后台请求 llama-server /health"""
+        gguf = self.config.get("ocr", {}).get("gguf", {})
+        host = gguf.get("host", "127.0.0.1")
+        port = gguf.get("port", 8080)
+
+        import threading
+
+        def _probe():
+            from app.ui.widgets.gguf_settings_page import check_llama_health
+            ok, msg = check_llama_health(host, port)
+
+            def _show():
+                if ok:
+                    InfoBar.success(title="连接正常", content=msg,
+                                    parent=self, duration=3000)
+                else:
+                    InfoBar.error(
+                        title="连接失败",
+                        content=f"{msg}（可点击『重启引擎』启动服务）",
+                        parent=self, duration=5000)
+            QTimer.singleShot(0, _show)
+
+        threading.Thread(target=_probe, daemon=True, name="HealthCheck").start()
 
     def _register_sub_interfaces(self):
         """注册侧边导航（FluentWindow：左侧 NavigationInterface，4 页）"""

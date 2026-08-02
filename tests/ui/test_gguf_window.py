@@ -115,6 +115,9 @@ class TestGgufWindowShell:
         w = gguf_window
         assert w.keyword_page is not None
         assert w.settings_page is not None
+        # P5：设置页为 GgufSettingsPage（含表单与操作带）
+        assert hasattr(w.settings_page, 'form')
+        assert hasattr(w.settings_page, 'btn_save')
         assert w.file_panel is not None
         assert w.left_panel is not None
         assert w.engine_band is not None
