@@ -1,12 +1,14 @@
-"""Task P3a 测试：RapidMainWindow 壳（MSFluentWindow 双界面重构）
+"""Task P3b 测试：RapidMainWindow（MSFluentWindow 双界面重构 + 工作区迁入）
 
 覆盖：
-- 空壳构造成功（FakeEngine monkeypatch get_ocr_engine，与
+- 构造成功（FakeEngine monkeypatch get_ocr_engine，与
   tests/ui/integration_test.py 同一模式）
 - 顶部标签 3 页（工作区/识别结果/历史记录）注册与切换
 - _apply_design 固定配色（setTheme(LIGHT) + setThemeColor('#0C8CE9')）
-- 壳阶段无 keyword_page/engine_combo/pdf_canvas/field_panel
-  （后两者 P3b 迁入后改断言）
+- 工作区组件齐全：CompactToolbar / FileListPanel / PdfCanvas / FieldPanel /
+  StatusBar / 预处理工具栏 / 快捷键；关键字页不存在
+- 框选/批量冒烟：_on_region_drawn 同步字段面板与画布数据；
+  无文件时试识别/批量识别安全降级（不启动 worker）
 
 说明：
 - 全部在 offscreen 平台运行：不得真实启动引擎/网络/服务器
@@ -51,13 +53,7 @@ def _make_config() -> dict:
 
 
 def _destroy_test_window(w):
-    """销毁测试窗口（顺序污染修复，与 integration_test 同策略）
-
-    不调用 w.close()：closeEvent 会启动异步清理线程并最终经
-    QTimer.singleShot 调 QApplication.quit()，影响 tests/ui 共享的 qapp
-    单例。qWait(600) 覆盖构造期 singleShot(0/500ms) 定时器（OCR-Init
-    回调 / _check_pending_task）后 deleteLater 走析构，轮询自验证。
-    """
+    """销毁测试窗口（顺序污染修复，与 integration_test 同策略）"""
     QTest.qWait(600)
     w.deleteLater()
     import time
@@ -79,21 +75,19 @@ def rapid_window(qapp, monkeypatch):
     w = RapidMainWindow(_make_config())
     yield w
     _destroy_test_window(w)
-    # 还原 ThemeManager 全局设计状态（rapid 固定单色调板会使 set_theme
-    # no-op，污染后续 default 设计测试；顺序必须 design 先）
+    # 还原 ThemeManager 全局设计状态（顺序必须 design 先）
     ThemeManager.set_design('default')
     ThemeManager.set_theme('light')
 
 
 class TestRapidWindowShell:
     def test_constructs(self, rapid_window):
-        """空壳可构造：MSFluentWindow 结构 + 标题/尺寸"""
+        """可构造：MSFluentWindow 结构 + 标题/尺寸"""
         w = rapid_window
         assert w is not None
         assert w.windowTitle() == "PDF OCR — 文档工作台"
         w_, h_ = w.config["app"]["window_size"]
         assert (w.size().width(), w.size().height()) == (w_, h_)
-        # MSFluentWindow 结构（顶部 NavigationBar 导航）
         assert w.stackedWidget is not None
         assert w.navigationInterface is not None
 
@@ -106,7 +100,6 @@ class TestRapidWindowShell:
         assert w.result_page.objectName() == 'result'
         assert w.history_page.objectName() == 'history'
         assert w.workspace_page.objectName() == 'workspace'
-        # 统计卡片 / 筛选工具栏 / 结果表格 / 历史面板
         assert w.stat_total is not None
         assert w.stat_success is not None
         assert w.stat_fail is not None
@@ -135,28 +128,93 @@ class TestRapidWindowShell:
         w.switchTo(w.workspace_page)
         assert w.stackedWidget.currentWidget() is w.workspace_page
 
-    def test_no_workspace_widgets(self, rapid_window):
-        """壳阶段不存在的组件（P3b 迁入工作区后改断言）"""
+    def test_no_gguf_pages(self, rapid_window):
+        """Rapid 窗口无关键字页/设置页（GGUF 专属，P4 建）"""
         w = rapid_window
         assert not hasattr(w, 'keyword_page')
-        assert not hasattr(w, 'engine_combo')
-        assert not hasattr(w, 'pdf_canvas')
-        assert not hasattr(w, 'field_panel')
+        assert not hasattr(w, 'settings_page')
 
     def test_no_system_theme_listener(self, rapid_window):
         """固定配色：窗口不监听系统主题变化（无 paletteChanged 槽）"""
         assert not hasattr(rapid_window, '_on_system_palette_changed')
 
-    def test_result_toolbar_slots_safe_without_status_bar(self, rapid_window):
-        """壳阶段无状态栏时结果页槽函数可正常触发（getattr 防御，P3b 后解除）"""
+    def test_result_toolbar_slots_update_status_bar(self, rapid_window):
+        """结果页槽函数可触发且写入状态栏（P3b 工作区已迁入 StatusBar）"""
         w = rapid_window
-        assert not hasattr(w, 'status_label')
-        w._on_filter_changed()  # 无状态栏不崩
+        assert hasattr(w, 'status_label')
+        w._on_filter_changed()
         w._on_reset_all_results()
+        assert '已重置' in w.status_label.text()
         w._on_toggle_low_confidence()
-        w._on_toggle_low_confidence()  # 切回显示全部分支
+        w._on_toggle_low_confidence()
         w._on_result_data_changed()
-        assert not hasattr(w, 'status_label')
+
+
+class TestRapidWindowWorkspace:
+    def test_workspace_widgets_present(self, rapid_window):
+        """工作区组件齐全（P3b 迁入：文件栏/画布/字段面板/状态栏/工具栏）"""
+        w = rapid_window
+        assert hasattr(w, 'toolbar')
+        assert hasattr(w, 'file_panel')
+        assert hasattr(w, 'left_panel')
+        assert hasattr(w, 'pdf_canvas')
+        assert hasattr(w, 'field_panel')
+        assert hasattr(w, 'right_panel')
+        assert hasattr(w, 'preprocess_toolbar')
+        assert hasattr(w, 'status_bar')
+        assert hasattr(w, 'status_label')
+        assert hasattr(w, 'template_name_label')
+        assert hasattr(w, 'btn_set_default')
+        assert hasattr(w, 'progress_bar')
+        # 引擎单会话化前保留 combo（P4 统一删除）
+        assert hasattr(w, 'engine_combo')
+
+    def test_status_bar_engine_bridge(self, rapid_window):
+        """GpuStatusWidget.status_changed → 底部状态栏引擎状态"""
+        w = rapid_window
+        w.gpu_status.status_changed.emit('rapidocr', 'ready')
+        assert 'RapidOCR' in w.status_bar.engine_label.text()
+        assert '就绪' in w.status_bar.engine_label.text()
+
+    def test_workspace_shortcuts_bound(self, rapid_window):
+        """工作区快捷键子集全部绑定（对象名 = 快捷键字符串）"""
+        from PyQt6.QtGui import QShortcut
+        w = rapid_window
+        for name in ('Ctrl+O', 'Ctrl+S', 'Ctrl+Return', 'Ctrl+T', 'Delete',
+                     'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+L', 'Ctrl+Shift+R',
+                     'Ctrl+Shift+N', 'Space'):
+            assert w.findChild(QShortcut, name) is not None, name
+
+    def test_region_drawn_updates_field_panel(self, rapid_window):
+        """框选区域 → 字段面板 + 画布数据同步（无图时 update_regions 安全跳过）"""
+        from app.models.region import Region
+        w = rapid_window
+        region = Region(id='r1', field_name='姓名', x=0.1, y=0.2, w=0.3, h=0.1)
+        w._on_region_drawn(region)
+        assert region.id in w.field_panel.regions
+        assert region.id in w.pdf_canvas.regions_data
+        # 撤销可回滚
+        w._undo()
+        assert region.id not in w.field_panel.regions
+
+    def test_try_ocr_and_batch_without_files_are_safe(self, rapid_window):
+        """无文件时试识别/批量识别安全降级（InfoBar 提示，不启动 worker）"""
+        w = rapid_window
+        w.on_try_ocr()
+        w.on_batch_run()
+        assert w.worker is None
+
+    def test_upload_adds_files_and_status(self, rapid_window, monkeypatch, tmp_path):
+        """on_upload 走文件对话框（monkeypatch）→ 文件面板加载 + 状态栏提示"""
+        pdf_file = tmp_path / "sample.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 fake")
+        w = rapid_window
+        monkeypatch.setattr(
+            "app.ui.windows.rapid_main_window.QFileDialog.getOpenFileNames",
+            lambda *a, **k: ([str(pdf_file)], ""))
+        w.on_upload()
+        assert str(pdf_file) in w.file_panel.files
+        assert '已加载' in w.status_label.text()
 
 
 class TestRapidWindowDesign:
@@ -186,9 +244,7 @@ class TestRapidWindowDesign:
         from app.ui.widgets.cancel_result_dialog import CancelResultDialog
         monkeypatch.setattr(CancelResultDialog, "has_pending_task", lambda: False)
         w = RapidMainWindow(_make_config())
-        # 构造后 ThemeManager 已切到 rapid 设计
         assert ThemeManager.current_design() == 'rapid'
-        # 统计标签内嵌 QSS 已按 rapid 色板烘焙（set_design 触发 refresh 回调）
         assert ThemeManager.get_color('success') in w.stat_success.styleSheet()
         assert ThemeManager.get_color('error') in w.stat_fail.styleSheet()
         _destroy_test_window(w)
