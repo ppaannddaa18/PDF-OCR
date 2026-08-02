@@ -3,7 +3,7 @@ AppBaseWindowMixin — 双窗口共享底座（Task P3a）
 
 从旧 app/ui/main_window.py 机械提取共享逻辑（只搬不改逻辑），供
 RapidMainWindow（本任务）与 GgufMainWindow（P4）复用。旧 main_window.py
-保持原样不动（回滚锚点）。
+已在 P7 统一删除，本文件为双窗口唯一共享底座。
 
 ──────────────────────── MRO 契约（硬性） ────────────────────────
 类链：RapidMainWindow → AppBaseWindowMixin → MSFluentWindow

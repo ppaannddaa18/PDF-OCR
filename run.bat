@@ -23,9 +23,8 @@ if "%FORCE_CPU%"=="1" (
 
 REM 检查GPU环境
 if exist "%GPU_VENV%\Scripts\python.exe" (
-    echo [INFO] 使用GPU环境: PaddleOCR-VL
+    echo [INFO] 使用GPU环境
     set "USE_VENV=%GPU_VENV%"
-    set "PDFOCR_ENGINE=paddleocr_vl"
     goto :check_venv
 )
 
@@ -44,8 +43,11 @@ if not exist "%USE_VENV%\Scripts\python.exe" (
 
 REM 激活并启动
 call "%USE_VENV%\Scripts\activate.bat"
-set "PDFOCR_ENGINE=%PDFOCR_ENGINE%"
-echo [INFO] 引擎: %PDFOCR_ENGINE%
+if defined PDFOCR_ENGINE (
+    echo [INFO] 引擎(环境变量直通): %PDFOCR_ENGINE%
+) else (
+    echo [INFO] 请在启动窗口中选择引擎（GGUF / RapidOCR）
+)
 echo [INFO] 启动中...
 python "%SCRIPT_DIR%main.py"
 

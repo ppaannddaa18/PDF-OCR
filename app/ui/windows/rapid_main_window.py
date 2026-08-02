@@ -27,7 +27,6 @@ from qfluentwidgets import (
     MSFluentWindow,
     TransparentPushButton, StrongBodyLabel, BodyLabel,
     InfoBar, InfoBarPosition, ProgressBar, PushButton,
-    setTheme, Theme,
 )
 
 from app.ui.theme_manager import ThemeManager
@@ -288,21 +287,6 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         layout.addWidget(content, 1)
 
         return page
-
-    # ── 主题模式（仅设置对话框兼容；design=rapid 下 ThemeManager 锁定浅色） ──
-
-    def _apply_theme_mode(self, mode: str):
-        """兼容旧设置对话框的主题应用（P5 移除主题三单选后删除）
-
-        Rapid 固定浅色：qfluentwidgets 按 mode 切换，ThemeManager 在
-        design='rapid' 下 set_theme 为 no-op，自研组件颜色保持 rapid 色板。
-        """
-        fluent_theme = {
-            'light': Theme.LIGHT,
-            'dark': Theme.DARK,
-            'auto': Theme.AUTO,
-        }[mode]
-        setTheme(fluent_theme)
 
     # ── 信号接线 / 焦点跟踪（P3b 机械迁移） ──────────────────────
 
@@ -1216,20 +1200,13 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
             status_bar.set_engine_status(engine, status)
 
     def _on_settings_clicked(self):
-        """打开 OCR 设置对话框（P5 改为 GGUF 设置页后删除）"""
-        from app.ui.widgets.ocr_settings_dialog import OcrSettingsDialog
+        """打开 Rapid 设置对话框（P7：仅外观动画开关）"""
+        from app.ui.widgets.rapid_settings_dialog import RapidSettingsDialog
 
-        dialog = OcrSettingsDialog(self.config, self)
+        dialog = RapidSettingsDialog(self.config, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             patch = dialog.get_config_patch()
             self._merge_config_patch(self.config, patch)
-
-            from app.ui.animation_manager import AnimationManager
-            appearance = self.config.get("appearance", {})
-            if "theme" in appearance:
-                self._apply_theme_mode(appearance["theme"])
-            if "animations_enabled" in appearance:
-                AnimationManager.set_enabled(bool(appearance["animations_enabled"]))
 
             try:
                 import yaml

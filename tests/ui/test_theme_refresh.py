@@ -1,22 +1,25 @@
-"""Task 15 暗色模式适配测试
+"""Task 15 暗色模式适配测试（Task P7 迁移：窗口侧改为 Rapid 设计锁定）
 
 覆盖：
 - 全局主题刷新机制：ThemeManager.set_theme 后已创建组件的内嵌 QSS 重建
   （构造时烘焙的颜色字符串需重新生成，unpolish/polish 不足）
-- 设置对话框主题选项：加载配置 / 即时应用 / get_config_patch 保存
-- 启动接线：MainWindow 构造时从 appearance.theme / animations_enabled 应用
-- offscreen 冒烟：构造 MainWindow → set_theme('dark') → 关键组件含暗色值
-  → close() 不崩溃
+- 启动接线：RapidMainWindow 构造即锁定 design='rapid'（浅色），
+  appearance.theme / animations_enabled 不再驱动窗口启动
+- offscreen 冒烟：构造 RapidMainWindow → 关键组件含 rapid 色板值
+  → deleteLater 销毁不崩溃
 """
 import gc
+import time
 
 import pytest
+from PyQt6 import sip
+from PyQt6.QtTest import QTest
 
+import app.ui.windows.base_window as base_window_module
 from app.ui.theme_manager import ThemeManager
 from app.ui.animation_manager import AnimationManager
 from app.ui.widgets.empty_state import EmptyState
 from app.ui.widgets.status_bar import StatusBar
-from app.ui.widgets.ocr_settings_dialog import OcrSettingsDialog
 
 
 def _make_config(theme='auto', animations=True) -> dict:
@@ -33,18 +36,34 @@ def _make_config(theme='auto', animations=True) -> dict:
 class FakeEngine:
     """最小引擎桩：避免真实 OCR 初始化（加载模型 / 启动 llama-server）"""
 
-    engine_name = "gguf"
+    engine_name = "rapidocr"
     is_ready = True
     init_error = None
 
     def initialize(self):
         self.is_ready = True
 
+    def unload(self):
+        pass
 
-def _construct_main_window(monkeypatch, config: dict):
-    from app.ui import main_window as mw_module
-    monkeypatch.setattr(mw_module, "get_ocr_engine", lambda cfg: FakeEngine())
-    return mw_module.MainWindow(config)
+
+def _construct_rapid_window(monkeypatch, config: dict):
+    monkeypatch.setattr(base_window_module, "get_ocr_engine",
+                        lambda cfg: FakeEngine())
+    from app.ui.windows.rapid_main_window import RapidMainWindow
+    return RapidMainWindow(config)
+
+
+def _destroy_rapid_window(w):
+    """销毁测试窗口（不调 close()：closeEvent 会 QApplication.quit()）"""
+    w.gpu_status.cleanup()
+    QTest.qWait(600)
+    w.deleteLater()
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not sip.isdeleted(w):
+        QTest.qWait(20)
+    ThemeManager.set_design('default')
+    ThemeManager.set_theme('light')
 
 
 class TestGlobalRefresh:
@@ -170,66 +189,6 @@ class TestFocusRing:
             assert ThemeManager.get_color('text_disabled') in ss
 
 
-class TestSettingsDialogTheme:
-    """设置对话框主题选项：加载 / 即时应用 / 保存"""
-
-    def test_theme_radio_loads_from_config(self, qapp):
-        dlg = OcrSettingsDialog(_make_config(theme='dark'))
-        try:
-            assert dlg.rb_theme_dark.isChecked()
-            assert not dlg.rb_theme_light.isChecked()
-            assert not dlg.rb_theme_auto.isChecked()
-        finally:
-            dlg.close()
-
-    def test_theme_default_is_auto(self, qapp):
-        dlg = OcrSettingsDialog(_make_config())
-        try:
-            assert dlg.rb_theme_auto.isChecked()
-        finally:
-            dlg.close()
-
-    def test_dialog_open_does_not_change_theme(self, qapp):
-        """打开对话框只回显配置，不立即切换运行主题（加载时 blockSignals）"""
-        ThemeManager.set_theme('light')
-        dlg = OcrSettingsDialog(_make_config(theme='dark'))
-        try:
-            assert ThemeManager.current_theme() == 'light'
-        finally:
-            dlg.close()
-
-    def test_toggle_theme_applies_immediately(self, qapp):
-        ThemeManager.set_theme('light')
-        dlg = OcrSettingsDialog(_make_config(theme='auto'))
-        try:
-            dlg.rb_theme_dark.setChecked(True)
-            assert ThemeManager.current_theme() == 'dark'
-            # 对话框自身内嵌 QSS 同步重建（qfluentwidgets 重排后烘焙生效）
-            assert ThemeManager.get_color('primary') in dlg.btn_apply.styleSheet()
-            assert ThemeManager.get_color('border') in dlg._theme_sliders[0].styleSheet()
-        finally:
-            dlg.close()
-
-    def test_config_patch_contains_theme(self, qapp):
-        dlg = OcrSettingsDialog(_make_config())
-        try:
-            dlg.rb_theme_light.setChecked(True)
-            dlg.sw_animations["switch"].setChecked(True)  # 禁用动画
-            patch = dlg.get_config_patch()
-            assert patch["appearance"]["theme"] == 'light'
-            assert patch["appearance"]["animations_enabled"] is False
-        finally:
-            dlg.close()
-
-    def test_default_resets_theme_to_auto(self, qapp):
-        dlg = OcrSettingsDialog(_make_config(theme='dark'))
-        try:
-            dlg._on_default()
-            assert dlg.rb_theme_auto.isChecked()
-        finally:
-            dlg.close()
-
-
 class TestDialogComponentsTheme:
     """修复 I-1：三个对话框组件硬编码浅色适配（暗色模式无浅色残留）"""
 
@@ -277,73 +236,67 @@ class TestDialogComponentsTheme:
         assert '#d1d5db' in panel.desc.styleSheet()   # dark text_secondary
 
 
-class TestStartupWiring:
-    """MainWindow 启动接线：appearance.theme / animations_enabled"""
+class TestDesignWiring:
+    """Rapid 固定设计：appearance.theme / animations_enabled 不再驱动窗口启动"""
 
-    def test_main_window_applies_config_theme_at_startup(self, qapp, monkeypatch):
-        w = _construct_main_window(monkeypatch, _make_config(theme='dark'))
+    def test_rapid_window_locks_design_at_startup(self, qapp, monkeypatch):
+        w = _construct_rapid_window(monkeypatch, _make_config(theme='dark'))
         try:
-            assert ThemeManager.current_theme() == 'dark'
-            # 组件在暗色下构造，构造即烘焙暗色值
-            assert '#1f2937' in w.status_bar.styleSheet()
-            assert '#1f2937' in w.toolbar.styleSheet()
-            assert '#111827' in w.pdf_canvas.styleSheet()
+            assert ThemeManager.current_design() == 'rapid'
+            # 组件按 rapid 浅色色板烘焙（构造即锁定，不随 config.theme）
+            assert ThemeManager.get_color('bg_surface') in w.status_bar.styleSheet()
+            assert ThemeManager.get_color('bg_surface') in w.toolbar.styleSheet()
         finally:
-            w.gpu_status.cleanup()
+            _destroy_rapid_window(w)
 
-    def test_main_window_applies_animation_setting(self, qapp, monkeypatch):
+    def test_rapid_window_ignores_animations_key_at_startup(
+            self, qapp, monkeypatch):
+        """动画开关已移到设置对话框：窗口启动不再覆盖 AnimationManager"""
+        import app.ui.animation_manager as anim_module
+        from app.ui.animation_manager import AnimationManager
+        original = anim_module.AnimationManager.set_enabled
+        calls = []
+
+        def _spy(value):
+            calls.append(value)
+            return original(value)
+
+        monkeypatch.setattr(anim_module.AnimationManager, "set_enabled", _spy)
+        monkeypatch.setattr(anim_module.AnimationManager, "_enabled", False)
         try:
-            AnimationManager.set_enabled(True)
-            w = _construct_main_window(
+            w = _construct_rapid_window(
                 monkeypatch, _make_config(theme='light', animations=False))
             try:
+                assert calls == []  # 启动不调用 set_enabled
                 assert AnimationManager.is_enabled() is False
             finally:
-                w.gpu_status.cleanup()
+                _destroy_rapid_window(w)
         finally:
             AnimationManager.set_enabled(True)
 
-    def test_main_window_legacy_app_theme_fallback(self, qapp, monkeypatch):
-        """兼容旧配置 app.theme（appearance.theme 缺失时回退）"""
-        from app.ui import main_window as mw_module
-        config = _make_config(theme='light')
-        del config["appearance"]
-        config["app"]["theme"] = "dark"
-        w = _construct_main_window(monkeypatch, config)
+
+class TestRapidWindowSmoke:
+    """offscreen 冒烟：构造 → rapid 色板断言 → deleteLater 销毁"""
+
+    def test_smoke_rapid_palette_and_destroy(self, qapp, monkeypatch):
+        w = _construct_rapid_window(monkeypatch, _make_config(theme='light'))
         try:
-            assert ThemeManager.current_theme() == 'dark'
-        finally:
-            w.gpu_status.cleanup()
-
-
-class TestMainWindowSmoke:
-    """offscreen 冒烟：构造 → 切换暗色 → 断言 → close 不崩溃"""
-
-    def test_smoke_theme_switch_and_close(self, qapp, monkeypatch):
-        from app.ui.theme_manager import ThemeManager
-        w = _construct_main_window(monkeypatch, _make_config(theme='light'))
-        try:
-            # 亮色构造
-            assert '#ffffff' in w.status_bar.styleSheet()
-            assert '#ffffff' in w.left_panel.styleSheet()
-            # 运行时切换暗色 → 全局刷新回调重建全部已创建组件
+            assert ThemeManager.get_color('bg_surface') in w.status_bar.styleSheet()
+            assert ThemeManager.get_color('bg_surface') in w.left_panel.styleSheet()
+            assert ThemeManager.get_color('bg_surface') in w.right_panel.styleSheet()
+            assert ThemeManager.get_color('bg_primary') in w.pdf_canvas.styleSheet()
+            assert ThemeManager.get_color('bg_surface') in w.field_panel.table.styleSheet()
+            # design 锁定：运行时 set_theme 不改变 rapid 色板
             ThemeManager.set_theme('dark')
-            assert '#1f2937' in w.status_bar.styleSheet()
-            assert '#1f2937' in w.toolbar.styleSheet()
-            assert '#1f2937' in w.left_panel.styleSheet()
-            assert '#1f2937' in w.right_panel.styleSheet()
-            assert '#111827' in w.pdf_canvas.styleSheet()
-            assert '#1f2937' in w.field_panel.table.styleSheet()
-            # close 不崩溃
-            w.close()
+            assert ThemeManager.get_color('bg_surface') in w.status_bar.styleSheet()
         finally:
-            w.gpu_status.cleanup()
+            _destroy_rapid_window(w)
 
-    def test_keyword_page_present_in_main_window(self, qapp, monkeypatch):
-        """Task 10: 主窗口含关键字汇总页（导航第 3 项）"""
-        w = _construct_main_window(monkeypatch, _make_config(theme='light'))
+    def test_no_keyword_page_in_rapid_window(self, qapp, monkeypatch):
+        """关键字页为 GGUF 专属（P4 功能裁剪）：Rapid 窗口无该页"""
+        w = _construct_rapid_window(monkeypatch, _make_config(theme='light'))
         try:
-            assert hasattr(w, "keyword_page")
-            assert w.keyword_page is not None
+            assert not hasattr(w, "keyword_page")
+            assert not hasattr(w, "settings_page")
         finally:
-            w.gpu_status.cleanup()
+            _destroy_rapid_window(w)

@@ -12,13 +12,11 @@ if [[ $FORCE_CPU -eq 1 ]]; then
     USE_VENV="$CPU_VENV"
     export PDFOCR_ENGINE=rapidocr
 elif [[ -f "$GPU_VENV/Scripts/python.exe" ]]; then
-    echo "[INFO] 使用GPU环境: PaddleOCR-VL"
+    echo "[INFO] 使用GPU环境"
     USE_VENV="$GPU_VENV"
-    export PDFOCR_ENGINE=paddleocr_vl
 elif [[ -f "$GPU_VENV/bin/python" ]]; then
-    echo "[INFO] 使用GPU环境: PaddleOCR-VL"
+    echo "[INFO] 使用GPU环境"
     USE_VENV="$GPU_VENV"
-    export PDFOCR_ENGINE=paddleocr_vl
 else
     echo "[WARN] GPU环境不可用，回退到CPU环境"
     USE_VENV="$CPU_VENV"
@@ -30,6 +28,10 @@ if [[ ! -f "$USE_VENV/Scripts/python.exe" && ! -f "$USE_VENV/bin/python" ]]; the
     exit 1
 fi
 
-echo "[INFO] 引擎: $PDFOCR_ENGINE"
+if [[ -n "${PDFOCR_ENGINE:-}" ]]; then
+    echo "[INFO] 引擎(环境变量直通): $PDFOCR_ENGINE"
+else
+    echo "[INFO] 请在启动窗口中选择引擎（GGUF / RapidOCR）"
+fi
 source "$USE_VENV/Scripts/activate" 2>/dev/null || source "$USE_VENV/bin/activate" 2>/dev/null
 python "$SCRIPT_DIR/main.py"

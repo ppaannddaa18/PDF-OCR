@@ -65,8 +65,7 @@ def save_config(config: dict) -> None:
     """
     将配置写回 config.yaml（与 load_config 的读取路径一致）
 
-    线程安全：加锁防止并发写盘写半截。main_window.py 中散落的 yaml.safe_dump
-    调用点迁移由后续任务完成。
+    线程安全：加锁防止并发写盘写半截。双窗口（Gguf/Rapid）与设置页共用。
     """
     config_path = get_base_path() / "config.yaml"
     with _config_write_lock:

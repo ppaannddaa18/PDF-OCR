@@ -1,4 +1,5 @@
-"""Task 7 修复 I-1 回归测试：新建模板需持久化空配置 + 清空默认模板
+"""Task 7 修复 I-1 回归测试（Task P7 迁移至 RapidMainWindow）：
+新建模板需持久化空配置 + 清空默认模板
 
 背景：_on_new_template (Ctrl+Shift+N) 最初只清 UI 状态，导致切换文件再切回时
 旧区域/默认模板静默复活。修复后应与 on_clear_current_pdf_fields 一致：
@@ -9,26 +10,33 @@
 通过 monkeypatch get_ocr_engine 注入 FakeEngine。
 """
 import pytest
+from PyQt6 import sip
+from PyQt6.QtTest import QTest
 
-from app.ui import main_window as mw_module
+import app.ui.windows.base_window as base_window_module
+from app.ui.windows.rapid_main_window import RapidMainWindow
+from app.ui.theme_manager import ThemeManager
 from app.models.template import Template
 
 
 class FakeEngine:
     """最小引擎桩：避免真实 OCR 初始化（加载模型 / 启动 llama-server）"""
 
-    engine_name = "gguf"
+    engine_name = "rapidocr"
     is_ready = True
     init_error = None
 
     def initialize(self):
         self.is_ready = True
 
+    def unload(self):
+        pass
+
 
 def _make_config() -> dict:
     return {
         "app": {"name": "PDFOCR", "window_size": [1400, 900], "theme": "light"},
-        "ocr": {"engine": "gguf", "gguf": {"device": "gpu"}},
+        "ocr": {"engine": "rapidocr"},
         "pdf": {"render_dpi": 200},
         "batch": {"max_workers": 2},
         "export": {"include_confidence": True},
@@ -37,12 +45,21 @@ def _make_config() -> dict:
 
 @pytest.fixture
 def main_window(qapp, monkeypatch):
-    monkeypatch.setattr(mw_module, "get_ocr_engine", lambda config: FakeEngine())
-    w = mw_module.MainWindow(_make_config())
+    monkeypatch.setattr(base_window_module, "get_ocr_engine",
+                        lambda config: FakeEngine())
+    w = RapidMainWindow(_make_config())
     yield w
-    # 不调用 w.close()：closeEvent 最终会 QApplication.quit()，
-    # 影响 tests/ui 共享的 qapp 单例；仅停掉 GPU 状态定时器
+    # 不调用 w.close()：closeEvent 最终会 QApplication.quit()；
+    # deleteLater 走析构，并还原 ThemeManager 设计状态
     w.gpu_status.cleanup()
+    QTest.qWait(600)
+    w.deleteLater()
+    import time
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not sip.isdeleted(w):
+        QTest.qWait(20)
+    ThemeManager.set_design('default')
+    ThemeManager.set_theme('light')
 
 
 class TestNewTemplatePersistence:
