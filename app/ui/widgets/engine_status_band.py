@@ -1,8 +1,8 @@
-"""引擎状态发光横线 — 窗口顶部 2px 渐变带（P2 骨架 + P6 呼吸动画）
+"""引擎状态发光横线 — 窗口顶部 2px 渐变带（P2 骨架 + P6 呼吸动画 + 重设计）
 
-set_status('initializing' | 'ready' | 'error') → 琥珀 / 冰青 / 红。
+set_status('initializing' | 'ready' | 'error') → 黄铜 / 鼠尾草绿 / 信号红。
 paintEvent 绘制两端淡出的横向线性渐变模拟发光；
-P6：initializing 态叠加琥珀呼吸（alpha 100↔220，QTimer 驱动相位），
+P6：initializing 态叠加黄铜呼吸（alpha 100↔220，QTimer 驱动相位），
 尊重 AnimationManager 全局动画开关（禁用时静态常亮）。
 """
 import math
@@ -17,11 +17,11 @@ from app.ui.animation_manager import AnimationManager
 class EngineStatusBand(QWidget):
     """引擎初始化状态带：窗口顶部 2px 发光横线"""
 
-    # 三态颜色（与 GGUF 签名一致：琥珀=初始化 / 冰青=就绪 / 红=错误）
+    # 三态颜色（与 GGUF 签名一致：黄铜=初始化 / 鼠尾草绿=就绪 / 信号红=错误）
     STATUS_COLORS = {
-        'initializing': '#F59E0B',
-        'ready': '#5EEAD4',
-        'error': '#F87171',
+        'initializing': '#E0B23C',  # 黄铜（呼吸）
+        'ready': '#8FB573',         # 鼠尾草绿
+        'error': '#E2574C',         # 信号红
     }
 
     BREATH_INTERVAL_MS = 80

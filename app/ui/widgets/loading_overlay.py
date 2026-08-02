@@ -12,6 +12,8 @@ import sys
 import json
 from datetime import datetime
 
+from app.ui.theme_manager import ThemeManager
+
 
 class LoadingOverlay(QWidget):
     """启动加载遮罩层"""
@@ -35,15 +37,11 @@ class LoadingOverlay(QWidget):
         self._dot_count = 0
         self._current_error_key = None  # 当前错误类型关键字
         self._download_url = None
+        # 设计感知：重设计后遮罩层跟随当前 design 色板（深色窗口不再白底）
+        ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _init_ui(self):
         """初始化UI"""
-        # 设置遮罩层样式
-        self.setStyleSheet("""
-            QWidget {
-                background-color: rgba(255, 255, 255, 240);
-            }
-        """)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
 
         layout = QVBoxLayout(self)
@@ -58,17 +56,14 @@ class LoadingOverlay(QWidget):
 
         # 状态文本
         self.status_label = BodyLabel("正在初始化 OCR 引擎...")
-        self.status_label.setStyleSheet("font-size: 14px; color: #333;")
         layout.addWidget(self.status_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # 描述文本
         self.desc_label = BodyLabel("首次启动需要几秒钟")
-        self.desc_label.setStyleSheet("font-size: 12px; color: #666;")
         layout.addWidget(self.desc_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # 动画点
         self.dots_label = QLabel("●○○○○")
-        self.dots_label.setStyleSheet("font-size: 16px; color: #0078d4;")
         self.dots_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.dots_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -81,12 +76,10 @@ class LoadingOverlay(QWidget):
 
         # 错误图标和标题
         self.error_title = BodyLabel("⚠️ OCR引擎初始化失败")
-        self.error_title.setStyleSheet("font-size: 16px; color: #d83b01; font-weight: bold;")
         error_layout.addWidget(self.error_title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # 错误详情（友好描述）
         self.error_detail = BodyLabel("")
-        self.error_detail.setStyleSheet("font-size: 14px; color: #333; font-weight: bold;")
         self.error_detail.setWordWrap(True)
         self.error_detail.setMaximumWidth(450)
         error_layout.addWidget(self.error_detail, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -98,11 +91,9 @@ class LoadingOverlay(QWidget):
         solution_layout.setSpacing(8)
 
         self.solution_title = BodyLabel("解决步骤:")
-        self.solution_title.setStyleSheet("font-size: 13px; color: #666; font-weight: bold;")
         solution_layout.addWidget(self.solution_title)
 
         self.solution_steps = BodyLabel("")
-        self.solution_steps.setStyleSheet("font-size: 12px; color: #444; line-height: 1.6;")
         self.solution_steps.setWordWrap(True)
         self.solution_steps.setMaximumWidth(420)
         solution_layout.addWidget(self.solution_steps)
@@ -158,6 +149,35 @@ class LoadingOverlay(QWidget):
 
         error_layout.addLayout(btn_layout)
         layout.addWidget(self.error_widget, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # 构造时烘焙主题色（可安全重复执行）
+        self.apply_theme()
+
+    def apply_theme(self):
+        """重建遮罩层 QSS（ThemeManager 色板；重设计后深色窗口不再白底）"""
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+            }}
+        """)
+        self.status_label.setStyleSheet(
+            f"font-size: 14px; color: {ThemeManager.get_color('text_primary')};")
+        self.desc_label.setStyleSheet(
+            f"font-size: 12px; color: {ThemeManager.get_color('text_secondary')};")
+        self.dots_label.setStyleSheet(
+            f"font-size: 16px; color: {ThemeManager.get_color('primary')};")
+        self.error_title.setStyleSheet(
+            f"font-size: 16px; color: {ThemeManager.get_color('error')}; "
+            "font-weight: bold;")
+        self.error_detail.setStyleSheet(
+            f"font-size: 14px; color: {ThemeManager.get_color('text_primary')}; "
+            "font-weight: bold;")
+        self.solution_title.setStyleSheet(
+            f"font-size: 13px; color: {ThemeManager.get_color('text_secondary')}; "
+            "font-weight: bold;")
+        self.solution_steps.setStyleSheet(
+            f"font-size: 12px; color: {ThemeManager.get_color('text_secondary')}; "
+            "line-height: 1.6;")
 
     def show_loading(self):
         """显示加载状态"""

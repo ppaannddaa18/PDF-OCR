@@ -21,23 +21,23 @@ from PyQt6.QtWidgets import (
 )
 from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton
 
-# GGUF 设计语言色板（简报权威值）
+# GGUF 设计语言色板（重设计：暗松绿 × 黄铜金）
 GGUF_COLORS = {
-    "bg": "#0B0F1A",
-    "panel": "#141B2E",
-    "accent": "#E8A33D",
-    "teal": "#5EEAD4",
-    "text": "#C7CFDD",
-    "muted": "#8B93A7",
+    "bg": "#10150F",
+    "panel": "#171E16",
+    "accent": "#C9A227",
+    "teal": "#8FB573",
+    "text": "#E9E7D9",
+    "muted": "#A5AC97",
 }
-# RapidOCR 设计语言色板
+# RapidOCR 设计语言色板（重设计：暖纸 × 档案绿）
 RAPID_COLORS = {
-    "bg": "#F6F8FB",
+    "bg": "#F6F3ED",
     "panel": "#FFFFFF",
-    "accent": "#0C8CE9",
-    "teal": "#0C8CE9",
-    "text": "#3A4157",
-    "muted": "#5A6472",
+    "accent": "#1E7B5C",
+    "teal": "#0E7490",
+    "text": "#2A2724",
+    "muted": "#6E675E",
 }
 
 # 依赖徽章色

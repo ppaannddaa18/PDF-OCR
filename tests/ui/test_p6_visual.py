@@ -161,6 +161,6 @@ class TestTokenFix:
     def test_rapid_accent_alt_readable_on_light(self, qapp):
         ThemeManager.set_design('rapid')
         try:
-            assert ThemeManager.get_color('accent_alt') == '#14B8A6'
+            assert ThemeManager.get_color('accent_alt') == '#0E7490'
         finally:
             ThemeManager.set_design('default')

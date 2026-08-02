@@ -79,62 +79,63 @@ class ThemeManager:
                 'border_focus': '#3b82f6',
             },
         },
-        # ── gguf：深色科技，固定深色（仅 dark） ───────────────────
-        # 简报权威值；未列出的现有 role 按同视觉方向推导（P6 再精修）：
-        #   bg_hover/bg_selected 取 surface_2/border，primary 系取 accent 系
+        # ── gguf：暗松绿 × 黄铜金「信号台」（重设计，固定深色） ────
+        # 设计方向：本地推理是"看机器工作"——信号台/老式仪表盘的语言。
+        # 深松绿黑底（区别于旧版海军蓝）、黄铜金动作色、鼠尾草绿状态色；
+        # 大胆度花在黄铜发光带与等宽读数上，其余保持安静。
         'gguf': {
             'dark': {
-                'bg_primary': '#0B0F1A',
-                'bg_surface': '#141B2E',          # 简报 surface
-                'surface_2': '#1C2740',           # 简报（新增 role）
-                'bg_hover': '#1C2740',            # = surface_2
-                'bg_selected': '#26334F',         # = border
-                'primary': '#E8A33D',             # = accent
-                'primary_hover': '#C98B2E',       # accent 压暗
+                'bg_primary': '#10150F',          # 深松绿黑
+                'bg_surface': '#171E16',          # 面板松绿
+                'surface_2': '#202A1E',           # 浮起
+                'bg_hover': '#202A1E',            # = surface_2
+                'bg_selected': '#2A3526',         # 选中底
+                'primary': '#C9A227',             # 黄铜金
+                'primary_hover': '#A9881E',       # 黄铜压暗
                 'white': '#ffffff',
-                'success_bg': '#12301B',          # 沿用 default dark
-                'warning_bg': '#3A2F14',          # 沿用 default dark
-                'error_bg': '#3A1518',            # 沿用 default dark
-                'success': '#5EEAD4',
-                'warning': '#F59E0B',
-                'warning_text': '#F59E0B',        # = warning（同 default dark 模式）
-                'error': '#F87171',
-                'text_primary': '#E6EDF7',
-                'text_secondary': '#8A97B5',
-                'text_disabled': '#5A6783',
-                'border': '#26334F',
-                'border_focus': '#E8A33D',        # = accent
-                'accent': '#E8A33D',              # 简报（新增 role）
-                'accent_alt': '#5EEAD4',          # 简报（新增 role）
+                'success_bg': '#172616',
+                'warning_bg': '#332B14',
+                'error_bg': '#331A16',
+                'success': '#8FB573',             # 鼠尾草绿
+                'warning': '#E0B23C',
+                'warning_text': '#E0B23C',
+                'error': '#E2574C',               # 信号红
+                'text_primary': '#E9E7D9',        # 骨白
+                'text_secondary': '#A5AC97',
+                'text_disabled': '#6C725E',
+                'border': '#2F3B2C',
+                'border_focus': '#C9A227',        # = accent
+                'accent': '#C9A227',              # 黄铜金
+                'accent_alt': '#8FB573',          # 鼠尾草绿（状态/数据）
             },
         },
-        # ── rapid：浅色简洁，固定浅色（仅 light） ──────────────────
-        # 简报权威值；未列出 role 同理推导（primary 系取 accent 系）
+        # ── rapid：暖纸 × 墨色 × 档案绿「文具档案室」（重设计，固定浅色） ──
+        # 设计方向：文档处理是"桌面上的纸活"——暖纸底 + 墨色文字 +
+        # 深档案绿主色；荧光笔框选签名保留（黄与绿互补），卡片阴影延续。
         'rapid': {
             'light': {
-                'bg_primary': '#F6F8FB',
-                'bg_surface': '#FFFFFF',          # 简报 surface
-                'surface_2': '#EEF2F7',           # 简报（新增 role）
-                'bg_hover': '#EEF2F7',            # = surface_2
-                'bg_selected': '#E5F2FD',         # 浅蓝配 accent
-                'primary': '#0C8CE9',             # = accent
-                'primary_hover': '#0A7CD0',       # accent 压暗
+                'bg_primary': '#F6F3ED',          # 暖纸
+                'bg_surface': '#FFFFFF',          # 卡片
+                'surface_2': '#EFEAE2',           # 悬停
+                'bg_hover': '#EFEAE2',
+                'bg_selected': '#E4F0E8',         # 浅档案绿底
+                'primary': '#1E7B5C',             # 档案绿
+                'primary_hover': '#186347',       # 压暗
                 'white': '#ffffff',
-                'success_bg': '#E7F5E9',          # 沿用 default light
-                'warning_bg': '#FFF8E1',          # 沿用 default light
-                'error_bg': '#FDE8E8',            # 沿用 default light
-                'success': '#16A34A',
-                'warning': '#D97706',
-                'warning_text': '#B45309',        # 沿用 default light
-                'error': '#DC2626',
-                'text_primary': '#1F2937',
-                'text_secondary': '#6B7280',
-                'text_disabled': '#9CA3AF',       # 沿用 default light
-                'border': '#E3E9F2',
-                'border_focus': '#0C8CE9',        # = accent
-                'accent': '#0C8CE9',              # 简报（新增 role）
-                'accent_alt': '#14B8A6',          # P6：teal-500（浅底可读；
-                                                  # 原推导 #5EEAD4 对比度不足）
+                'success_bg': '#E4F0E8',
+                'warning_bg': '#F7ECD8',
+                'error_bg': '#F8E3E1',
+                'success': '#1E7B5C',
+                'warning': '#C77F1D',
+                'warning_text': '#A35E12',
+                'error': '#C2423C',
+                'text_primary': '#2A2724',        # 墨色
+                'text_secondary': '#6E675E',
+                'text_disabled': '#A39B8E',
+                'border': '#E0DACD',
+                'border_focus': '#1E7B5C',        # = accent
+                'accent': '#1E7B5C',              # 档案绿
+                'accent_alt': '#0E7490',          # 汽油蓝（次级数据色）
             },
         },
     }

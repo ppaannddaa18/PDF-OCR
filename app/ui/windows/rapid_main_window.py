@@ -11,7 +11,7 @@ MRO 契约（硬性，详见 base_window.py 顶部注释）：
 
 引擎路径固定 rapid：config["ocr"]["engine"] 强制 'rapidocr'（get_ocr_engine
 据此构造 RapidOCREngine；GGUF 分支由 GgufMainWindow（P4）承担）。
-窗口固定浅色配色（design=rapid，强调色 #0C8CE9），不监听系统主题。
+窗口固定浅色配色（design=rapid，强调色 #1E7B5C 档案绿），不监听系统主题。
 
 工作区（模板识别）从旧 app/ui/main_window.py 机械迁移（只搬不改逻辑）：
     _create_template_page / 文件/框选/模板/预处理/试识别/批量识别/快捷键。
@@ -83,7 +83,7 @@ def _ensure_qta():
     return qta
 
 
-def _icon(name: str, color: str = '#0C8CE9'):
+def _icon(name: str, color: str = '#1E7B5C'):
     """获取图标（延迟加载 qtawesome）"""
     return _ensure_qta().icon(name, color=color)
 

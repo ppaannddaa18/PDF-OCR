@@ -33,19 +33,19 @@ class TestDesignTokenPipeline:
 
     def test_gguf_get_color_dark_palette(self):
         ThemeManager.set_design('gguf')
-        assert ThemeManager.get_color('bg_primary') == '#0B0F1A'
-        assert ThemeManager.get_color('bg_surface') == '#141B2E'
-        assert ThemeManager.get_color('accent') == '#E8A33D'
-        assert ThemeManager.get_color('surface_2') == '#1C2740'
-        assert ThemeManager.get_color('text_primary') == '#E6EDF7'
+        assert ThemeManager.get_color('bg_primary') == '#10150F'
+        assert ThemeManager.get_color('bg_surface') == '#171E16'
+        assert ThemeManager.get_color('accent') == '#C9A227'
+        assert ThemeManager.get_color('surface_2') == '#202A1E'
+        assert ThemeManager.get_color('text_primary') == '#E9E7D9'
 
     def test_rapid_get_color_light_palette(self):
         ThemeManager.set_design('rapid')
-        assert ThemeManager.get_color('bg_primary') == '#F6F8FB'
+        assert ThemeManager.get_color('bg_primary') == '#F6F3ED'
         assert ThemeManager.get_color('bg_surface') == '#FFFFFF'
-        assert ThemeManager.get_color('accent') == '#0C8CE9'
-        assert ThemeManager.get_color('surface_2') == '#EEF2F7'
-        assert ThemeManager.get_color('text_primary') == '#1F2937'
+        assert ThemeManager.get_color('accent') == '#1E7B5C'
+        assert ThemeManager.get_color('surface_2') == '#EFEAE2'
+        assert ThemeManager.get_color('text_primary') == '#2A2724'
 
     def test_unknown_design_raises(self):
         with pytest.raises(ValueError, match="Unknown design"):
@@ -82,9 +82,9 @@ class TestDesignTokenPipeline:
         """gguf 固定深色：set_theme('light') 不生效，token 仍取深色值"""
         ThemeManager.set_design('gguf')
         ThemeManager.set_theme('light')
-        assert ThemeManager.get_color('bg_primary') == '#0B0F1A'
+        assert ThemeManager.get_color('bg_primary') == '#10150F'
         ThemeManager.set_theme('dark')
-        assert ThemeManager.get_color('bg_primary') == '#0B0F1A'
+        assert ThemeManager.get_color('bg_primary') == '#10150F'
 
     def test_rapid_set_theme_noop(self):
         """rapid 固定浅色：set_theme('dark') 不生效，token 仍取浅色值"""
@@ -110,8 +110,8 @@ class TestDesignTokenPipeline:
             'color': 'text_primary'
         })
         style = widget.styleSheet()
-        assert '#0B0F1A' in style
-        assert '#E6EDF7' in style
+        assert '#10150F' in style
+        assert '#E9E7D9' in style
 
     def test_registered_widget_refreshes_on_design_change(self, qapp):
         """已注册 apply_theme 的组件 set_design 后 QSS 自动重建为设计色"""
@@ -121,8 +121,8 @@ class TestDesignTokenPipeline:
         bar = StatusBar()
         assert '#ffffff' in bar.styleSheet()  # default light bg_surface
         ThemeManager.set_design('gguf')
-        assert '#141B2E' in bar.styleSheet()  # gguf bg_surface
-        assert '#26334F' in bar.styleSheet()  # gguf border
+        assert '#171E16' in bar.styleSheet()  # gguf bg_surface
+        assert '#2F3B2C' in bar.styleSheet()  # gguf border
 
     def test_apply_card_shadow(self, qapp):
         widget = QWidget()
@@ -166,9 +166,9 @@ class TestButtonStyleDesign:
         ThemeManager.set_theme('light')
         assert '#2563eb' in primary_qss()  # default light primary
         ThemeManager.set_design('gguf')
-        assert '#E8A33D' in primary_qss()  # gguf accent
+        assert '#C9A227' in primary_qss()  # gguf accent
         ThemeManager.set_design('rapid')
-        assert '#0C8CE9' in primary_qss()  # rapid accent
+        assert '#1E7B5C' in primary_qss()  # rapid accent
 
     def test_primary_qss_default_dark_regression(self):
         ThemeManager.set_design('default')
@@ -182,14 +182,14 @@ class TestEngineStatusBand:
     def test_smoke_three_states(self, qapp):
         band = EngineStatusBand()
         assert band.status() == 'initializing'
-        assert band.STATUS_COLORS['initializing'] == '#F59E0B'
+        assert band.STATUS_COLORS['initializing'] == '#E0B23C'
         assert band.minimumHeight() == 2
         band.set_status('ready')
         assert band.status() == 'ready'
-        assert band.STATUS_COLORS['ready'] == '#5EEAD4'
+        assert band.STATUS_COLORS['ready'] == '#8FB573'
         band.set_status('error')
         assert band.status() == 'error'
-        assert band.STATUS_COLORS['error'] == '#F87171'
+        assert band.STATUS_COLORS['error'] == '#E2574C'
 
     def test_unknown_status_raises(self, qapp):
         band = EngineStatusBand()

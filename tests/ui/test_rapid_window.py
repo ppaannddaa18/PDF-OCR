@@ -4,7 +4,7 @@
 - 构造成功（FakeEngine monkeypatch get_ocr_engine，与
   tests/ui/integration_test.py 同一模式）
 - 顶部标签 3 页（工作区/识别结果/历史记录）注册与切换
-- _apply_design 固定配色（setTheme(LIGHT) + setThemeColor('#0C8CE9')）
+- _apply_design 固定配色（setTheme(LIGHT) + setThemeColor('#1E7B5C')）
 - 工作区组件齐全：CompactToolbar / FileListPanel / PdfCanvas / FieldPanel /
   StatusBar / 预处理工具栏 / 快捷键；关键字页不存在
 - 框选/批量冒烟：_on_region_drawn 同步字段面板与画布数据；
@@ -219,7 +219,7 @@ class TestRapidWindowWorkspace:
 
 class TestRapidWindowDesign:
     def test_apply_design_sets_rapid_palette(self, qapp, monkeypatch):
-        """_apply_design：setTheme(LIGHT) + setThemeColor('#0C8CE9') + design=rapid"""
+        """_apply_design：setTheme(LIGHT) + setThemeColor('#1E7B5C') + design=rapid"""
         calls = []
         monkeypatch.setattr(base_window_module, "setTheme",
                             lambda theme: calls.append(('setTheme', theme)))
@@ -232,7 +232,7 @@ class TestRapidWindowDesign:
         calls.clear()  # 构造期调用不计，只统计显式调用
         w._apply_design()
         assert ('setTheme', Theme.LIGHT) in calls
-        assert ('setThemeColor', '#0C8CE9') in calls
+        assert ('setThemeColor', '#1E7B5C') in calls
         assert ThemeManager.current_design() == 'rapid'
         _destroy_test_window(w)
         ThemeManager.set_design('default')

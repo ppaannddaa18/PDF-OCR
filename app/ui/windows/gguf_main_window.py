@@ -11,7 +11,8 @@ MRO 契约（硬性，详见 base_window.py 顶部注释）：
     EngineStatusBand 在 _post_init_base 之后挂载。
 
 引擎路径固定 gguf：config["ocr"]["engine"] 强制 'gguf'。窗口固定深色
-（design='gguf'，强调色 #E8A33D + 状态色 #5EEAD4），不监听系统主题。
+（design='gguf'，强调色 #C9A227 黄铜金 + 状态色 #8FB573 鼠尾草绿），
+不监听系统主题。
 
 页面：侧边导航 4 页 —— 关键字提取（核心）/ 识别结果 / 历史记录 / 模型设置。
 无模板工作区（不 import field_panel/pdf_canvas，import 隔离由测试断言）。
@@ -39,7 +40,7 @@ from app.utils.keyword_set_manager import KeywordSetManager
 qta = None
 
 
-def _icon(name: str, color: str = '#E8A33D'):
+def _icon(name: str, color: str = '#C9A227'):
     """获取图标（延迟加载 qtawesome）"""
     global qta
     if qta is None:
@@ -54,7 +55,7 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
     WINDOW_TITLE = "PDF OCR — 推理操作台"
     WINDOW_ICON = 'fa5s.cogs'
     DESIGN = 'gguf'
-    ACCENT_COLOR = '#E8A33D'
+    ACCENT_COLOR = '#C9A227'
     FLUENT_THEME = Theme.DARK
 
     def __init__(self, config):

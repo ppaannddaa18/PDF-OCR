@@ -53,7 +53,7 @@ from app.utils.history_manager import HistoryManager
 qta = None
 
 
-def _icon(name: str, color: str = '#0C8CE9'):
+def _icon(name: str, color: str = '#1E7B5C'):
     """获取图标（延迟加载 qtawesome）"""
     global qta
     if qta is None:
@@ -68,9 +68,9 @@ class AppBaseWindowMixin:
     # 子类覆盖：窗口标题（None → config["app"]["name"]）与窗口图标
     WINDOW_TITLE = None
     WINDOW_ICON = None
-    # 子类覆盖：design 名与强调色（P4 GgufMainWindow 覆盖为 'gguf'/#E8A33D）
+    # 子类覆盖：design 名与强调色（P4 GgufMainWindow 覆盖为 'gguf'/#C9A227）
     DESIGN = 'rapid'
-    ACCENT_COLOR = '#0C8CE9'
+    ACCENT_COLOR = '#1E7B5C'
     # 子类覆盖：qfluentwidgets 主题（Rapid 固定浅色 / Gguf 固定深色）
     FLUENT_THEME = Theme.LIGHT
 

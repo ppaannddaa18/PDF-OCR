@@ -3,7 +3,7 @@
 覆盖：
 - 构造成功（FakeEngine monkeypatch get_ocr_engine）
 - 侧边导航 4 页（关键字提取/识别结果/历史记录/模型设置）注册与切换
-- _apply_design 固定深色（setTheme(DARK) + setThemeColor('#E8A33D')）
+- _apply_design 固定深色（setTheme(DARK) + setThemeColor('#C9A227')）
 - 无模板工作区（无 pdf_canvas/field_panel/engine_combo）
 - 关键字提取完成 → adapter → 结果页/历史/统计同步
 - 顶部 EngineStatusBand 发光带随引擎就绪变冰青
@@ -202,7 +202,7 @@ class TestGgufKeywordFlow:
 
 class TestGgufWindowDesign:
     def test_apply_design_sets_gguf_palette(self, qapp, monkeypatch):
-        """_apply_design：setTheme(DARK) + setThemeColor('#E8A33D') + design=gguf"""
+        """_apply_design：setTheme(DARK) + setThemeColor('#C9A227') + design=gguf"""
         calls = []
         monkeypatch.setattr(base_window_module, "setTheme",
                             lambda theme: calls.append(('setTheme', theme)))
@@ -215,7 +215,7 @@ class TestGgufWindowDesign:
         calls.clear()
         w._apply_design()
         assert ('setTheme', Theme.DARK) in calls
-        assert ('setThemeColor', '#E8A33D') in calls
+        assert ('setThemeColor', '#C9A227') in calls
         assert ThemeManager.current_design() == 'gguf'
         _destroy_test_window(w)
         ThemeManager.set_design('default')
