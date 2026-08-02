@@ -284,7 +284,7 @@ class EngineSelectDialog(QDialog):
             self._warning_shown = True
             InfoBar.warning(
                 title="依赖不完整",
-                content="所选引擎依赖不完整，进入后可能初始化失败",
+                content="所选引擎依赖不完整，进入后可能初始化失败（可到『模型设置』页修正后重启引擎）",
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,

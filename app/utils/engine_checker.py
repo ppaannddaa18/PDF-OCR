@@ -79,7 +79,10 @@ def _check_gguf(gguf_cfg: dict) -> dict:
     if server_path and os.path.isabs(server_path):
         dll_dir = Path(os.path.dirname(server_path))
     if not (dll_dir / "ggml-cuda.dll").exists():
-        issues.append(f"警告：{dll_dir / 'ggml-cuda.dll'} 缺失（GPU 推理可能失败，可回退 CPU）")
+        issues.append(
+            f"警告：{dll_dir / 'ggml-cuda.dll'} 缺失"
+            "（GPU 推理可能失败；可到『模型设置』页修正路径，"
+            "或切换设备为 CPU 后重启引擎）")
 
     return {"available": available, "issues": issues}
 

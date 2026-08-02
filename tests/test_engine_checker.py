@@ -67,6 +67,9 @@ class TestGguf:
         gguf = result["gguf"]
         assert gguf["available"] is True
         assert any("警告" in i and "ggml-cuda.dll" in i for i in gguf["issues"])
+        # P7 文案：引导到模型设置页（不再提示旧版「可回退 CPU」）
+        assert any("模型设置" in i for i in gguf["issues"])
+        assert not any("可回退" in i for i in gguf["issues"])
 
     def test_absolute_paths(self, tmp_path):
         """绝对路径直接按自身存在性判断（不受 base_dir 影响）"""
