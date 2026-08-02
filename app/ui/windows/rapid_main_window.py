@@ -15,7 +15,7 @@ MRO 契约（硬性，详见 base_window.py 顶部注释）：
 
 工作区（模板识别）从旧 app/ui/main_window.py 机械迁移（只搬不改逻辑）：
     _create_template_page / 文件/框选/模板/预处理/试识别/批量识别/快捷键。
-engine_combo 及其接线本任务照搬保留，P4 统一删除（单会话一引擎）。
+引擎选择下拉框与热切换逻辑已在 P4 删除（单会话一引擎，会话内固定 rapidocr）。
 """
 import logging
 
@@ -118,9 +118,6 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         消费 _last_engine_status（_create_status_bar 回放）与 gpu_status
         接线，其余字段供文件/框选/批量槽函数使用。
         """
-        self._gguf_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
-        self._gguf_was_unloaded = False
-        self._current_mode = "manual"  # Rapid 固定手动模式（模板识别）
         self.state_tooltip = None
         self._last_engine_status = ("", "unavailable")  # GpuStatusWidget.status_changed 最新值
         self._template_is_default = False  # apply_theme 重绘模板名颜色时使用
@@ -155,32 +152,18 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(4)
 
-        self.toolbar = CompactToolbar()
+        # 单会话一引擎（P4）：Rapid 窗口不显示引擎选择下拉框
+        self.toolbar = CompactToolbar(show_engine_selector=False)
         self.toolbar.upload_clicked.connect(self.on_upload)
         self.toolbar.test_ocr_clicked.connect(self.on_try_ocr)
         self.toolbar.batch_ocr_clicked.connect(self.on_batch_run)
         self.toolbar.save_template_clicked.connect(self.on_save_template)
         self.toolbar.load_template_clicked.connect(self.on_load_template)
         self.toolbar.settings_clicked.connect(self._on_settings_clicked)
-        self.toolbar.engine_changed.connect(self._on_toolbar_engine_changed)
         toolbar_layout.addWidget(self.toolbar, 1)
 
-        # 引擎/GPU 状态别名（兼容既有引用：_on_engine_switched / _on_ocr_ready / closeEvent）
-        self.engine_combo = self.toolbar.engine_combo
+        # GPU 状态别名（兼容既有引用：_on_ocr_ready / closeEvent）
         self.gpu_status = self.toolbar.engine_status
-
-        # 根据当前配置同步引擎下拉框（防止初始化时触发切换）
-        current_engine = self.config.get("ocr", {}).get("engine", "rapidocr")
-        current_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
-        if current_engine == "gguf" and current_device == "gpu":
-            current_idx = 0
-        elif current_engine == "gguf" and current_device == "cpu":
-            current_idx = 1
-        else:
-            current_idx = 2
-        self.engine_combo.blockSignals(True)
-        self.engine_combo.setCurrentIndex(current_idx)
-        self.engine_combo.blockSignals(False)
 
         # 定位 CompactToolbar 内部的试识别/批量识别按钮（模式切换时显示/隐藏）
         for btn in self.toolbar.findChildren(QPushButton):
@@ -300,15 +283,6 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         layout.addWidget(content, 1)
 
         return page
-
-    def _create_status_bar(self) -> QWidget:
-        """创建底部状态栏（StatusBar 提供 status_label 兼容属性）"""
-        self.status_bar = _get_ui_components().StatusBar()
-        self.status_label = self.status_bar.status_label
-        # 回放已记录的引擎状态（引擎初始化可能早于状态栏创建完成）
-        engine, status = self._last_engine_status
-        self.status_bar.set_engine_status(engine, status)
-        return self.status_bar
 
     # ── 主题模式（仅设置对话框兼容；design=rapid 下 ThemeManager 锁定浅色） ──
 
@@ -1227,15 +1201,7 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
 
         self.status_label.setText(f"字段名已更新: {old_name} -> {new_name}")
 
-    # ── 工具栏引擎/设置（engine_combo 接线照搬保留，P4 统一删除） ──
-
-    def _on_toolbar_engine_changed(self, label: str):
-        """CompactToolbar 引擎选择变更（信号携带显示名标签）→ 委托引擎切换逻辑"""
-        index = {
-            "本地 GPU (GGUF)": 0, "本地 CPU (GGUF)": 1, "CPU (RapidOCR)": 2,
-        }.get(label, -1)
-        if index >= 0:
-            self._on_engine_switched(index)
+    # ── 工具栏设置（引擎选择/热切换已在 P4 删除：单会话一引擎） ──
 
     def _on_gpu_status_changed(self, engine: str, status: str):
         """引擎状态变化记录 + 桥接到状态栏"""
@@ -1243,162 +1209,6 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         status_bar = getattr(self, 'status_bar', None)
         if status_bar is not None:
             status_bar.set_engine_status(engine, status)
-
-    def _on_engine_switched(self, index: int):
-        """引擎切换处理（P4 删除：单会话一引擎）"""
-        engine_names = ["gguf", "gguf", "rapidocr"]
-        engine_devices = ["gpu", "cpu", None]
-        engine_labels = ["GGUF (GPU)", "GGUF (CPU)", "RapidOCR (CPU)"]
-        new_engine_type = engine_names[index]
-        new_device = engine_devices[index]
-        current_engine = self.config.get("ocr", {}).get("engine", "rapidocr")
-        current_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
-
-        if current_engine == "gguf" and current_device == "gpu":
-            current_idx = 0
-        elif current_engine == "gguf" and current_device == "cpu":
-            current_idx = 1
-        else:
-            current_idx = 2
-
-        if new_engine_type == current_engine and new_device == current_device:
-            return
-
-        if self.worker and self.worker.isRunning():
-            InfoBar.warning(title="提示", content="批量识别进行中，请等待完成或取消后再切换引擎",
-                            orient=Qt.Orientation.Horizontal, isClosable=True,
-                            position=InfoBarPosition.TOP, duration=3000, parent=self)
-            self.engine_combo.blockSignals(True)
-            self.engine_combo.setCurrentIndex(current_idx)
-            self.engine_combo.blockSignals(False)
-            return
-
-        def _revert_combo():
-            self.engine_combo.blockSignals(True)
-            self.engine_combo.setCurrentIndex(current_idx)
-            self.engine_combo.blockSignals(False)
-
-        # GGUF GPU↔CPU 切换需要重启（llama-server 参数不同）
-        needs_restart = (
-            new_engine_type == "gguf" and
-            new_device != current_device and
-            current_engine == "gguf"
-        )
-        if needs_restart:
-            from qfluentwidgets import MessageBox
-            extra_info = ""
-            if new_device == "cpu":
-                extra_info = "\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，0显存占用"
-            else:
-                extra_info = "\nGPU模式: 速度快(~2s/页)，需约6GB显存"
-
-            msg = MessageBox(
-                "重启切换引擎",
-                f"切换到 {engine_labels[index]} 需要重启程序。"
-                f"{extra_info}\n\n"
-                "原因: GGUF 的 GPU/CPU 模式需要在启动时确定。\n\n"
-                "是否立即重启？",
-                self
-            )
-            msg.yesButton.setText("立即重启")
-            msg.cancelButton.setText("取消")
-            if not msg.exec():
-                _revert_combo()
-                return
-
-            self.config["ocr"]["engine"] = new_engine_type
-            self.config["ocr"]["gguf"]["device"] = new_device
-            self._restart_with_engine(new_engine_type, new_device)
-            return
-
-        # ── 以下为热切换路径 (RapidOCR ↔ GGUF 引擎) ──
-
-        if new_engine_type == "gguf":
-            from qfluentwidgets import MessageBox
-            extra = ""
-            if new_device == "cpu":
-                extra = "\n\nCPU模式: 质量与GPU一致，速度较慢(~10s/页)，但0显存占用"
-            else:
-                extra = "\n\nGPU模式: 速度快(~2s/页)，需约6GB显存"
-            msg = MessageBox(
-                "切换OCR引擎",
-                f"切换到 {engine_labels[index]}？{extra}\n\n"
-                "注意：切换引擎后需要重新识别，当前未保存的识别结果将丢失。",
-                self
-            )
-            msg.yesButton.setText("确认切换")
-            msg.cancelButton.setText("取消")
-            if not msg.exec():
-                _revert_combo()
-                return
-
-        self.config["ocr"]["engine"] = new_engine_type
-        if new_device:
-            self.config["ocr"]["gguf"]["device"] = new_device
-
-        if hasattr(self.ocr_engine, 'unload'):
-            self.ocr_engine.unload()
-        if hasattr(type(self.ocr_engine), 'reset_instance'):
-            type(self.ocr_engine).reset_instance()
-        if current_engine == "gguf":
-            self._gguf_was_unloaded = True
-        self.ocr_engine = get_ocr_engine(self.config)
-
-        self.gpu_status.set_engine(self.ocr_engine)
-
-        import threading
-        _logger = logging.getLogger("PDFOCR")
-        self._init_gen += 1
-        gen = self._init_gen
-        ocr = self.ocr_engine
-
-        def _reinit():
-            if self._init_gen != gen:
-                _logger.info(f"[OCR-Reinit] gen={gen} stale, skipping (current={self._init_gen})")
-                return
-            _logger.info(f"[OCR-Reinit] gen={gen} 开始初始化 {ocr.engine_name}...")
-            try:
-                ocr.initialize()
-                if ocr.is_ready:
-                    _logger.info(f"[OCR-Reinit] gen={gen} 初始化成功")
-                else:
-                    _logger.error(f"[OCR-Reinit] gen={gen} 初始化失败: {ocr.init_error}")
-            except Exception as e:
-                _logger.error(f"[OCR-Reinit] gen={gen} 初始化异常: {e}", exc_info=True)
-            if self._init_gen == gen:
-                self._ready_gen = gen
-                QTimer.singleShot(0, self._on_ocr_ready)
-
-        threading.Thread(target=_reinit, daemon=True, name="OCR-Reinit").start()
-
-        self._current_preview_result = None
-        self._pdf_preview_results.clear()
-        self.results = []
-        self.result_table.load_results([])
-        self.stat_total.setText("共 0 个文件")
-        self.stat_success.setText("成功: 0")
-        self.stat_fail.setText("失败: 0")
-
-        engine_labels_short = ["GGUF (GPU)", "GGUF (CPU)", "RapidOCR (CPU)"]
-        InfoBar.success(
-            title="引擎已切换",
-            content=f"当前引擎: {engine_labels_short[index]}",
-            duration=3000,
-            parent=self
-        )
-
-        new_mode = "auto" if new_engine_type == "gguf" else "manual"
-        if new_mode != self._current_mode:
-            self._current_mode = new_mode
-
-        # 热切换成功后写入配置文件
-        try:
-            import yaml
-            config_path = self.config.get("_config_path", "config.yaml")
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False)
-        except Exception as e:
-            _logger.warning(f"写入配置文件失败: {e}")
 
     def _on_settings_clicked(self):
         """打开 OCR 设置对话框（P5 改为 GGUF 设置页后删除）"""
@@ -1437,27 +1247,6 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
                     duration=5000,
                     parent=self
                 )
-
-    def _restart_with_engine(self, engine_type: str, device: str = None):
-        """写入配置并重启程序切换到指定引擎（P4 删除）"""
-        import subprocess
-        import yaml
-        from pathlib import Path
-
-        config_path = Path(__file__).parent.parent / "config.yaml"
-        self.config["ocr"]["engine"] = engine_type
-        if device and "gguf" in self.config.get("ocr", {}):
-            self.config["ocr"]["gguf"]["device"] = device
-        try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False)
-        except Exception as e:
-            logging.getLogger("PDFOCR").error(f"保存配置失败: {e}")
-
-        import sys
-        subprocess.Popen([sys.executable, *sys.argv], close_fds=True)
-        from PyQt6.QtWidgets import QApplication
-        QApplication.quit()
 
     # ── 快捷键 / 面板切换（P3b 机械迁移） ────────────────────────
 

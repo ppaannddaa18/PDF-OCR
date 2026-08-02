@@ -25,8 +25,16 @@ class CompactToolbar(QWidget):
         'CPU (RapidOCR)',
     ]
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, show_engine_selector: bool = True):
+        """工具栏
+
+        Args:
+            show_engine_selector: 是否显示「推理后端」引擎选择下拉框。
+                旧 MainWindow（P7 前保留）默认 True；双界面新窗口（P4 起）
+                传 False——单会话一引擎，只保留 GpuStatusWidget 状态圆点。
+        """
         super().__init__(parent)
+        self._show_engine_selector = show_engine_selector
         self._icon_buttons = []  # 主题化图标按钮（apply_theme 时重建 QSS）
         self._separators = []    # 主题化分隔线（apply_theme 时重建 QSS）
         self._captions = []      # 分组 caption（apply_theme 时统一上色）
@@ -63,22 +71,22 @@ class CompactToolbar(QWidget):
         # 分隔线（加宽周围间距强化分组）
         self._add_separator_with_spacing(layout)
 
-        # 推理后端组（caption: 推理后端: + GpuStatusWidget 圆点并入其旁 + 引擎选择）
-        self.engine_caption = QLabel('推理后端:')
-        self.engine_caption.setFont(ThemeManager.get_font('caption'))
-        layout.addWidget(self.engine_caption)
-        self._captions.append(self.engine_caption)
-
-        # 引擎状态（集成 GpuStatusWidget：彩色圆点 + 引擎缩写）
+        # 引擎状态（集成 GpuStatusWidget：彩色圆点 + 引擎缩写；两种形态都保留）
         self.engine_status = GpuStatusWidget()
         layout.addWidget(self.engine_status)
 
-        # 引擎选择
-        self.engine_combo = QComboBox()
-        self.engine_combo.addItems(self.ENGINE_OPTIONS)
-        self.engine_combo.setFixedWidth(140)
-        self.engine_combo.currentTextChanged.connect(self.engine_changed.emit)
-        layout.addWidget(self.engine_combo)
+        # 引擎选择（P4 起新窗口隐藏：单会话一引擎；旧 MainWindow 保留至 P7）
+        if self._show_engine_selector:
+            self.engine_caption = QLabel('推理后端:')
+            self.engine_caption.setFont(ThemeManager.get_font('caption'))
+            layout.addWidget(self.engine_caption)
+            self._captions.append(self.engine_caption)
+
+            self.engine_combo = QComboBox()
+            self.engine_combo.addItems(self.ENGINE_OPTIONS)
+            self.engine_combo.setFixedWidth(140)
+            self.engine_combo.currentTextChanged.connect(self.engine_changed.emit)
+            layout.addWidget(self.engine_combo)
 
         layout.addStretch()
 
@@ -103,17 +111,18 @@ class CompactToolbar(QWidget):
                 border-bottom: 1px solid {ThemeManager.get_color('border')};
             }}
         """)
-        self.engine_combo.setStyleSheet(f"""
-            QComboBox {{
-                border: 1px solid {ThemeManager.get_color('border')};
-                border-radius: {ThemeManager.get_radius('sm')}px;
-                padding: 2px 4px;
-                font-size: 12px;
-            }}
-            QComboBox:focus {{
-                border-color: {ThemeManager.get_color('border_focus')};
-            }}
-        """)
+        if hasattr(self, 'engine_combo'):
+            self.engine_combo.setStyleSheet(f"""
+                QComboBox {{
+                    border: 1px solid {ThemeManager.get_color('border')};
+                    border-radius: {ThemeManager.get_radius('sm')}px;
+                    padding: 2px 4px;
+                    font-size: 12px;
+                }}
+                QComboBox:focus {{
+                    border-color: {ThemeManager.get_color('border_focus')};
+                }}
+            """)
         self._help_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;

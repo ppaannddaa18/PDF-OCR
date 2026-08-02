@@ -166,8 +166,8 @@ class TestRapidWindowWorkspace:
         assert hasattr(w, 'template_name_label')
         assert hasattr(w, 'btn_set_default')
         assert hasattr(w, 'progress_bar')
-        # 引擎单会话化前保留 combo（P4 统一删除）
-        assert hasattr(w, 'engine_combo')
+        # 单会话一引擎（P4）：Rapid 窗口无引擎选择下拉框
+        assert not hasattr(w, 'engine_combo')
 
     def test_status_bar_engine_bridge(self, rapid_window):
         """GpuStatusWidget.status_changed → 底部状态栏引擎状态"""

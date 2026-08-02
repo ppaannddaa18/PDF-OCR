@@ -25,6 +25,16 @@ class TestCompactToolbar:
         assert toolbar.engine_combo.itemText(1) == '本地 CPU (GGUF)'
         assert toolbar.engine_combo.itemText(2) == 'CPU (RapidOCR)'
 
+    def test_hide_engine_selector(self, qapp):
+        """单会话化（P4）：show_engine_selector=False 时无下拉框/标题，
+        但仍保留引擎状态圆点（GpuStatusWidget）"""
+        toolbar = CompactToolbar(show_engine_selector=False)
+        assert not hasattr(toolbar, 'engine_combo')
+        assert not hasattr(toolbar, 'engine_caption')
+        assert isinstance(toolbar.engine_status, GpuStatusWidget)
+        # 操作/模板按钮不受影响
+        assert toolbar.height() == 36
+
     def test_engine_caption_before_combo(self, qapp):
         """推理后端 caption QLabel 存在且位于引擎选择之前（圆点并入其旁）"""
         toolbar = CompactToolbar()

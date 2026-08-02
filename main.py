@@ -78,7 +78,6 @@ def main():
         pass
 
     # 阶段3：延迟加载重型模块
-    from qfluentwidgets import setThemeColor
     from app.utils.logger import setup_logger
     from app.utils.config_loader import load_config
 
@@ -106,20 +105,20 @@ def main():
                 os.environ["PATH"] = llama_dir + os.pathsep + current_path
                 print(f"[GGUF] Added {llama_dir} to PATH")
 
-    from app.ui.main_window import MainWindow
-
-    # 设置 Fluent 主题强调色（旧窗口仍需要；新窗口主题在后续任务处理）
-    setThemeColor('#4a90d9')
-
-    # 阶段4：创建主窗口（本阶段仍为旧 MainWindow，双界面在后续任务接入）
+    # 阶段4：按引擎构造对应窗口（P4 起新双界面；旧 MainWindow 保留至 P7 供回滚）
+    if engine == "gguf":
+        from app.ui.windows.gguf_main_window import GgufMainWindow
+        window = GgufMainWindow(config)
+    else:
+        from app.ui.windows.rapid_main_window import RapidMainWindow
+        window = RapidMainWindow(config)
     try:
-        window = MainWindow(config)
+        window.show()
     finally:
         # 确保启动画面关闭
         if splash:
             splash.close()
 
-    window.show()
     sys.exit(app.exec())
 
 

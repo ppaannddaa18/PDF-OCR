@@ -71,6 +71,8 @@ class AppBaseWindowMixin:
     # 子类覆盖：design 名与强调色（P4 GgufMainWindow 覆盖为 'gguf'/#E8A33D）
     DESIGN = 'rapid'
     ACCENT_COLOR = '#0C8CE9'
+    # 子类覆盖：qfluentwidgets 主题（Rapid 固定浅色 / Gguf 固定深色）
+    FLUENT_THEME = Theme.LIGHT
 
     # ── 构造协议（MRO 契约见文件顶部注释） ──────────────────────
 
@@ -400,7 +402,7 @@ class AppBaseWindowMixin:
     def _apply_design(self):
         """应用设计：qfluentwidgets 先（重排会覆盖其控件内嵌 QSS），
         ThemeManager.set_design 后（自研色最后烘焙、生效）。"""
-        setTheme(Theme.LIGHT)  # Rapid 固定浅色
+        setTheme(self.FLUENT_THEME)
         setThemeColor(self.ACCENT_COLOR)
         ThemeManager.set_design(self.DESIGN)
 
@@ -425,13 +427,13 @@ class AppBaseWindowMixin:
     def _create_loading_overlay(self):
         """创建加载遮罩层"""
         from app.ui.widgets.loading_overlay import LoadingOverlay
-        self.loading_overlay = LoadingOverlay(self)
+        # 单会话一引擎（P4）：新窗口不再提供「使用CPU模式」复选框，
+        # 设备切换走 GGUF 模型设置页（旧 MainWindow 默认仍保留该选项，P7 删除）
+        self.loading_overlay = LoadingOverlay(self, show_cpu_fallback=False)
         self.loading_overlay.setGeometry(0, 0, self.width(), self.height())
         self.loading_overlay.show_loading()
         self.loading_overlay.raise_()
         self.loading_overlay.retry_requested.connect(self._on_ocr_retry)
-        # use_cpu_mode 相关在 P4 删除，本任务照搬保留现有行为
-        self.loading_overlay.use_cpu_mode_requested.connect(self._on_use_cpu_mode)
 
     def resizeEvent(self, event):
         """窗口大小改变时调整遮罩层大小"""
@@ -492,10 +494,8 @@ class AppBaseWindowMixin:
                 self.pdf_loader, self.ocr_engine, self.config,
                 max_workers=self.config.get("batch", {}).get("max_workers", 4)
             )
-            from app.core.keyword_batch_processor import KeywordBatchProcessor
-            self._keyword_processor = KeywordBatchProcessor(
-                self.pdf_loader, self.ocr_engine, self.config,
-                max_workers=self.config.get("batch", {}).get("max_workers", 4))
+            # 关键字处理器（KeywordBatchProcessor）仅 GGUF 窗口需要，
+            # 由 GgufMainWindow._on_ocr_ready 创建（import 隔离约束）
         else:
             # 初始化失败，显示错误面板
             error_msg = self.ocr_engine.init_error or "未知错误"
@@ -523,40 +523,17 @@ class AppBaseWindowMixin:
 
         threading.Thread(target=_reinit, daemon=True, name="OCR-Retry").start()
 
-    def _on_use_cpu_mode(self):
-        """切换到CPU模式并重试（use_cpu_mode 相关 P4 删除，本任务保留）"""
-        try:
-            self.config["ocr"]["engine"] = "rapidocr"
-            if hasattr(self.ocr_engine, 'unload'):
-                self.ocr_engine.unload()
-            self.ocr_engine = get_ocr_engine(self.config)
-            import threading
-            self._init_gen += 1
-            gen = self._init_gen
-            ocr = self.ocr_engine
+    # 注：_on_use_cpu_mode 已在 P4 删除（单会话一引擎；设备切换走 GGUF 设置页）
 
-            def _reinit():
-                if self._init_gen != gen:
-                    return
-                ocr.initialize()
-                if self._init_gen == gen:
-                    self._ready_gen = gen
-                QTimer.singleShot(0, self._on_ocr_ready)
-
-            threading.Thread(target=_reinit, daemon=True, name="OCR-CPU").start()
-            InfoBar.success(
-                title="已切换到CPU模式",
-                content="OCR引擎将以CPU模式运行，速度较慢但更稳定",
-                duration=3000,
-                parent=self
-            )
-        except Exception as e:
-            InfoBar.error(
-                title="切换失败",
-                content=str(e),
-                duration=3000,
-                parent=self
-            )
+    def _create_status_bar(self) -> QWidget:
+        """创建底部状态栏（StatusBar 提供 status_label 兼容属性）"""
+        from app.ui.widgets.status_bar import StatusBar
+        self.status_bar = StatusBar()
+        self.status_label = self.status_bar.status_label
+        # 回放已记录的引擎状态（引擎初始化可能早于状态栏创建完成）
+        engine, status = getattr(self, '_last_engine_status', ("", "unavailable"))
+        self.status_bar.set_engine_status(engine, status)
+        return self.status_bar
 
     # ── pending task 恢复（机械提取 :541-588） ───────────────────
 

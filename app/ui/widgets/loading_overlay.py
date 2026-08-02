@@ -19,8 +19,16 @@ class LoadingOverlay(QWidget):
     retry_requested = Signal()  # 重试请求信号
     use_cpu_mode_requested = Signal()  # 使用CPU模式请求信号
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, show_cpu_fallback: bool = True):
+        """加载遮罩层
+
+        Args:
+            show_cpu_fallback: 是否显示「使用CPU模式运行」复选框。
+                旧 MainWindow（P7 前保留）默认 True；双界面新窗口（P4 起）
+                传 False——单会话一引擎，设备切换走 GGUF「模型设置」页。
+        """
         super().__init__(parent)
+        self._show_cpu_fallback = show_cpu_fallback
         self._init_ui()
         self._animation_timer = QTimer()
         self._animation_timer.timeout.connect(self._update_animation)
@@ -122,8 +130,11 @@ class LoadingOverlay(QWidget):
         # CPU模式选项
         self.cpu_mode_checkbox = CheckBox("使用CPU模式运行 (较慢但更稳定)")
         self.cpu_mode_checkbox.setChecked(False)
+        # P4 单会话化：新窗口隐藏该选项（旧 MainWindow 保留至 P7）
+        self.cpu_mode_checkbox.setVisible(self._show_cpu_fallback)
         advanced_layout.addWidget(self.cpu_mode_checkbox)
 
+        self.advanced_widget.setVisible(self._show_cpu_fallback)
         error_layout.addWidget(self.advanced_widget)
 
         # 按钮区域
@@ -222,41 +233,36 @@ class LoadingOverlay(QWidget):
         # 错误类型映射表：关键字 -> (友好描述, 解决步骤, 下载链接)
         # 注意：更具体的错误应该放在前面，避免被通用错误匹配
         error_solutions = {
-            # PaddlePaddle/CUDA 相关错误（添加在现有映射之前）
-            "paddle": (
-                "PaddlePaddle环境异常",
-                "1. 检查PaddlePaddle GPU是否正确安装\n2. 运行: pip install paddlepaddle-gpu==3.2.1\n3. 或勾选下方「使用CPU模式运行」切换回RapidOCR",
+            # GGUF/CUDA 相关错误（添加在现有映射之前）
+            "ggml-cuda.dll": (
+                "CUDA运行时库缺失",
+                "1. 检查 llama-b9969/ 目录是否存在\n2. 确认 cudart64_12.dll 等CUDA库已复制到 llama-b9969/\n3. 或到「模型设置」页切换设备为 CPU 后重启引擎",
                 None
             ),
-            "no module named 'paddleocr'": (
-                "未安装PaddleOCR-VL",
-                "1. 运行: pip install 'paddleocr[doc-parser]>=3.6.0'\n2. 或勾选下方「使用CPU模式运行」使用RapidOCR",
+            "llama-server.exe": (
+                "llama-server 未找到",
+                "1. 检查 llama-b9969/llama-server.exe 是否存在\n2. 重新下载 llama.cpp 预编译版本",
                 None
             ),
-            "no module named 'paddle'": (
-                "未安装PaddlePaddle GPU",
-                "1. 运行: pip install paddlepaddle-gpu==3.2.1\n2. 或勾选下方「使用CPU模式运行」使用RapidOCR",
-                None
-            ),
-            "cuda driver version is insufficient": (
-                "CUDA驱动版本不兼容",
-                "1. 更新NVIDIA显卡驱动\n2. 或勾选下方「使用CPU模式运行」使用RapidOCR",
+            "model not found": (
+                "GGUF 模型文件缺失",
+                "1. 检查 models/PaddleOCR-VL-1.6-GGUF.gguf 是否存在\n2. 重新下载模型文件",
                 None
             ),
             # GPU/CUDA 相关错误（优先匹配）
             "cuda out of memory": (
                 "GPU显存不足",
-                "1. 勾选下方「使用CPU模式运行」\n2. 关闭其他占用GPU的程序\n3. 降低批量处理文件数量",
+                "1. 在「模型设置」页将设备切换为 CPU 后重启引擎\n2. 关闭其他占用GPU的程序\n3. 降低批量处理文件数量",
                 None
             ),
             "cuda": (
                 "GPU加速初始化失败",
-                "1. 勾选下方「使用CPU模式运行」\n2. 更新显卡驱动\n3. 检查CUDA是否正确安装",
+                "1. 在「模型设置」页将设备切换为 CPU 后重启引擎\n2. 更新显卡驱动\n3. 检查CUDA是否正确安装",
                 None
             ),
             "gpu": (
                 "GPU加速初始化失败",
-                "1. 勾选下方「使用CPU模式运行」\n2. 更新显卡驱动\n3. 检查CUDA是否正确安装",
+                "1. 在「模型设置」页将设备切换为 CPU 后重启引擎\n2. 更新显卡驱动\n3. 检查CUDA是否正确安装",
                 None
             ),
             # 模型文件错误
@@ -322,7 +328,7 @@ class LoadingOverlay(QWidget):
     def _on_retry(self):
         """重试按钮点击 - 支持CPU模式切换"""
         # 检查是否选择了CPU模式
-        if self.cpu_mode_checkbox.isChecked():
+        if self._show_cpu_fallback and self.cpu_mode_checkbox.isChecked():
             self.show_loading()
             self.use_cpu_mode_requested.emit()
         else:
