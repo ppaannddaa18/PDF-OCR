@@ -110,6 +110,15 @@ class TestGgufWindowShell:
         assert names == ['keyword', 'result', 'history', 'settings']
         assert w.stackedWidget.currentWidget() is w.keyword_page
 
+    def test_keyword_page_embeds_file_panel(self, gguf_window):
+        """回归：文件列表/状态栏嵌在关键字页内，addSubInterface 重挂载不丢面板"""
+        w = gguf_window
+        assert w.workspace_page is w.keyword_page
+        assert w.stackedWidget.currentWidget() is w.keyword_page
+        assert w.keyword_page.isAncestorOf(w.left_panel)
+        assert w.left_panel.isAncestorOf(w.file_panel)
+        assert w.keyword_page.isAncestorOf(w.status_bar)
+
     def test_gguf_pages_and_no_workspace(self, gguf_window):
         """有 keyword/settings/file_panel/engine_band；无模板工作区组件"""
         w = gguf_window

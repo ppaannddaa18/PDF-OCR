@@ -42,14 +42,15 @@ class KeywordSummaryPage(QWidget):
     manage_sets_requested = pyqtSignal()
     cancel_requested = pyqtSignal()
 
-    def __init__(self, set_manager, parent=None):
+    def __init__(self, set_manager, parent=None, left_panel=None,
+                 status_bar=None):
         super().__init__(parent)
         self.set_manager = set_manager
-        self._build_ui()
+        self._build_ui(left_panel=left_panel, status_bar=status_bar)
         self._refresh_sets()
         ThemeManager.register_refresh_callback(self.apply_theme)
 
-    def _build_ui(self):
+    def _build_ui(self, left_panel=None, status_bar=None):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(ThemeManager.get_spacing('lg'),
                                   ThemeManager.get_spacing('md'),
@@ -98,7 +99,9 @@ class KeywordSummaryPage(QWidget):
         row2.addStretch()
         layout.addLayout(row2)
 
-        # 主体：汇总树 + 核对面板（初始隐藏）
+        # 主体：可选左侧文件列表 + 汇总树 + 核对面板（初始隐藏）
+        # GGUF 窗口把文件列表嵌在关键字页内部（子界面必须是整页容器，
+        # 否则 addSubInterface 重挂载时外层 wrapper 会被丢弃）
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.tree = KeywordSummaryTree()
         self.splitter.addWidget(self.tree)
@@ -107,7 +110,12 @@ class KeywordSummaryPage(QWidget):
         self.splitter.addWidget(self.inspection)
         self.splitter.setStretchFactor(0, 3)
         self.splitter.setStretchFactor(1, 1)
-        layout.addWidget(self.splitter, stretch=1)
+        main_row = QHBoxLayout()
+        main_row.setSpacing(ThemeManager.get_spacing('sm'))
+        if left_panel is not None:
+            main_row.addWidget(left_panel)
+        main_row.addWidget(self.splitter, 1)
+        layout.addLayout(main_row, 1)
 
         # Row3：统计 + 进度 + 取消
         self.stats_label = QLabel("尚未提取")
@@ -123,6 +131,10 @@ class KeywordSummaryPage(QWidget):
         self.btn_cancel.clicked.connect(self.cancel_requested.emit)
         progress_row.addWidget(self.btn_cancel)
         layout.addLayout(progress_row)
+
+        # 底部状态栏（GGUF 窗口传入：与文件列表一起保留在关键字页内）
+        if status_bar is not None:
+            layout.addWidget(status_bar)
 
         self._last_results = []
 

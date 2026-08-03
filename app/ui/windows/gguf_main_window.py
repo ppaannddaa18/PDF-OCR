@@ -87,37 +87,33 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
     # ── 页面构建 ────────────────────────────────────────────────
 
     def _create_workspace_page(self) -> QWidget:
-        """创建关键字提取页：左文件列表 + 中央汇总页 + 底部状态栏"""
+        """创建关键字提取页：文件列表 + 汇总树 + 状态栏 全部嵌入关键字页自身
+
+        FluentWindow.addSubInterface 会把子界面重挂载到 stackedWidget；
+        因此必须让「关键字提取」页本身就是整页容器，不能再用外层 wrapper
+        包裹（否则左侧文件列表与状态栏会随 wrapper 一起丢失，界面看不到
+        上传列表——线上截图复现的布局 bug）。
+        """
         from app.ui.widgets.collapsible_panel import CollapsiblePanel
         from app.ui.widgets.file_list_panel import FileListPanel
         from app.ui.widgets.keyword_summary_page import KeywordSummaryPage
-
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        content = QWidget()
-        content_layout = QHBoxLayout(content)
-        content_layout.setSpacing(0)
-        content_layout.setContentsMargins(0, 0, 0, 0)
 
         # 左侧可折叠文件列表（复用 FileListPanel；无框选/模板列）
         self.left_panel = CollapsiblePanel(expanded_width=240, collapsed_width=48)
         self.file_panel = FileListPanel()
         self.left_panel.set_content(self.file_panel)
-        content_layout.addWidget(self.left_panel)
 
         # 中央关键字汇总页（操作带/汇总树/核对面板/统计进度）
-        self.keyword_page = KeywordSummaryPage(self.keyword_set_manager)
-        content_layout.addWidget(self.keyword_page, 1)
-
-        layout.addWidget(content, 1)
-        layout.addWidget(self._create_status_bar())
+        self.keyword_page = KeywordSummaryPage(
+            self.keyword_set_manager,
+            left_panel=self.left_panel,
+            status_bar=self._create_status_bar(),
+        )
 
         # 模型设置页（P5 实现设置表单，本任务占位）
         self.settings_page = self._create_settings_page()
-        return page
+        # 关键字页自身即子界面（含文件列表/状态栏），不再有外层 wrapper
+        return self.keyword_page
 
     def _create_settings_page(self) -> QWidget:
         """创建模型设置页（GgufSettingsPage：表单 + 操作带）"""
