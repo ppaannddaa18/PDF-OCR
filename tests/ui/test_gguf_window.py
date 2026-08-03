@@ -142,10 +142,12 @@ class TestGgufWindowShell:
         from PyQt6.QtGui import QShortcut
         w = gguf_window
         for name in ('Ctrl+O', 'Ctrl+Return', 'Ctrl+S',
-                     'Ctrl+Shift+N', 'Ctrl+Shift+F'):
+                     'Ctrl+Shift+N', 'Ctrl+Shift+F',
+                     'Delete', 'Ctrl+Up', 'Ctrl+Down'):
             assert w.findChild(QShortcut, name) is not None, name
-        # GGUF 无 Rapid 专属快捷键
-        assert w.findChild(QShortcut, 'Delete') is None
+        # GGUF 无 Rapid 专属快捷键（试识别/批量识别/框选预览）
+        assert w.findChild(QShortcut, 'Ctrl+T') is None
+        assert w.findChild(QShortcut, 'Space') is None
 
     def test_engine_band_turns_ready(self, gguf_window):
         """引擎就绪回调 → 发光带 'ready'（冰青）"""
@@ -213,6 +215,35 @@ class TestGgufKeywordFlow:
         w.on_upload()
         assert str(pdf_file) in w.file_panel.files
         assert '已加载' in w.status_label.text()
+
+    def test_file_move_and_remove_wiring(self, gguf_window, monkeypatch, tmp_path):
+        """GGUF 文件列表：上移/下移改变处理顺序；删除同步状态与结果"""
+        w = gguf_window
+        pdf1 = tmp_path / "a.pdf"
+        pdf2 = tmp_path / "b.pdf"
+        pdf1.write_bytes(b"%PDF-1.4 fake")
+        pdf2.write_bytes(b"%PDF-1.4 fake")
+        monkeypatch.setattr(
+            "app.ui.windows.gguf_main_window.QFileDialog.getOpenFileNames",
+            lambda *a, **k: ([str(pdf1), str(pdf2)], ""))
+        w.on_upload()
+        assert w.file_panel.files == [str(pdf1), str(pdf2)]
+
+        # 选中第二个文件 → 上移 → 顺序反转
+        w.file_panel.list_widget.setCurrentRow(1)
+        assert w.file_panel.move_selected(-1) is True
+        assert w.file_panel.files == [str(pdf2), str(pdf1)]
+
+        # 删除当前选中的 b.pdf → 状态提示 + 剩余 1 个
+        w.file_panel.remove_selected()
+        assert w.file_panel.files == [str(pdf1)]
+        assert '已移除' in w.status_label.text()
+
+        # 删除最后一个 → 走清空流程
+        w.file_panel.list_widget.setCurrentRow(0)
+        w.file_panel.remove_selected()
+        assert w.file_panel.files == []
+        assert '清空' in w.status_label.text()
 
 
 class TestGgufWindowDesign:

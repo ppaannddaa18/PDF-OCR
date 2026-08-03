@@ -32,6 +32,8 @@
 | Ctrl+S | 保存当前关键字为命名集合 |
 | Ctrl+Shift+N | 新建关键字集 |
 | Ctrl+Shift+F | 导出关键字汇总 Excel |
+| Delete | 删除选中 PDF 文件 |
+| Ctrl+↑ / Ctrl+↓ | 上移 / 下移选中文件 |
 
 ### Rapid（文档工作台）
 

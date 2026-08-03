@@ -23,6 +23,19 @@ from PyQt6.QtGui import QPainter
 from app.ui.theme_manager import ThemeManager
 from app.ui.widgets.empty_state import EmptyState
 
+# qtawesome 延迟加载（避免启动开销与字体警告）
+_qta = None
+
+
+def _get_qta():
+    """获取 qtawesome 实例（延迟加载）"""
+    global _qta
+    if _qta is None:
+        import qtawesome
+        _qta = qtawesome
+    return _qta
+
+
 # 列表项数据角色
 PATH_ROLE = 256  # item.data(PATH_ROLE) -> 文件路径（沿用历史数值，兼容 Qt.UserRole）
 STATUS_ROLE = Qt.ItemDataRole.UserRole + 1  # item.data(STATUS_ROLE) -> 'custom'/'default'/'empty'
@@ -184,6 +197,8 @@ class FileListPanel(QWidget):
         self.list_widget.setItemDelegate(_StatusBarDelegate(self.list_widget))
         self.list_widget.setUniformItemSizes(True)
         self.list_widget.itemClicked.connect(self._on_item_clicked)
+        self.list_widget.currentItemChanged.connect(
+            lambda _cur, _prev: self._update_move_buttons())
         layout.addWidget(self.list_widget, stretch=1)
 
         # 空状态（'no_files' 变体；操作按钮触发 upload_requested）
@@ -206,6 +221,22 @@ class FileListPanel(QWidget):
             ThemeManager.get_spacing('sm'),
             ThemeManager.get_spacing('sm'),
         )
+        # 上移 / 下移（icon-only，主题色图标）
+        self._icon_buttons = []
+        self.btn_move_up = QPushButton()
+        self.btn_move_up.setFixedSize(24, 24)
+        self.btn_move_up.setToolTip('上移 (Ctrl+↑)')
+        self.btn_move_up.clicked.connect(lambda: self.move_selected(-1))
+        button_layout.addWidget(self.btn_move_up)
+        self._icon_buttons.append((self.btn_move_up, 'fa5s.arrow-up'))
+
+        self.btn_move_down = QPushButton()
+        self.btn_move_down.setFixedSize(24, 24)
+        self.btn_move_down.setToolTip('下移 (Ctrl+↓)')
+        self.btn_move_down.clicked.connect(lambda: self.move_selected(1))
+        button_layout.addWidget(self.btn_move_down)
+        self._icon_buttons.append((self.btn_move_down, 'fa5s.arrow-down'))
+
         self.btn_remove = QPushButton('移除选中')
         self.btn_remove.setToolTip('移除选中的PDF文件')
         self.btn_remove.clicked.connect(self.remove_selected)
@@ -218,7 +249,10 @@ class FileListPanel(QWidget):
 
         self._apply_button_style(self.btn_remove)
         self._apply_button_style(self.btn_clear)
+        self._apply_button_style(self.btn_move_up)
+        self._apply_button_style(self.btn_move_down)
         layout.addLayout(button_layout)
+        self._update_move_buttons()
 
         # 构造时烘焙样式（可安全重复执行）
         self.apply_theme()
@@ -257,6 +291,11 @@ class FileListPanel(QWidget):
         )
         self._apply_button_style(self.btn_remove)
         self._apply_button_style(self.btn_clear)
+        self._apply_button_style(self.btn_move_up)
+        self._apply_button_style(self.btn_move_down)
+        for btn, icon_name in self._icon_buttons:
+            btn.setIcon(_get_qta().icon(
+                icon_name, color=ThemeManager.get_color('text_secondary')))
 
     def _apply_button_style(self, button: QPushButton):
         """应用 ThemeManager 按钮样式（无硬编码颜色）"""
@@ -285,6 +324,14 @@ class FileListPanel(QWidget):
         self.list_widget.setVisible(has_files)
         self.btn_remove.setEnabled(has_files)
         self.btn_clear.setEnabled(has_files)
+        self._update_move_buttons()
+
+    def _update_move_buttons(self):
+        """按选中行位置启用/禁用上移下移（首行禁上移，末行禁下移）"""
+        row = self.list_widget.currentRow()
+        count = self.list_widget.count()
+        self.btn_move_up.setEnabled(count > 0 and row > 0)
+        self.btn_move_down.setEnabled(count > 0 and 0 <= row < count - 1)
 
     def show_empty_state(self, show: bool = True):
         """显示/隐藏空状态"""
@@ -475,6 +522,24 @@ class FileListPanel(QWidget):
             self._update_empty_state()
             # 发送文件移除信号
             self.file_removed.emit(path)
+
+    def move_selected(self, delta: int) -> bool:
+        """上移(-1) / 下移(+1) 当前选中文件；越界时 no-op，返回是否发生移动"""
+        item = self.list_widget.currentItem()
+        if item is None:
+            return False
+        row = self.list_widget.row(item)
+        new_row = row + delta
+        if new_row < 0 or new_row >= self.list_widget.count():
+            return False
+        path = item.data(PATH_ROLE)
+        moved = self.list_widget.takeItem(row)
+        self.list_widget.insertItem(new_row, moved)
+        self.list_widget.setCurrentItem(moved)
+        self.files.remove(path)
+        self.files.insert(new_row, path)
+        self._update_move_buttons()
+        return True
 
     def _on_item_clicked(self, item):
         """处理列表项点击"""

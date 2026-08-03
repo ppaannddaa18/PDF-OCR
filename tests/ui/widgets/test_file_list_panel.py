@@ -117,6 +117,51 @@ class TestFileManagement:
         assert panel.current_file() == 'b.pdf'
 
 
+class TestMoveFiles:
+    def test_move_selected_reorders_files_and_list(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf', 'b.pdf', 'c.pdf'])
+        panel.list_widget.setCurrentRow(2)
+        assert panel.move_selected(-1) is True
+        assert panel.files == ['a.pdf', 'c.pdf', 'b.pdf']
+        assert panel.list_widget.currentRow() == 1
+        assert panel.list_widget.item(1).data(PATH_ROLE) == 'c.pdf'
+        panel.move_selected(-1)
+        assert panel.files == ['c.pdf', 'a.pdf', 'b.pdf']
+        panel.move_selected(1)
+        assert panel.files == ['a.pdf', 'c.pdf', 'b.pdf']
+
+    def test_move_selected_bounds_noop(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf', 'b.pdf'])
+        panel.list_widget.setCurrentRow(0)
+        assert panel.move_selected(-1) is False
+        assert panel.files == ['a.pdf', 'b.pdf']
+        panel.list_widget.setCurrentRow(1)
+        assert panel.move_selected(1) is False
+        assert panel.files == ['a.pdf', 'b.pdf']
+
+    def test_move_selected_without_selection_noop(self, qapp):
+        panel = FileListPanel()
+        panel.add_files(['a.pdf'])
+        assert panel.move_selected(1) is False
+
+    def test_move_buttons_follow_selection(self, qapp):
+        panel = FileListPanel()
+        assert not panel.btn_move_up.isEnabled()
+        assert not panel.btn_move_down.isEnabled()
+        panel.add_files(['a.pdf', 'b.pdf'])
+        panel.list_widget.setCurrentRow(0)
+        assert not panel.btn_move_up.isEnabled()
+        assert panel.btn_move_down.isEnabled()
+        panel.list_widget.setCurrentRow(1)
+        assert panel.btn_move_up.isEnabled()
+        assert not panel.btn_move_down.isEnabled()
+        panel.clear_files()
+        assert not panel.btn_move_up.isEnabled()
+        assert not panel.btn_move_down.isEnabled()
+
+
 class TestStatusIndicator:
     def test_status_color_mapping_uses_theme_roles(self, qapp):
         """状态色必须来自 ThemeManager 角色色（禁止硬编码）"""

@@ -244,6 +244,7 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         self.file_panel.upload_requested.connect(self.on_upload)
         self.file_panel.file_selected.connect(self._on_keyword_file_selected)
         self.file_panel.files_cleared.connect(self._on_keyword_files_cleared)
+        self.file_panel.file_removed.connect(self._on_keyword_file_removed)
         self.keyword_page.upload_requested.connect(self.on_upload)
         self.keyword_page.extract_requested.connect(self._on_keyword_extract)
         self.keyword_page.export_requested.connect(self.on_keyword_export)
@@ -307,6 +308,39 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         self.keyword_page.load_results([])
         self.keyword_page.enable_export(False)
         self.status_label.setText("文件列表已清空 - 请上传 PDF")
+
+    def _on_keyword_file_removed(self, removed_path: str):
+        """单个文件移除：同步清理该文件的关键字结果与识别结果；清空时走清空流程"""
+        from pathlib import Path
+        if not self.file_panel.files:
+            self._on_keyword_files_cleared()
+            return
+
+        # 关键字结果同步移除
+        self._keyword_results = [
+            r for r in self._keyword_results if r.source_file != removed_path]
+        self.keyword_page.load_results(self._keyword_results)
+        self.keyword_page.enable_export(bool(self._keyword_results))
+
+        # 识别结果页同步移除 + 刷新统计与字段筛选
+        self.results = [r for r in self.results if r.source_file != removed_path]
+        self.result_table.load_results(self.results)
+        total = len(self.results)
+        success = sum(1 for r in self.results if r.success)
+        self.stat_total.setText(f"共 {total} 个文件")
+        self.stat_success.setText(f"成功: {success}")
+        self.stat_fail.setText(f"失败: {total - success}")
+        self.filter_field_combo.clear()
+        self.filter_field_combo.addItem("全部字段")
+        field_names = []
+        for r in self.results:
+            for fn in r.fields:
+                if fn not in field_names:
+                    field_names.append(fn)
+        self.filter_field_combo.addItems(field_names)
+
+        self.status_label.setText(
+            f"已移除 {Path(removed_path).name}，剩余 {len(self.file_panel.files)} 个文件")
 
     # ── 关键字提取/汇总/核对/导出（从旧 main_window.py 机械迁移） ──
 
@@ -444,7 +478,8 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
 
     def _setup_shortcuts(self):
         """设置快捷键：Ctrl+O 上传 / Ctrl+Enter 提取 / Ctrl+S 保存集合 /
-        Ctrl+Shift+N 新建集合 / Ctrl+Shift+F 导出"""
+        Ctrl+Shift+N 新建集合 / Ctrl+Shift+F 导出 /
+        Delete 删除选中文件 / Ctrl+↑↓ 上移下移"""
         from PyQt6.QtGui import QShortcut, QKeySequence
 
         shortcut_upload = QShortcut(QKeySequence("Ctrl+O"), self)
@@ -466,6 +501,20 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         shortcut_export = QShortcut(QKeySequence("Ctrl+Shift+F"), self)
         shortcut_export.setObjectName("Ctrl+Shift+F")
         shortcut_export.activated.connect(self.on_keyword_export)
+
+        shortcut_delete = QShortcut(QKeySequence("Delete"), self)
+        shortcut_delete.setObjectName("Delete")
+        shortcut_delete.activated.connect(self.file_panel.remove_selected)
+
+        shortcut_move_up = QShortcut(QKeySequence("Ctrl+Up"), self)
+        shortcut_move_up.setObjectName("Ctrl+Up")
+        shortcut_move_up.activated.connect(
+            lambda: self.file_panel.move_selected(-1))
+
+        shortcut_move_down = QShortcut(QKeySequence("Ctrl+Down"), self)
+        shortcut_move_down.setObjectName("Ctrl+Down")
+        shortcut_move_down.activated.connect(
+            lambda: self.file_panel.move_selected(1))
 
     def _on_keyword_save_set_shortcut(self):
         """Ctrl+S: 将当前输入保存为命名关键字集"""
