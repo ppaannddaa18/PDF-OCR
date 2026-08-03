@@ -14,6 +14,16 @@ def test_construct(qapp, tmp_path):
     assert page.tree is not None
 
 
+def test_upload_button_emits_signal(qapp, tmp_path):
+    """工具栏「上传 PDF」按钮存在且点击发出 upload_requested"""
+    page, _ = _make_page(tmp_path)
+    assert page.btn_upload.text() == "上传 PDF"
+    emitted = []
+    page.upload_requested.connect(lambda: emitted.append(True))
+    page.btn_upload.click()
+    assert emitted == [True]
+
+
 def test_extract_guard_empty_keywords(qapp, tmp_path):
     """关键字为空 → 不发提取信号"""
     page, _ = _make_page(tmp_path)

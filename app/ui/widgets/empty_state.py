@@ -6,31 +6,44 @@ from app.ui.theme_manager import ThemeManager
 from app.ui.widgets.button_style import primary_qss
 
 
+# qtawesome 延迟加载（避免启动开销与字体警告）
+_qta = None
+
+
+def _get_qta():
+    """获取 qtawesome 实例（延迟加载）"""
+    global _qta
+    if _qta is None:
+        import qtawesome
+        _qta = qtawesome
+    return _qta
+
+
 class EmptyState(QWidget):
     """统一空状态组件"""
 
     # 预定义变体配置
     VARIANTS = {
         'no_files': {
-            'icon': '📄',
+            'icon': 'fa5s.file-pdf',
             'title': '暂无 PDF 文件',
             'description': '点击上方「上传」按钮或拖拽 PDF 文件到此处',
             'action': '上传 PDF',
         },
         'no_preview': {
-            'icon': '👁️',
+            'icon': 'fa5s.eye',
             'title': 'PDF 预览区域',
             'description': '上传 PDF 后在此显示',
             'action': None,
         },
         'no_fields': {
-            'icon': '✏️',
+            'icon': 'fa5s.edit',
             'title': '暂无识别字段',
             'description': '在 PDF 预览中框选区域以添加字段',
             'action': None,
         },
         'no_results': {
-            'icon': '📊',
+            'icon': 'fa5s.chart-bar',
             'title': '暂无解析结果',
             'description': '点击「试识别」或「批量识别」开始解析',
             'action': '试识别',
@@ -46,6 +59,7 @@ class EmptyState(QWidget):
         ThemeManager.register_refresh_callback(self.apply_theme)
 
     def _setup_ui(self):
+        self._icon_name = None
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(ThemeManager.get_spacing('md'))
@@ -93,6 +107,7 @@ class EmptyState(QWidget):
         self.setStyleSheet(
             f"background-color: {ThemeManager.get_color('bg_surface')};"
         )
+        self._update_icon()
 
     def apply_variant(self, variant: str):
         """应用预定义变体"""
@@ -108,8 +123,15 @@ class EmptyState(QWidget):
             self.action_button.setVisible(False)
 
     def set_icon(self, icon_name: str):
-        """设置图标"""
-        self.icon_label.setText(icon_name)
+        """设置图标（QtAwesome 图标名，如 'fa5s.file-pdf'）"""
+        self._icon_name = icon_name
+        self._update_icon()
+
+    def _update_icon(self):
+        """按当前主题色重绘 48px 图标"""
+        name = self._icon_name or 'fa5s.file'
+        self.icon_label.setPixmap(_get_qta().icon(
+            name, color=ThemeManager.get_color('text_secondary')).pixmap(48, 48))
 
     def set_title(self, title: str):
         """设置标题"""

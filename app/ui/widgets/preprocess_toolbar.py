@@ -2,7 +2,7 @@
 图像预处理工具栏 - 可折叠版（Task 10）
 
 设计：
-- 折叠态（32px）：仅显示图标按钮行（🔄旋转 / ☀️亮度 / ◐对比度 / 🔲二值化）+ 展开按钮
+- 折叠态（32px）：仅显示图标按钮行（旋转/亮度/对比度/二值化，QtAwesome 图标）+ 展开按钮
 - 展开态（80px）：显示全部详细控件（旋转下拉框、亮度/对比度滑块、二值化下拉框、
   自动对比度、锐化、重置、应用到全部）
 - 200ms 高度动画（minimumHeight / maximumHeight 同步动画，OutCubic，
@@ -61,7 +61,7 @@ class ImagePreprocessToolbar(QWidget):
         super().__init__(parent)
         self._expanded = False
         self._animations = []  # 保留动画引用，防止被 Python GC 回收导致动画不运行（Task 4 模式）
-        self._theme_buttons = []  # (btn, font_size) 主题化工具按钮（apply_theme 时重建 QSS）
+        self._theme_buttons = []  # (btn, font_size, icon_name) 主题化工具按钮
         self._init_ui()
         # Task 15：主题切换后由 ThemeManager 触发重建 QSS
         ThemeManager.register_refresh_callback(self.apply_theme)
@@ -89,10 +89,14 @@ class ImagePreprocessToolbar(QWidget):
 
         # 折叠态图标按钮行：点击直接触发对应操作（不切换展开状态）
         self.icon_buttons = [
-            self._build_tool_button('🔄', '旋转', self._on_rotate_clicked),
-            self._build_tool_button('☀️', '亮度', self._on_brightness_clicked),
-            self._build_tool_button('◐', '对比度', self._on_contrast_clicked),
-            self._build_tool_button('🔲', '二值化', self._on_threshold_clicked),
+            self._build_tool_button(None, '旋转', self._on_rotate_clicked,
+                                    icon_name='fa5s.sync-alt'),
+            self._build_tool_button(None, '亮度', self._on_brightness_clicked,
+                                    icon_name='fa5s.sun'),
+            self._build_tool_button(None, '对比度', self._on_contrast_clicked,
+                                    icon_name='fa5s.adjust'),
+            self._build_tool_button(None, '二值化', self._on_threshold_clicked,
+                                    icon_name='fa5s.square'),
         ]
         for btn in self.icon_buttons:
             layout.addWidget(btn)
@@ -118,14 +122,21 @@ class ImagePreprocessToolbar(QWidget):
             'sharpen_applied': False,  # [修复] 添加锐化标记
         }
 
-    def _build_tool_button(self, text, tooltip, handler, font_size=14):
-        """构建统一的图标工具按钮（ThemeManager 样式，无硬编码颜色）"""
-        btn = QPushButton(text)
+    def _build_tool_button(self, text, tooltip, handler, font_size=14,
+                           icon_name=None):
+        """构建统一的图标工具按钮（ThemeManager 样式，无硬编码颜色）
+
+        icon_name 给定时使用 QtAwesome 图标（弃用 emoji）；否则用文字字形。
+        """
+        btn = QPushButton(text or "")
         btn.setFixedSize(24, 24)
         btn.setToolTip(tooltip)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.clicked.connect(handler)
-        self._theme_buttons.append((btn, font_size))
+        if icon_name:
+            btn.setIcon(_get_qta().icon(
+                icon_name, color=ThemeManager.get_color('text_secondary')))
+        self._theme_buttons.append((btn, font_size, icon_name))
         self._apply_tool_button_style(btn, font_size)
         return btn
 
@@ -158,8 +169,11 @@ class ImagePreprocessToolbar(QWidget):
             f"background-color: {ThemeManager.get_color('bg_surface')};"
             f"}}"
         )
-        for btn, font_size in self._theme_buttons:
+        for btn, font_size, icon_name in self._theme_buttons:
             self._apply_tool_button_style(btn, font_size)
+            if icon_name:
+                btn.setIcon(_get_qta().icon(
+                    icon_name, color=ThemeManager.get_color('text_secondary')))
         btn_reset = getattr(self, 'btn_reset', None)
         if btn_reset is not None:
             btn_reset.setIcon(

@@ -14,12 +14,13 @@ MatchResult = namedtuple('MatchResult', ['text', 'confidence', 'level', 'element
 
 
 class FieldMatcher:
-    """将PaddleOCR-VL elements匹配到用户regions"""
+    """将OCR elements匹配到用户regions"""
 
     def __init__(self, config: dict):
-        vl_cfg = config.get("ocr", {}).get("paddleocr_vl", {})
-        self.iou_threshold = vl_cfg.get("match_iou_threshold", 0.5)
-        self.neighbor_radius = vl_cfg.get("match_neighbor_radius", 50)
+        # 支持 gguf 和 rapidocr 配置
+        gguf_cfg = config.get("ocr", {}).get("gguf", {})
+        self.iou_threshold = gguf_cfg.get("match_iou_threshold", 0.5)
+        self.neighbor_radius = gguf_cfg.get("match_neighbor_radius", 50)
 
     def match(self, elements: List[dict], regions: List[Any],
               markdown_text: str = "", pixel_bboxes: Dict[str, List[float]] = None) -> Dict[str, MatchResult]:

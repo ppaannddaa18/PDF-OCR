@@ -7,6 +7,19 @@ from app.ui.theme_manager import ThemeManager
 from app.ui.widgets.gpu_status import GpuStatusWidget
 
 
+# qtawesome 延迟加载（避免启动开销与字体警告）
+_qta = None
+
+
+def _get_qta():
+    """获取 qtawesome 实例（延迟加载）"""
+    global _qta
+    if _qta is None:
+        import qtawesome
+        _qta = qtawesome
+    return _qta
+
+
 class CompactToolbar(QWidget):
     """紧凑工具栏"""
 
@@ -35,7 +48,7 @@ class CompactToolbar(QWidget):
         """
         super().__init__(parent)
         self._show_engine_selector = show_engine_selector
-        self._icon_buttons = []  # 主题化图标按钮（apply_theme 时重建 QSS）
+        self._icon_buttons = []  # 主题化图标按钮 [(btn, icon_name)]（apply_theme 时重建）
         self._separators = []    # 主题化分隔线（apply_theme 时重建 QSS）
         self._captions = []      # 分组 caption（apply_theme 时统一上色）
         self._setup_ui()
@@ -56,17 +69,22 @@ class CompactToolbar(QWidget):
 
         # 主要操作组（caption: 操作）
         self._add_caption(layout, '操作')
-        self._create_icon_button(layout, '⬆️', '上传 PDF (Ctrl+O)', self.upload_clicked)
-        self._create_icon_button(layout, '🔍', '试识别 (Ctrl+T)', self.test_ocr_clicked)
-        self._create_icon_button(layout, '▶️', '批量识别 (Ctrl+Enter)', self.batch_ocr_clicked)
+        self._create_icon_button(layout, 'fa5s.upload', '上传 PDF (Ctrl+O)',
+                                 self.upload_clicked, text='上传')
+        self._create_icon_button(layout, 'fa5s.search', '试识别 (Ctrl+T)',
+                                 self.test_ocr_clicked)
+        self._create_icon_button(layout, 'fa5s.play', '批量识别 (Ctrl+Enter)',
+                                 self.batch_ocr_clicked)
 
         # 分隔线（加宽周围间距强化分组）
         self._add_separator_with_spacing(layout)
 
         # 模板操作组（caption: 模板）
         self._add_caption(layout, '模板')
-        self._create_icon_button(layout, '💾', '保存模板 (Ctrl+S)', self.save_template_clicked)
-        self._create_icon_button(layout, '📂', '加载模板', self.load_template_clicked)
+        self._create_icon_button(layout, 'fa5s.save', '保存模板 (Ctrl+S)',
+                                 self.save_template_clicked)
+        self._create_icon_button(layout, 'fa5s.folder-open', '加载模板',
+                                 self.load_template_clicked)
 
         # 分隔线（加宽周围间距强化分组）
         self._add_separator_with_spacing(layout)
@@ -91,7 +109,7 @@ class CompactToolbar(QWidget):
         layout.addStretch()
 
         # 设置按钮
-        self._create_icon_button(layout, '⚙️', '设置', self.settings_clicked)
+        self._create_icon_button(layout, 'fa5s.cogs', '设置', self.settings_clicked)
 
         # 帮助按钮
         help_btn = QPushButton('?')
@@ -137,10 +155,11 @@ class CompactToolbar(QWidget):
                 color: {ThemeManager.get_color('text_primary')};
             }}
         """)
-        for btn in self._icon_buttons:
+        for btn, icon_name in self._icon_buttons:
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: transparent;
+                    color: {ThemeManager.get_color('text_secondary')};
                     border: none;
                     border-radius: {ThemeManager.get_radius('sm')}px;
                     font-size: 14px;
@@ -155,6 +174,9 @@ class CompactToolbar(QWidget):
                     border: 1px solid {ThemeManager.get_color('border_focus')};
                 }}
             """)
+            if icon_name:
+                btn.setIcon(_get_qta().icon(
+                    icon_name, color=ThemeManager.get_color('text_secondary')))
         for separator in self._separators:
             separator.setStyleSheet(
                 f"background-color: {ThemeManager.get_color('border')};"
@@ -164,15 +186,22 @@ class CompactToolbar(QWidget):
                 f"color: {ThemeManager.get_color('text_secondary')};"
             )
 
-    def _create_icon_button(self, layout, icon: str, tooltip: str, signal):
-        """创建图标按钮"""
-        btn = QPushButton(icon)
-        btn.setFixedSize(28, 28)
+    def _create_icon_button(self, layout, icon: str, tooltip: str, signal,
+                            text: str = None):
+        """创建图标按钮（可选文字标签；上传按钮 icon+text 提升可发现性）"""
+        btn = QPushButton(text or "")
+        if text:
+            btn.setFixedHeight(28)
+            btn.setMinimumWidth(64)
+        else:
+            btn.setFixedSize(28, 28)
+        btn.setIcon(_get_qta().icon(
+            icon, color=ThemeManager.get_color('text_secondary')))
         btn.setToolTip(tooltip)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.clicked.connect(signal.emit)
         layout.addWidget(btn)
-        self._icon_buttons.append(btn)
+        self._icon_buttons.append((btn, icon))
         return btn
 
     def _add_caption(self, layout, text: str):

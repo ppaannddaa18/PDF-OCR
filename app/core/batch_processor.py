@@ -74,16 +74,16 @@ class BatchProcessor:
                     regions_by_page[page_num] = []
                 regions_by_page[page_num].append(region)
 
-            use_vl = self.ocr.engine_name in ("paddleocr_vl", "paddleocr_vl_cpu")
+            use_vl = self.ocr.engine_name == "gguf"
 
             for page_num, regions in regions_by_page.items():
                 rendered_image = self._get_rendered_page(pdf_path, page_num)
 
                 if use_vl:
-                    # PaddleOCR-VL: 整页一次推理
+                    # GGUF: 整页一次推理
                     page_results = self.ocr.recognize_page(
                         rendered_image, regions,
-                        page_dpi=self.config.get("ocr", {}).get("paddleocr_vl", {}).get("page_dpi", 200)
+                        page_dpi=self.config.get("ocr", {}).get("gguf", {}).get("page_dpi", 200)
                     )
                     for region in regions:
                         text, conf, match_level, _ = page_results.get(

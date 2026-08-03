@@ -18,14 +18,16 @@ def _primary_background() -> str:
 
 
 def primary_qss() -> str:
-    """主操作按钮 QSS（accent/primary 背景 + white 文字 + md 圆角 + sm/lg 内边距）
+    """主操作按钮 QSS（accent/primary 背景 + on_accent 文字 + md 圆角 + sm/lg 内边距）
 
     按钮几何（固定高度/宽度）由调用方负责，样式只描述外观。
+    on_accent 随设计解析：default/rapid 白字；gguf 黄铜底用深松绿黑字
+    （#C9A227 上白字对比度约 2.2:1 不达标，深字约 7.8:1）。
     """
     return f"""
         QPushButton {{
             background-color: {_primary_background()};
-            color: {ThemeManager.get_color('white')};
+            color: {ThemeManager.get_color('on_accent')};
             border: none;
             border-radius: {ThemeManager.get_radius('md')}px;
             padding: {ThemeManager.get_spacing('sm')}px
@@ -35,8 +37,8 @@ def primary_qss() -> str:
             background-color: {ThemeManager.get_color('primary_hover')};
         }}
         QPushButton:focus {{
-            /* 焦点环：primary 底色上用白环保证键盘导航可见性 */
-            border: 1px solid {ThemeManager.get_color('white')};
+            /* 焦点环：primary 底色上用 on_accent 环保证键盘导航可见性 */
+            border: 1px solid {ThemeManager.get_color('on_accent')};
         }}
         QPushButton:disabled {{
             background-color: {ThemeManager.get_color('bg_hover')};

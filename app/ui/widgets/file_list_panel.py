@@ -512,7 +512,7 @@ class FileListPanel(QWidget):
 
     def _update_progress(self, current: int, total: int):
         """更新批量添加进度"""
-        self.progress_label.setText(f"⏳ 正在加载 {current}/{total} 个文件...")
+        self.progress_label.setText(f"正在加载 {current}/{total} 个文件...")
         self.batch_add_progress.emit(current, total)
 
     # ---------- 生命周期 ----------

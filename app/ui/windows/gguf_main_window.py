@@ -244,6 +244,7 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         self.file_panel.upload_requested.connect(self.on_upload)
         self.file_panel.file_selected.connect(self._on_keyword_file_selected)
         self.file_panel.files_cleared.connect(self._on_keyword_files_cleared)
+        self.keyword_page.upload_requested.connect(self.on_upload)
         self.keyword_page.extract_requested.connect(self._on_keyword_extract)
         self.keyword_page.export_requested.connect(self.on_keyword_export)
         self.keyword_page.save_set_requested.connect(self._on_keyword_save_set)
@@ -490,21 +491,18 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
     def _restart_with_engine(self, engine_type: str, device: str = None):
         """写入配置并重启程序切换 GGUF 设备（GPU↔CPU 需重启）"""
         import subprocess
-        import yaml
-        from pathlib import Path
+        import sys
 
-        # 写入 config.yaml（使用 app/config.yaml，与 load_config 一致）
-        config_path = Path(__file__).parent.parent / "config.yaml"
+        # 写入 config.yaml（与 load_config 一致，走线程安全 save_config）
         self.config["ocr"]["engine"] = engine_type
         if device and "gguf" in self.config.get("ocr", {}):
             self.config["ocr"]["gguf"]["device"] = device
         try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False)
+            from app.utils.config_loader import save_config
+            save_config(self.config)
         except Exception as e:
             logging.getLogger("PDFOCR").error(f"保存配置失败: {e}")
 
-        import sys
         subprocess.Popen([sys.executable, *sys.argv], close_fds=True)
         from PyQt6.QtWidgets import QApplication
         QApplication.quit()

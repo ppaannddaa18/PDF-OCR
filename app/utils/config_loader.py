@@ -5,10 +5,12 @@ import threading
 import yaml
 import sys
 import os
+import logging
 from pathlib import Path
 
 # 写盘锁：防止多线程并发写 config.yaml 写半截
 _config_write_lock = threading.Lock()
+_logger = logging.getLogger("PDFOCR")
 
 
 def get_base_path() -> Path:
@@ -53,12 +55,58 @@ def load_config(path: str = None) -> dict:
 
     _validate_config(config)
 
+    # 路径自愈：配置里的 GGUF 路径不存在、但仓库内默认布局存在时，
+    # 用默认相对路径替换（内存级修复；防止旧进程/旧配置把 C:\llama 等
+    # 失效绝对路径回写后，启动选择界面误报「依赖不完整」）。
+    _repair_gguf_paths(config)
+
     # 启动器环境变量覆盖（优先级高于配置文件）
     env_engine = os.environ.get("PDFOCR_ENGINE", "")
     if env_engine in ("gguf", "rapidocr"):
         config.setdefault("ocr", {})["engine"] = env_engine
 
     return config
+
+
+def _project_root() -> Path:
+    """GGUF 相对路径的解析根（与 engine_checker / ocr_engine_gguf 语义一致）"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[2]
+
+
+def _repair_gguf_paths(config: dict) -> bool:
+    """修复失效的 GGUF server/model/mmproj 路径；返回是否有改动。"""
+    gguf_cfg = config.get("ocr", {}).get("gguf")
+    if not isinstance(gguf_cfg, dict):
+        return False
+
+    defaults = get_default_config()["ocr"]["gguf"]
+    root = _project_root()
+    changed = False
+
+    for key in ("server_path", "model_path", "mmproj_path"):
+        value = str(gguf_cfg.get(key, "") or "")
+        if not value:
+            continue
+
+        candidate = Path(value)
+        exists = candidate.is_absolute() and candidate.exists()
+        if not exists and not candidate.is_absolute():
+            exists = (root / value).exists() or candidate.exists()
+        if exists:
+            continue
+
+        default = defaults[key]
+        if (root / default).exists():
+            _logger.warning(
+                "GGUF 配置路径不存在，已自动修复为仓库内默认路径: %s -> %s",
+                value, default,
+            )
+            gguf_cfg[key] = default
+            changed = True
+
+    return changed
 
 
 def save_config(config: dict) -> None:

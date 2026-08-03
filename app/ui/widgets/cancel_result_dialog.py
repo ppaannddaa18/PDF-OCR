@@ -16,6 +16,19 @@ from app.ui.theme_manager import ThemeManager
 logger = logging.getLogger("PDFOCR")
 
 
+# qtawesome 延迟加载（避免启动开销与字体警告）
+_qta = None
+
+
+def _get_qta():
+    """获取 qtawesome 实例（延迟加载）"""
+    global _qta
+    if _qta is None:
+        import qtawesome
+        _qta = qtawesome
+    return _qta
+
+
 class CancelResultDialog(QDialog):
     """批量取消结果对话框"""
 
@@ -52,9 +65,11 @@ class CancelResultDialog(QDialog):
 
         # 标题区域
         title_layout = QHBoxLayout()
-        icon_label = QLabel("⚠️")
-        icon_label.setStyleSheet("font-size: 24px;")
-        title_layout.addWidget(icon_label)
+        self.icon_label = QLabel()
+        self.icon_label.setPixmap(_get_qta().icon(
+            'fa5s.exclamation-triangle',
+            color=ThemeManager.get_color('warning')).pixmap(28, 28))
+        title_layout.addWidget(self.icon_label)
 
         title = SubtitleLabel("批量识别已取消")
         title.setStyleSheet("font-weight: bold;")

@@ -156,6 +156,21 @@ class TestGgufWindowShell:
 
 
 class TestGgufKeywordFlow:
+    def test_upload_button_routes_to_on_upload(
+            self, gguf_window, monkeypatch, tmp_path):
+        """关键字页工具栏「上传 PDF」按钮 → 主窗口 on_upload（端到端）"""
+        w = gguf_window
+        pdf_file = tmp_path / "sample.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 fake")
+        # 注意：不能 monkeypatch 实例属性 on_upload —— PyQt 信号连接的是
+        # 连接时绑定的方法，实例属性替换不会生效，会弹出真实模态对话框导致挂死。
+        monkeypatch.setattr(
+            "app.ui.windows.gguf_main_window.QFileDialog.getOpenFileNames",
+            lambda *a, **k: ([str(pdf_file)], ""))
+        w.keyword_page.btn_upload.click()
+        assert str(pdf_file) in w.file_panel.files
+        assert '已加载' in w.status_label.text()
+
     def test_keyword_done_syncs_result_page_and_history(
             self, gguf_window, monkeypatch):
         """提取完成 → 汇总页 + adapter → 结果页/历史/统计"""

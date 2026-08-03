@@ -4,6 +4,9 @@ app:
   window_size:
   - 1600
   - 1000
+appearance:
+  animations_enabled: true
+  theme: auto
 batch:
   max_workers: 4
   retry_times: 2
@@ -30,27 +33,48 @@ layout_visualization:
     table: '#27AE60'
     text: '#4A90D9'
   enabled: true
-structured:
-  # P1 双向高亮：RapidOCR 行盒检测层（语义与坐标解耦）。默认关 —
-  # 需先跑探针验证检测精度（中位中心误差 < 3px）再开启。
-  detection: false
 ocr:
   det_db_box_thresh: 0.5
   drop_score: 0.5
-  engine: gguf
-  lang: ch
+  engine: rapidocr
   gguf:
+    auxiliary_parsing:
+      footer: false
+      footer_image: false
+      footnote: false
+      header: false
+      header_image: false
+      margin_text: false
+      page_number: true
+    confidence_threshold: 1.0
     device: gpu
     host: 127.0.0.1
     idle_unload_seconds: 300
+    layout_geometry: auto
+    max_pixels: 2822144
     max_tokens: 512
+    min_pixels: 146432
     mmproj_offload: true
     mmproj_path: models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf
+    model_params:
+      chart_recognition: true
+      cross_page_table_merge: true
+      distortion_correction: false
+      heading_level_recognition: true
+      image_text_recognition: true
+      layout_analysis: true
+      orientation_correction: false
+      seal_recognition: true
     model_path: models/PaddleOCR-VL-1.6-GGUF.gguf
     n_gpu_layers: 999
+    nms_postprocess: true
     port: 8080
+    prompt_type: table
+    repetition_penalty: 1.0
     server_path: llama-b9969/llama-server.exe
+    stability: 0.0
     temperature: 0.0
+  lang: ch
   rapidocr:
     det_db_box_thresh: 0.3
     drop_score: 0.5

@@ -155,13 +155,13 @@ class TestConfig:
         assert 'batch' in config
         assert 'export' in config
 
-    def test_default_config_has_paddleocr_section(self):
+    def test_default_config_has_gguf_section(self):
         config = get_default_config()
-        vl = config['ocr']['paddleocr_vl']
-        assert 'vl_rec_model_name' in vl
-        assert 'device' in vl
-        assert 'precision' in vl
-        assert 'match_iou_threshold' in vl
+        gguf = config['ocr']['gguf']
+        assert 'server_path' in gguf
+        assert 'model_path' in gguf
+        assert 'mmproj_path' in gguf
+        assert 'port' in gguf
 
     def test_default_config_has_rapidocr_section(self):
         config = get_default_config()
@@ -178,3 +178,90 @@ class TestConfig:
         config2 = load_config()
         assert config2['ocr']['engine'] == 'rapidocr'
         del os.environ['PDFOCR_ENGINE']
+
+
+class TestGgufPathRepair:
+    """GGUF 失效路径自动修复（C:\\llama 等旧绝对路径 → 仓库内相对路径）"""
+
+    def test_repair_replaces_broken_absolute_paths(self, monkeypatch, tmp_path):
+        from app.utils import config_loader
+
+        # 模拟仓库根目录里存在默认布局的模型文件
+        fake_root = tmp_path / "repo"
+        (fake_root / "llama-b9969").mkdir(parents=True)
+        (fake_root / "models").mkdir()
+        (fake_root / "llama-b9969" / "llama-server.exe").touch()
+        (fake_root / "models" / "PaddleOCR-VL-1.6-GGUF.gguf").touch()
+        (fake_root / "models" / "PaddleOCR-VL-1.6-GGUF-mmproj.gguf").touch()
+        monkeypatch.setattr(config_loader, "_project_root", lambda: fake_root)
+
+        config = get_default_config()
+        config["ocr"]["gguf"]["server_path"] = r"C:\llama\llama-server.exe"
+        config["ocr"]["gguf"]["model_path"] = r"C:\models\ocr.gguf"
+        config["ocr"]["gguf"]["mmproj_path"] = r"C:\models\mmproj.gguf"
+
+        changed = config_loader._repair_gguf_paths(config)
+        assert changed is True
+        gguf = config["ocr"]["gguf"]
+        assert gguf["server_path"] == "llama-b9969/llama-server.exe"
+        assert gguf["model_path"] == "models/PaddleOCR-VL-1.6-GGUF.gguf"
+        assert gguf["mmproj_path"] == "models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
+
+    def test_repair_keeps_valid_existing_path(self, monkeypatch, tmp_path):
+        from app.utils import config_loader
+
+        fake_root = tmp_path / "repo"
+        (fake_root / "models").mkdir(parents=True)
+        valid = fake_root / "models" / "custom.gguf"
+        valid.touch()
+        monkeypatch.setattr(config_loader, "_project_root", lambda: fake_root)
+
+        config = get_default_config()
+        config["ocr"]["gguf"]["model_path"] = "models/custom.gguf"
+
+        changed = config_loader._repair_gguf_paths(config)
+        assert changed is False
+        assert config["ocr"]["gguf"]["model_path"] == "models/custom.gguf"
+
+    def test_repair_no_defaults_keeps_broken_path(self, monkeypatch, tmp_path):
+        """仓库内没有默认文件时不做任何替换（保留原值，让检查器如实报告）"""
+        from app.utils import config_loader
+
+        fake_root = tmp_path / "empty-repo"
+        fake_root.mkdir()
+        monkeypatch.setattr(config_loader, "_project_root", lambda: fake_root)
+
+        config = get_default_config()
+        config["ocr"]["gguf"]["model_path"] = r"C:\models\ocr.gguf"
+
+        changed = config_loader._repair_gguf_paths(config)
+        assert changed is False
+        assert config["ocr"]["gguf"]["model_path"] == r"C:\models\ocr.gguf"
+
+    def test_load_config_runs_repair_pipeline(self, monkeypatch, tmp_path):
+        """load_config 加载后调用修复：失效绝对路径被换成默认相对路径"""
+        from app.utils import config_loader
+
+        fake_root = tmp_path / "repo"
+        (fake_root / "llama-b9969").mkdir(parents=True)
+        (fake_root / "models").mkdir()
+        (fake_root / "llama-b9969" / "llama-server.exe").touch()
+        (fake_root / "models" / "PaddleOCR-VL-1.6-GGUF.gguf").touch()
+        (fake_root / "models" / "PaddleOCR-VL-1.6-GGUF-mmproj.gguf").touch()
+        monkeypatch.setattr(config_loader, "_project_root", lambda: fake_root)
+
+        cfg_file = tmp_path / "cfg.yaml"
+        cfg_file.write_text(
+            "ocr:\n"
+            "  engine: gguf\n"
+            "  gguf:\n"
+            "    server_path: C:\\llama\\llama-server.exe\n"
+            "    model_path: C:\\models\\ocr.gguf\n"
+            "    mmproj_path: C:\\models\\mmproj.gguf\n",
+            encoding="utf-8",
+        )
+        config = config_loader.load_config(str(cfg_file))
+        gguf = config["ocr"]["gguf"]
+        assert gguf["server_path"] == "llama-b9969/llama-server.exe"
+        assert gguf["model_path"] == "models/PaddleOCR-VL-1.6-GGUF.gguf"
+        assert gguf["mmproj_path"] == "models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf"

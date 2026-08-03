@@ -61,10 +61,10 @@ class OCREngineBase(ABC):
     @property
     @abstractmethod
     def engine_name(self) -> str:
-        """引擎名称: "rapidocr" | "paddleocr_vl" """
+        """引擎名称: "rapidocr" | "gguf" """
         ...
 
     @abstractmethod
     def unload(self) -> None:
-        """卸载模型释放资源（PaddleOCR-VL 需要，RapidOCR可为空操作）"""
+        """卸载模型释放资源（GGUF 需要，RapidOCR可为空操作）"""
         ...

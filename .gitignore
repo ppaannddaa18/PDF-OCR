@@ -35,3 +35,21 @@ Thumbs.db
 
 # 配置文件（可能包含敏感信息）
 config.local.yaml
+
+# 模型文件（大文件）
+models/*.gguf
+models/*.onnx
+models/*.bin
+
+# llama.cpp 二进制文件
+llama-b9969/
+cudart-12.4/
+*.exe
+ggml*.dll
+llama*.dll
+llava*.dll
+
+# 压缩包
+*.zip
+*.tar.gz
+*.7z

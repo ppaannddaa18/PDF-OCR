@@ -75,7 +75,7 @@ class LoadingOverlay(QWidget):
         error_layout.setSpacing(12)
 
         # 错误图标和标题
-        self.error_title = BodyLabel("⚠️ OCR引擎初始化失败")
+        self.error_title = BodyLabel("OCR 引擎初始化失败")
         error_layout.addWidget(self.error_title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # 错误详情（友好描述）

@@ -5,6 +5,19 @@ from app.ui.animation_manager import AnimationManager
 from app.ui.theme_manager import ThemeManager
 
 
+# qtawesome 延迟加载（避免启动开销与字体警告）
+_qta = None
+
+
+def _get_qta():
+    """获取 qtawesome 实例（延迟加载）"""
+    global _qta
+    if _qta is None:
+        import qtawesome
+        _qta = qtawesome
+    return _qta
+
+
 class CollapsiblePanel(QWidget):
     """可折叠面板容器"""
 
@@ -75,9 +88,16 @@ class CollapsiblePanel(QWidget):
             color: {ThemeManager.get_color('text_secondary')};
             font-size: 11px;
         """)
+        self._update_indicator()
         self.setStyleSheet(
             f"background-color: {ThemeManager.get_color('bg_surface')};"
         )
+
+    def _update_indicator(self):
+        """折叠指示图标（QtAwesome folder-open，按主题色重绘）"""
+        self.collapsed_indicator.setPixmap(_get_qta().icon(
+            'fa5s.folder-open',
+            color=ThemeManager.get_color('text_secondary')).pixmap(18, 18))
 
     def set_content(self, widget: QWidget):
         """设置内容控件"""
@@ -94,10 +114,8 @@ class CollapsiblePanel(QWidget):
         self.content_area.setVisible(False)
         self.collapsed_indicator.setVisible(True)
 
-        # 更新指示器
-        if self._content_widget:
-            # 显示内容数量或标识
-            self.collapsed_indicator.setText('📄')
+        # 更新指示器（QtAwesome 图标，弃用 emoji）
+        self._update_indicator()
 
         # 动画
         self._animate_width(self._expanded_width, self._collapsed_width)

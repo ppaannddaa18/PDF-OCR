@@ -22,5 +22,5 @@ class TestOCREngineCompat:
     def test_default_degradation(self):
         config = get_default_config()
         engine = get_ocr_engine(config)
-        assert engine.engine_name in ('rapidocr', 'paddleocr_vl')
+        assert engine.engine_name in ('rapidocr', 'gguf')
 

@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
 )
 from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton
 
+from app.ui.theme_manager import ThemeManager
+
 # GGUF 设计语言色板（重设计：暗松绿 × 黄铜金）
 GGUF_COLORS = {
     "bg": "#10150F",
@@ -51,14 +53,14 @@ _CARD_SPECS = {
         "title": "GGUF 本地 VLM",
         "tagline": "本地大模型版面识别，版面理解最强",
         "features": ["VLM 版面分析", "图表 / 印章 / 跨页表格", "关键字语义提取"],
-        "perf": "~2s/页 · 需 6GB 显存",
+        "perf": "约 2 秒/页，需 6GB 显存",
         "colors": GGUF_COLORS,
     },
     "rapid": {
         "title": "RapidOCR 轻量引擎",
         "tagline": "CPU 轻量快速，零外部依赖",
         "features": ["CPU 轻量", "模板框选", "零外部依赖"],
-        "perf": "轻量 · CPU 即可",
+        "perf": "轻量，CPU 即可",
         "colors": RAPID_COLORS,
     },
 }
@@ -99,7 +101,7 @@ class _EngineCard(QFrame):
 
         # 能力清单
         features = QLabel(
-            "\n".join(f"· {f}" for f in _CARD_SPECS[engine_key]["features"])
+            "\n".join(_CARD_SPECS[engine_key]["features"])
         )
         features.setWordWrap(True)
         features.setStyleSheet(
@@ -230,7 +232,8 @@ class EngineSelectDialog(QDialog):
         # 底部：说明文字 + 进入按钮
         bottom = QHBoxLayout()
         hint = QLabel("本次会话使用，每次启动重新选择")
-        hint.setStyleSheet("color: #8A8F99; font-size: 12px;")
+        hint.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')}; font-size: 12px;")
         bottom.addWidget(hint)
         bottom.addStretch(1)
         self.enter_btn = PrimaryPushButton("进入", self)

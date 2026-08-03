@@ -19,9 +19,23 @@ from app.ui.theme_manager import ThemeManager
 _KW_SPLIT_RE = re.compile(r"[,，、;；\n]+")
 
 
+# qtawesome 延迟加载（避免启动开销与字体警告）
+_qta = None
+
+
+def _get_qta():
+    """获取 qtawesome 实例（延迟加载）"""
+    global _qta
+    if _qta is None:
+        import qtawesome
+        _qta = qtawesome
+    return _qta
+
+
 class KeywordSummaryPage(QWidget):
     """关键字批量汇总页（主题核心）"""
 
+    upload_requested = pyqtSignal()
     extract_requested = pyqtSignal(list)         # keywords
     export_requested = pyqtSignal()
     save_set_requested = pyqtSignal(str, list)   # name, keywords
@@ -43,8 +57,16 @@ class KeywordSummaryPage(QWidget):
                                   ThemeManager.get_spacing('sm'))
         layout.setSpacing(ThemeManager.get_spacing('sm'))
 
-        # Row1：关键字输入 + 提取 + 导出
+        # Row1：上传 PDF + 关键字输入 + 提取 + 导出
         row1 = QHBoxLayout()
+        self.btn_upload = QPushButton("上传 PDF")
+        self.btn_upload.setIcon(_get_qta().icon(
+            'fa5s.upload', color=ThemeManager.get_color('on_accent')))
+        self.btn_upload.setFixedHeight(32)
+        self.btn_upload.setStyleSheet(primary_qss())
+        self.btn_upload.setToolTip("选择 PDF 文件（Ctrl+O）")
+        self.btn_upload.clicked.connect(self.upload_requested.emit)
+        row1.addWidget(self.btn_upload)
         self.keyword_input = QLineEdit()
         self.keyword_input.setPlaceholderText(
             "逗号/顿号分隔，如：报关单号,价税合计,发票号码")
@@ -187,4 +209,7 @@ class KeywordSummaryPage(QWidget):
             self.stats_label.setFont(QFont())
         self.btn_extract.setStyleSheet(primary_qss())
         self.btn_export.setStyleSheet(primary_qss())
+        self.btn_upload.setStyleSheet(primary_qss())
+        self.btn_upload.setIcon(_get_qta().icon(
+            'fa5s.upload', color=ThemeManager.get_color('on_accent')))
         self.inspection.apply_theme()

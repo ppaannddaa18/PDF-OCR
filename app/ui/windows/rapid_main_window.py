@@ -1209,11 +1209,8 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
             self._merge_config_patch(self.config, patch)
 
             try:
-                import yaml
-                from pathlib import Path
-                config_path = Path(__file__).parent.parent / "config.yaml"
-                with open(config_path, "w", encoding="utf-8") as f:
-                    yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False)
+                from app.utils.config_loader import save_config
+                save_config(self.config)
 
                 InfoBar.success(
                     title="设置已保存",

@@ -44,6 +44,7 @@ class ThemeManager:
                 'primary': '#2563eb',
                 'primary_hover': '#1d4ed8',
                 'white': '#ffffff',
+                'on_accent': '#ffffff',
                 'success_bg': '#E7F5E9',
                 'warning_bg': '#FFF8E1',
                 'error_bg': '#FDE8E8',
@@ -65,6 +66,7 @@ class ThemeManager:
                 'primary': '#3b82f6',
                 'primary_hover': '#2563eb',
                 'white': '#ffffff',
+                'on_accent': '#ffffff',
                 'success_bg': '#12301B',
                 'warning_bg': '#3A2F14',
                 'error_bg': '#3A1518',
@@ -93,6 +95,7 @@ class ThemeManager:
                 'primary': '#C9A227',             # 黄铜金
                 'primary_hover': '#A9881E',       # 黄铜压暗
                 'white': '#ffffff',
+                'on_accent': '#10150F',           # 黄铜底上的深松绿黑文字（对比度达标）
                 'success_bg': '#172616',
                 'warning_bg': '#332B14',
                 'error_bg': '#331A16',
@@ -122,6 +125,7 @@ class ThemeManager:
                 'primary': '#1E7B5C',             # 档案绿
                 'primary_hover': '#186347',       # 压暗
                 'white': '#ffffff',
+                'on_accent': '#ffffff',
                 'success_bg': '#E4F0E8',
                 'warning_bg': '#F7ECD8',
                 'error_bg': '#F8E3E1',

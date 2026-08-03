@@ -152,11 +152,11 @@ class TestFocusRing:
         from app.ui.widgets.compact_toolbar import CompactToolbar
         ThemeManager.set_theme('light')
         bar = CompactToolbar()
-        ss = bar._icon_buttons[0].styleSheet()
+        ss = bar._icon_buttons[0][0].styleSheet()
         assert ':focus' in ss
         assert ThemeManager.get_color('border_focus') in ss
         ThemeManager.set_theme('dark')
-        assert ThemeManager.get_color('border_focus') in bar._icon_buttons[0].styleSheet()
+        assert ThemeManager.get_color('border_focus') in bar._icon_buttons[0][0].styleSheet()
 
     def test_canvas_zoom_buttons_focus_qss(self, qapp):
         from app.ui.widgets.pdf_canvas import PdfCanvas

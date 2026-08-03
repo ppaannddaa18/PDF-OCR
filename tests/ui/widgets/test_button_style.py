@@ -52,7 +52,7 @@ class TestButtonStyle:
         ss = primary_qss() + secondary_qss()
         assert '<primary>' in ss
         assert '<primary_hover>' in ss
-        assert '<white>' in ss
+        assert '<on_accent>' in ss
         assert '<bg_surface>' in ss
         assert '<border>' in ss
         # 只使用已定义的颜色角色 token（证明没有手写颜色字面量）

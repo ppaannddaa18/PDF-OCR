@@ -200,6 +200,11 @@ class TestWindowHandlers:
                             lambda config: FakeEngine())
         from app.ui.widgets.cancel_result_dialog import CancelResultDialog
         monkeypatch.setattr(CancelResultDialog, "has_pending_task", lambda: False)
+        # 关键隔离：绝不把测试 fixture 配置写回真实 app/config.yaml
+        # （此前 _on_settings_restart 未打桩 save_config，导致全量测试
+        #   每次把 C:\llama 旧路径回写进开发配置）
+        monkeypatch.setattr("app.utils.config_loader.save_config",
+                            lambda config: None)
         w = GgufMainWindow(_make_config())
         yield w
         _destroy(w)
