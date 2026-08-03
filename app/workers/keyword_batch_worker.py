@@ -37,7 +37,8 @@ class KeywordBatchWorker(QThread):
 
         try:
             results = self.processor.process_batch(
-                self.pdf_files, self.keywords, throttled_cb
+                self.pdf_files, self.keywords, throttled_cb,
+                completed_results=self._completed_results,
             )
             self._completed_results = results
             self.finished_all.emit(results)

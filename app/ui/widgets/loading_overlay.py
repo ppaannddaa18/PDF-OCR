@@ -237,7 +237,7 @@ class LoadingOverlay(QWidget):
         try:
             if hasattr(self, '_animation_timer'):
                 self._animation_timer.stop()
-        except:
+        except Exception:
             pass
 
     def _update_animation(self):

@@ -861,7 +861,8 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         layout.addWidget(self.progress_status_label)
 
         self.progress_file_label = QLabel("准备开始...")
-        self.progress_file_label.setStyleSheet("color: #666;")
+        self.progress_file_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')};")
         layout.addWidget(self.progress_file_label)
 
         self.progress_bar_dialog = QProgressBar()
@@ -946,6 +947,7 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
 
     def _on_progress(self, done, total, current_file):
         # 更新进度条
+        self.progress_bar.setRange(0, max(1, total))
         self.progress_bar.setValue(done)
         self.progress_label.setText(f"{done}/{total}")
         from pathlib import Path
@@ -1183,10 +1185,26 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         else:
             self._default_template = template
 
-        if self._current_preview_result and old_name in self._current_preview_result.fields:
-            field_result = self._current_preview_result.fields.pop(old_name)
-            field_result.field_name = new_name
-            self._current_preview_result.fields[new_name] = field_result
+        # B4 兼容：fields 的 key 是 field_name（同名加 _1/_2 后缀去重），
+        # 必须按 region_id 定位（不能按 old_name 索引，同名区域会错删/漏改）
+        if self._current_preview_result:
+            target = next(
+                (fr for fr in self._current_preview_result.fields.values()
+                 if fr.region_id == region_id),
+                None)
+            if target is not None:
+                target.field_name = new_name
+                # 重建 dict key：删除旧 key，按去重规则插入新 key
+                for key, fr in list(self._current_preview_result.fields.items()):
+                    if fr is target:
+                        del self._current_preview_result.fields[key]
+                        break
+                new_key = new_name
+                suffix = 1
+                while new_key in self._current_preview_result.fields:
+                    new_key = f"{new_name}_{suffix}"
+                    suffix += 1
+                self._current_preview_result.fields[new_key] = target
 
         self.status_label.setText(f"字段名已更新: {old_name} -> {new_name}")
 

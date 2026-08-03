@@ -75,6 +75,32 @@ class TestFieldMatcherLevel2:
         results = matcher.match(elements, [region], '', pixel_bboxes)
         assert results['r1'].level == 0  # 距离超过阈值，匹配不到
 
+    def test_merge_adjacent_left_and_right_ordered(self, matcher):
+        """合并同一行元素时按 X 坐标升序（左侧元素不能排在 best 之后）"""
+        best = {'text': 'B', 'bbox': [100, 0, 200, 30]}
+        left = {'text': 'A', 'bbox': [0, 0, 90, 30]}
+        right = {'text': 'C', 'bbox': [210, 0, 300, 30]}
+        text, consumed = matcher._merge_adjacent(best, [left, right])
+        assert text == 'A B C'
+        assert len(consumed) == 2
+        assert left in consumed and right in consumed
+
+    def test_merge_y_tolerance_scales_with_box_height(self, matcher):
+        """Y 轴容差 DPI 感知：以行盒高度中位数为基准（高分辨率下同行元素仍能合并）"""
+        best = {'text': 'X', 'bbox': [0, 100, 100, 300]}     # 行高 200，mid=200
+        right = {'text': 'Y', 'bbox': [150, 260, 250, 340]}  # 行高 80，mid=300，Δ=100
+        text, consumed = matcher._merge_adjacent(best, [right])
+        assert right in consumed
+        assert text == 'X Y'
+
+    def test_merge_distant_row_not_merged(self, matcher):
+        """跨行（Y 差超过容差）不合并"""
+        best = {'text': 'X', 'bbox': [0, 100, 100, 300]}
+        next_row = {'text': 'Z', 'bbox': [200, 700, 300, 900]}  # mid=800，Δ=600
+        text, consumed = matcher._merge_adjacent(best, [next_row])
+        assert consumed == []
+        assert text == 'X'
+
 
 class TestFieldMatcherLevel3:
     """关键词兜底"""
@@ -109,6 +135,28 @@ class TestFieldMatcherLevel3:
         results = matcher.match([], [region], markdown, pixel_bboxes)
         assert results['r1'].level == 3
         assert '13800138000' in results['r1'].text
+
+    def test_keyword_match_stops_at_next_keyword(self, matcher):
+        """blob 文本：值截断到下一个关键字，不粘连后续标签"""
+        from app.models.region import Region
+        region = Region(
+            id='r1', field_name='预录入编号', x=0, y=0, w=1, h=1,
+            match_keywords=['预录入编号', '海关编号'],
+        )
+        markdown = "预录入编号：090820241000039736 海关编号：090820241000039736"
+        text, conf = matcher._keyword_match(region, markdown)
+        assert text == '090820241000039736'
+        assert conf > 0.5
+
+    def test_keyword_match_pure_label_value_kept(self, matcher):
+        """值本身不含后续关键字时保持原样"""
+        from app.models.region import Region
+        region = Region(
+            id='r1', field_name='进口日期', x=0, y=0, w=1, h=1,
+            match_keywords=['进口日期', '申报日期'],
+        )
+        text, _ = matcher._keyword_match(region, "进口日期：20240408 申报日期：20240408")
+        assert text == '20240408'
 
     def test_keyword_not_found(self, matcher):
         from app.models.region import Region

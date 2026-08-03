@@ -30,6 +30,7 @@ class ThemeManager:
     _current_theme = 'light'
     _current_design = 'default'
     _refresh_callbacks = []  # weakref.WeakMethod / weakref.ref 列表（组件销毁后自动失效）
+    _mono_family_cache = {}  # (preferred, fallback) -> family，避免每次 get_font 枚举系统字体
 
     _THEMES = ('light', 'dark')
 
@@ -57,6 +58,8 @@ class ThemeManager:
                 'text_disabled': '#9ca3af',
                 'border': '#e5e7eb',
                 'border_focus': '#2563eb',
+                'match_alt_bg': '#FFF0E5',   # 三级匹配（关键词兜底）底色
+                'edited_bg': '#E5F3FF',      # 手动编辑单元格底色
             },
             'dark': {
                 'bg_primary': '#111827',
@@ -79,6 +82,8 @@ class ThemeManager:
                 'text_disabled': '#9ca3af',
                 'border': '#374151',
                 'border_focus': '#3b82f6',
+                'match_alt_bg': '#3A2414',   # 三级匹配（关键词兜底）底色
+                'edited_bg': '#1E3A5F',      # 手动编辑单元格底色
             },
         },
         # ── gguf：暗松绿 × 黄铜金「信号台」（重设计，固定深色） ────
@@ -110,6 +115,8 @@ class ThemeManager:
                 'border_focus': '#C9A227',        # = accent
                 'accent': '#C9A227',              # 黄铜金
                 'accent_alt': '#8FB573',          # 鼠尾草绿（状态/数据）
+                'match_alt_bg': '#33260F',        # 关键词兜底（琥珀压暗）
+                'edited_bg': '#20303F',           # 手动编辑（冷蓝压暗）
             },
         },
         # ── rapid：暖纸 × 墨色 × 档案绿「文具档案室」（重设计，固定浅色） ──
@@ -140,6 +147,8 @@ class ThemeManager:
                 'border_focus': '#1E7B5C',        # = accent
                 'accent': '#1E7B5C',              # 档案绿
                 'accent_alt': '#0E7490',          # 汽油蓝（次级数据色）
+                'match_alt_bg': '#F3E3C8',        # 关键词兜底（暖橙浅底）
+                'edited_bg': '#E4EEF7',           # 手动编辑（浅蓝底）
             },
         },
     }
@@ -176,12 +185,14 @@ class ThemeManager:
         """当前 design 生效的颜色表
 
         design 非 default 时忽略 _current_theme，直接取该设计唯一调色板
-        （gguf→dark / rapid→light）；default 时取当前主题表（与改造前一致）。
+        （gguf→dark / rapid→light，显式映射而非 next(iter())，未来某设计
+        增加第二调色板时不会静默任选）；default 时取当前主题表（与改造前一致）。
         """
-        if cls._current_design == 'default':
+        design = cls._current_design
+        if design == 'default':
             return cls.COLORS['default'][cls._current_theme]
-        palettes = cls.COLORS[cls._current_design]
-        return palettes[next(iter(palettes))]
+        palette_key = {'gguf': 'dark', 'rapid': 'light'}[design]
+        return cls.COLORS[design][palette_key]
 
     @classmethod
     def get_color(cls, role: str) -> str:
@@ -213,14 +224,19 @@ class ThemeManager:
 
     @classmethod
     def _resolve_mono_family(cls, preferred: str, fallback: str = None) -> str:
-        """按 QFontDatabase 查找字体族，系统缺失时回退"""
+        """按 QFontDatabase 查找字体族，系统缺失时回退；结果按 (preferred, fallback) 缓存"""
+        key = (preferred, fallback)
+        cached = cls._mono_family_cache.get(key)
+        if cached is not None:
+            return cached
         try:
             from PyQt6.QtGui import QFontDatabase
-            if preferred in QFontDatabase.families():
-                return preferred
-        except Exception:
-            pass
-        return fallback or preferred
+            families = QFontDatabase.families()
+            resolved = preferred if preferred in families else (fallback or preferred)
+        except (ImportError, RuntimeError):
+            resolved = fallback or preferred
+        cls._mono_family_cache[key] = resolved
+        return resolved
 
     @classmethod
     def get_spacing(cls, name: str) -> int:

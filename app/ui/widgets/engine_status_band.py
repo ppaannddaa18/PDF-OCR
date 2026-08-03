@@ -17,6 +17,10 @@ from app.ui.animation_manager import AnimationManager
 class EngineStatusBand(QWidget):
     """引擎初始化状态带：窗口顶部 2px 发光横线"""
 
+    # 高度固定 2px（P6 呼吸动画只改 alpha 不放松高度；
+    # 若未来做更明显的动效，改这里即可）
+    BAND_HEIGHT = 2
+
     # 三态颜色（与 GGUF 签名一致：黄铜=初始化 / 鼠尾草绿=就绪 / 信号红=错误）
     STATUS_COLORS = {
         'initializing': '#E0B23C',  # 黄铜（呼吸）
@@ -30,8 +34,8 @@ class EngineStatusBand(QWidget):
         super().__init__(parent)
         self._status = 'initializing'
         self._phase = 0.0  # 呼吸相位 0..1
-        self.setMinimumHeight(2)
-        self.setMaximumHeight(2)
+        self.setMinimumHeight(self.BAND_HEIGHT)
+        self.setMaximumHeight(self.BAND_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         # 纯装饰条，不拦截鼠标事件
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)

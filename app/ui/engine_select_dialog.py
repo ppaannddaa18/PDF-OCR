@@ -197,7 +197,6 @@ class EngineSelectDialog(QDialog):
 
     def __init__(self, config: dict = None, parent=None):
         super().__init__(parent)
-        self._config = config or {}
         self._selected = None
         self._availability = {
             "gguf": {"available": True, "issues": []},

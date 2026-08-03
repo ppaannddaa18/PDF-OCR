@@ -146,7 +146,8 @@ class AppBaseWindowMixin:
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label = BodyLabel("工作区")
-        label.setStyleSheet("color: #6b7280;")
+        label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')};")
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignCenter)
         return page
 

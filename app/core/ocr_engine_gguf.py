@@ -23,16 +23,6 @@ from app.models.page_result import PageResult, Block
 logger = logging.getLogger("PDFOCR")
 
 
-def _cleanup_gguf_server():
-    """atexit 回调：进程退出时自动停止 llama-server"""
-    engine = GGUFOCREngine._instance
-    if engine is not None:
-        try:
-            engine._stop_server()
-        except Exception:
-            pass
-
-
 class _DummyRegion:
     """虚拟Region用于单图识别（recognize方法）"""
     __slots__ = ('id', 'field_name', 'x', 'y', 'w', 'h',
@@ -49,6 +39,16 @@ class _DummyRegion:
         self.match_keywords = []
         self.match_mode = "value"
         self.ocr_mode = mode
+
+
+def _cleanup_gguf_server():
+    """atexit 回调：进程退出时自动停止 llama-server"""
+    engine = GGUFOCREngine._instance
+    if engine is not None:
+        try:
+            engine._stop_server()
+        except Exception:
+            pass
 
 
 def _blocks_to_elements(blocks: List[Block]) -> List[dict]:
@@ -470,7 +470,6 @@ class GGUFOCREngine(OCREngineBase):
             构建好的 prompt 字符串
         """
         # 基础指令 - 根据 prompt_type 选择
-        prompt_type = self._prompt_type
         type_instructions = {
             "text": "请识别图片中的所有文本内容，保持原始排版格式。",
             "formula": "请识别图片中的数学公式，使用 LaTeX 格式输出。",
@@ -480,7 +479,11 @@ class GGUFOCREngine(OCREngineBase):
             "detection": "请检测并识别图片中的所有文本区域，输出每个区域的坐标和文字内容。"
         }
 
-        parts = [type_instructions.get(prompt_type, "请识别图片中的文本内容。")]
+        # mode 优先（recognize(mode='single_line') 等未映射值回退到
+        # 配置的 prompt_type，行为与改造前一致）
+        prompt_type = type_instructions.get(mode) or type_instructions.get(
+            self._prompt_type, "请识别图片中的文本内容。")
+        parts = [prompt_type]
 
         # 辅助内容解析指令
         aux = self._parse_auxiliary

@@ -9,7 +9,8 @@ class FakeProcessor:
     def __init__(self):
         self.calls = []
 
-    def process_batch(self, pdf_files, keywords, progress_cb=None):
+    def process_batch(self, pdf_files, keywords, progress_cb=None,
+                      completed_results=None):
         self.calls.append(("process_batch", keywords))
         progress_cb(1, 1, "a.pdf")
         return []
@@ -39,7 +40,8 @@ def test_worker_progress_forwarded(qapp):
 
 def test_worker_cancel_emits_cancelled(qapp):
     class ThrowingProcessor:
-        def process_batch(self, pdf_files, keywords, progress_cb=None):
+        def process_batch(self, pdf_files, keywords, progress_cb=None,
+                          completed_results=None):
             raise InterruptedError("用户取消")
 
     worker = KeywordBatchWorker(ThrowingProcessor(), ["a.pdf"], ["x"])
@@ -49,9 +51,32 @@ def test_worker_cancel_emits_cancelled(qapp):
     assert cancelled == [True]
 
 
+def test_worker_cancel_keeps_partial_results(qapp):
+    """取消时已完成文件的部分结果保留在 _completed_results（供界面展示）"""
+
+    class PartialThenThrowProcessor:
+        def process_batch(self, pdf_files, keywords, progress_cb=None,
+                          completed_results=None):
+            completed_results.append({"file": "a.pdf"})
+            progress_cb(1, 2, "a.pdf")
+            raise InterruptedError("用户取消")
+
+    worker = KeywordBatchWorker(
+        PartialThenThrowProcessor(), ["a.pdf", "b.pdf"], ["x"])
+    cancelled = []
+    finished = []
+    worker.cancelled.connect(lambda: cancelled.append(True))
+    worker.finished_all.connect(lambda r: finished.append(r))
+    worker.run()
+    assert cancelled == [True]
+    assert finished == []
+    assert worker._completed_results == [{"file": "a.pdf"}]
+
+
 def test_worker_completed_results_accumulate(qapp):
     class CollectingProcessor:
-        def process_batch(self, pdf_files, keywords, progress_cb=None):
+        def process_batch(self, pdf_files, keywords, progress_cb=None,
+                          completed_results=None):
             progress_cb(1, 2, "a.pdf")
             return [1]  # 部分结果
 

@@ -69,7 +69,8 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         self._post_init_base()  # post-super：UI 部件（页面/导航/引擎异步初始化）
         # 签名元素 1：窗口顶部 2px 引擎状态发光横线
         self.engine_band = EngineStatusBand(self)
-        self.engine_band.setGeometry(0, 0, self.width(), 2)
+        self.engine_band.setGeometry(
+            0, 0, self.width(), EngineStatusBand.BAND_HEIGHT)
         self.engine_band.raise_()
         self._connect_signals()
         self._setup_shortcuts()
@@ -284,7 +285,8 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         """窗口大小改变时：遮罩层（base）+ 顶部发光带跟随"""
         super().resizeEvent(event)
         if hasattr(self, 'engine_band'):
-            self.engine_band.setGeometry(0, 0, self.width(), 2)
+            self.engine_band.setGeometry(
+                0, 0, self.width(), EngineStatusBand.BAND_HEIGHT)
             self.engine_band.raise_()
 
     # ── 文件列表 ────────────────────────────────────────────────

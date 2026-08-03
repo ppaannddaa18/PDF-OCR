@@ -5,8 +5,13 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal as Signal
 from PyQt6.QtGui import QColor, QBrush
 from app.models.ocr_result import FileResult
+from app.ui.theme_manager import ThemeManager
 from pathlib import Path
-import qtawesome as qta
+
+
+def _role_color(role: str) -> QColor:
+    """从 ThemeManager 解析语义色（结果表底色统一走主题 token，禁止硬编码）"""
+    return QColor(ThemeManager.get_color(role))
 
 
 class ResultTable(QTableWidget):
@@ -106,25 +111,25 @@ class ResultTable(QTableWidget):
                 item = QTableWidgetItem(fr.text)
                 # PaddleOCR-VL 匹配级别颜色（优先级高于置信度）
                 if fr.match_level == 1:
-                    item.setBackground(QColor("#E5F5E5"))  # 绿色 - IoU精确
+                    item.setBackground(_role_color('success_bg'))  # IoU精确
                     item.setToolTip(f"匹配: IoU精确 | 置信度: {fr.confidence:.1%} | 引擎: {fr.engine}")
                 elif fr.match_level == 2:
-                    item.setBackground(QColor("#FFFBE5"))  # 黄色 - 就近匹配
+                    item.setBackground(_role_color('warning_bg'))  # 就近匹配
                     item.setToolTip(f"匹配: 就近搜索 | 置信度: {fr.confidence:.1%} | 引擎: {fr.engine}")
                 elif fr.match_level == 3:
-                    item.setBackground(QColor("#FFF0E5"))  # 橙色 - 关键词
+                    item.setBackground(_role_color('match_alt_bg'))  # 关键词兜底
                     item.setToolTip(f"匹配: 关键词兜底 | 置信度: {fr.confidence:.1%} | 引擎: {fr.engine}")
                 elif fr.confidence < 0.5:
-                    item.setBackground(QColor("#FFE5E5"))  # 红色 - 低置信度
+                    item.setBackground(_role_color('error_bg'))  # 低置信度
                     item.setToolTip(f"置信度: {fr.confidence:.1%} (较低，建议核对) | 引擎: {fr.engine}")
                 elif fr.confidence < 0.7:
-                    item.setBackground(QColor("#FFF4E5"))  # 黄色 - 中等置信度
+                    item.setBackground(_role_color('warning_bg'))  # 中等置信度
                     item.setToolTip(f"置信度: {fr.confidence:.1%} (一般) | 引擎: {fr.engine}")
                 else:
                     item.setToolTip(f"置信度: {fr.confidence:.1%} | 引擎: {fr.engine}")
 
                 if fr.manually_edited:
-                    item.setBackground(QColor("#E5F3FF"))  # 蓝色 - 已编辑
+                    item.setBackground(_role_color('edited_bg'))  # 已编辑
                     item.setToolTip(f"{item.toolTip()}\n[已手动编辑]")
 
                 self.setItem(row, col, item)
@@ -134,7 +139,7 @@ class ResultTable(QTableWidget):
         # 状态列
         status_item = QTableWidgetItem("成功" if r.success else f"失败: {r.error_msg}")
         if not r.success:
-            status_item.setBackground(QColor("#FFE5E5"))
+            status_item.setBackground(_role_color('error_bg'))
         self.setItem(row, headers_count - 2, status_item)
 
         # 操作列 - 重置按钮
@@ -183,15 +188,15 @@ class ResultTable(QTableWidget):
             match_level = fr.match_level if fr else 0
 
             if match_level == 1:
-                item.setBackground(QColor("#E5F5E5"))  # 绿色
+                item.setBackground(_role_color('success_bg'))
             elif match_level == 2:
-                item.setBackground(QColor("#FFFBE5"))  # 黄色
+                item.setBackground(_role_color('warning_bg'))
             elif match_level == 3:
-                item.setBackground(QColor("#FFF0E5"))  # 橙色
+                item.setBackground(_role_color('match_alt_bg'))
             elif confidence < 0.5:
-                item.setBackground(QColor("#FFE5E5"))
+                item.setBackground(_role_color('error_bg'))
             elif confidence < 0.7:
-                item.setBackground(QColor("#FFF4E5"))
+                item.setBackground(_role_color('warning_bg'))
             else:
                 item.setBackground(QBrush())
 
@@ -217,7 +222,7 @@ class ResultTable(QTableWidget):
                     result.fields[field_name].manually_edited = True
                     self._modified_cells.add((row, col))
                     # 更新背景色标记
-                    item.setBackground(QColor("#E5F3FF"))
+                    item.setBackground(_role_color('edited_bg'))
                     self.data_changed.emit()
 
     def _reset_row(self, row: int):
@@ -241,15 +246,15 @@ class ResultTable(QTableWidget):
                 item = QTableWidgetItem(fr.text)
                 # 恢复匹配级别/置信度颜色
                 if fr.match_level == 1:
-                    item.setBackground(QColor("#E5F5E5"))  # 绿色 - IoU精确
+                    item.setBackground(_role_color('success_bg'))  # IoU精确
                 elif fr.match_level == 2:
-                    item.setBackground(QColor("#FFFBE5"))  # 黄色 - 就近匹配
+                    item.setBackground(_role_color('warning_bg'))  # 就近匹配
                 elif fr.match_level == 3:
-                    item.setBackground(QColor("#FFF0E5"))  # 橙色 - 关键词
+                    item.setBackground(_role_color('match_alt_bg'))  # 关键词兜底
                 elif fr.confidence < 0.5:
-                    item.setBackground(QColor("#FFE5E5"))  # 红色 - 低置信度
+                    item.setBackground(_role_color('error_bg'))  # 低置信度
                 elif fr.confidence < 0.7:
-                    item.setBackground(QColor("#FFF4E5"))  # 黄色 - 中等置信度
+                    item.setBackground(_role_color('warning_bg'))  # 中等置信度
                 self.setItem(row, col, item)
                 self._modified_cells.discard((row, col))
 

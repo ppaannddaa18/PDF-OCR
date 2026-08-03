@@ -71,6 +71,33 @@ class TestEngineSelectDialog:
         assert dialog.selected_engine() == "gguf"
         assert dialog.enter_btn.isEnabled() is True
 
+    def test_warning_badge_for_partial_deps(self, qapp):
+        """available=True 但带警告级缺项 → 黄徽章「部分依赖缺失」"""
+        dialog = EngineSelectDialog({})
+        dialog.set_availability({
+            "gguf": {"available": True, "issues": ["警告：ggml-cuda.dll 缺失"]},
+            "rapidocr": {"available": True, "issues": []},
+        })
+        assert dialog.gguf_card._badge.text() == "部分依赖缺失"
+        assert "ggml-cuda.dll" in dialog.gguf_card._issues_label.text()
+        assert dialog.rapid_card._badge.text() == "就绪"
+        # 警告级不阻塞选择确认（直接进入）
+        dialog.show()
+        QTest.mouseClick(dialog.gguf_card, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(dialog.enter_btn, Qt.MouseButton.LeftButton)
+        assert dialog.result() == QDialog.DialogCode.Accepted
+
+    def test_set_availability_default_fallback(self, qapp):
+        """availability 缺 key / 缺字段时回退为可用默认，不崩溃"""
+        dialog = EngineSelectDialog({})
+        dialog.set_availability({})
+        assert dialog.gguf_card._badge.text() == "就绪"
+        assert dialog.rapid_card._badge.text() == "就绪"
+        assert dialog._availability == {
+            "gguf": {"available": True, "issues": []},
+            "rapid": {"available": True, "issues": []},
+        }
+
     def test_warning_shown_once_on_confirm(self, qapp):
         """依赖不完整时确认：第一次弹 warning 不进入，第二次才进入且不重复弹"""
         dialog = EngineSelectDialog({})
@@ -83,6 +110,7 @@ class TestEngineSelectDialog:
         QTest.mouseClick(dialog.enter_btn, Qt.MouseButton.LeftButton)
         assert dialog.result() == QDialog.DialogCode.Rejected  # 未进入
         assert len(dialog.findChildren(InfoBar)) == 1
+        assert dialog.findChildren(InfoBar)[0].isVisible()  # 弹窗真实可见
         QTest.mouseClick(dialog.enter_btn, Qt.MouseButton.LeftButton)
         assert dialog.result() == QDialog.DialogCode.Accepted  # 进入
         assert len(dialog.findChildren(InfoBar)) == 1  # 不重复弹

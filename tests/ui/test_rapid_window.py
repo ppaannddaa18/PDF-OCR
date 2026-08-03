@@ -197,6 +197,45 @@ class TestRapidWindowWorkspace:
         w._undo()
         assert region.id not in w.field_panel.regions
 
+    def test_field_name_change_handles_duplicate_names(self, rapid_window):
+        """B4 兼容：同名区域重命名按 region_id 定位，不误删预览结果"""
+        from app.models.region import Region
+        from app.models.ocr_result import FileResult, FieldResult
+        w = rapid_window
+        w._current_pdf = "a.pdf"
+        r1 = Region(id='r1', field_name='金额', x=0.1, y=0.1, w=0.2, h=0.05)
+        r2 = Region(id='r2', field_name='金额', x=0.4, y=0.1, w=0.2, h=0.05)
+        w.field_panel.regions['r1'] = r1
+        w.field_panel.regions['r2'] = r2
+        w.pdf_canvas.regions_data['r1'] = r1
+        w.pdf_canvas.regions_data['r2'] = r2
+        w._current_preview_result = FileResult(
+            source_file='a.pdf',
+            fields={
+                '金额': FieldResult(field_name='金额', text='100',
+                                    confidence=0.9, region_id='r1'),
+                '金额_1': FieldResult(field_name='金额', text='200',
+                                      confidence=0.9, region_id='r2'),
+            },
+        )
+        w.on_field_name_changed('r1', '金额', '税额')
+        fields = w._current_preview_result.fields
+        assert '税额' in fields
+        assert '金额_1' in fields
+        assert '金额' not in fields
+        assert fields['税额'].field_name == '税额'
+        assert fields['税额'].text == '100'
+        assert fields['税额'].region_id == 'r1'
+        # 第二个同名区域不受影响
+        assert fields['金额_1'].field_name == '金额'
+
+    def test_progress_bar_range_scales_with_total(self, rapid_window):
+        """批量进度条 range 随总文件数扩展（>100 文件不溢出）"""
+        w = rapid_window
+        w._on_progress(1, 150, "a.pdf")
+        assert w.progress_bar.maximum() == 150
+        assert w.progress_bar.value() == 1
+
     def test_try_ocr_and_batch_without_files_are_safe(self, rapid_window):
         """无文件时试识别/批量识别安全降级（InfoBar 提示，不启动 worker）"""
         w = rapid_window

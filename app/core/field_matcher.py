@@ -143,38 +143,47 @@ class FieldMatcher:
                 best_elem = elem
         return best_elem
 
-    def _merge_adjacent(self, best: dict, remaining: List[dict], page_height: int = 1000) -> Tuple[str, List[dict]]:
-        """合并与best相邻的同一行elements，返回(merged_text, consumed_elements)"""
-        best_bbox = best.get("bbox", [0, 0, 0, 0])
+    def _merge_adjacent(self, best: dict, remaining: List[dict], page_height: int = None) -> Tuple[str, List[dict]]:
+        """合并与best相邻的同一行elements，返回(merged_text, consumed_elements)
+
+        - Y 轴容差 DPI 感知：以行盒高度中位数（下限 20px）为基准，
+          与 finance_processor._find_neighbor 的 B7 修复口径一致；
+          page_height 参数保留兼容（不再参与容差计算）。
+        - 合并顺序按 X 坐标升序（best 与其左右邻居统一排序），
+          修复原实现"左侧元素文本排在 best 之后"的乱序问题。
+        """
+        best_bbox = best.get("bbox") or [0, 0, 0, 0]
         by_mid = (best_bbox[1] + best_bbox[3]) / 2
         consumed = []
-        # Y 轴容差按页面高度比例计算（下限 20px）
-        y_tolerance = max(20, page_height * 0.02)
 
-        # 第一遍：收集右侧相邻元素
+        # 收集同一行（Y 中点接近）且水平相邻的元素
+        candidates = []
         for elem in list(remaining):
             bbox = elem.get("bbox")
             if not bbox or len(bbox) != 4:
                 continue
             ey_mid = (bbox[1] + bbox[3]) / 2
-            if abs(ey_mid - by_mid) < y_tolerance:
-                h_dist = bbox[0] - best_bbox[2]
-                if 0 < h_dist < self.neighbor_radius * 2:
-                    consumed.append(elem)
+            candidates.append((elem, bbox, ey_mid))
 
-        # 第二遍：收集左侧相邻元素
-        for elem in list(remaining):
-            bbox = elem.get("bbox")
-            if not bbox or len(bbox) != 4 or elem in consumed:
+        if candidates:
+            heights = sorted(abs(b[3] - b[1]) for _, b, _ in candidates if b[3] > b[1])
+            median_h = heights[len(heights) // 2] if heights else 30
+            y_tolerance = max(20, int(median_h * 1.5))
+        else:
+            y_tolerance = 30
+
+        for elem, bbox, ey_mid in candidates:
+            if abs(ey_mid - by_mid) >= y_tolerance:
                 continue
-            ey_mid = (bbox[1] + bbox[3]) / 2
-            if abs(ey_mid - by_mid) < y_tolerance:
-                h_dist = best_bbox[0] - bbox[2]
-                if 0 < h_dist < self.neighbor_radius * 2:
-                    consumed.append(elem)
+            # 水平相邻：与 best 左右间距均小于 neighbor_radius * 2
+            if bbox[2] <= best_bbox[0] and best_bbox[0] - bbox[2] < self.neighbor_radius * 2:
+                consumed.append(elem)
+            elif bbox[0] >= best_bbox[2] and bbox[0] - best_bbox[2] < self.neighbor_radius * 2:
+                consumed.append(elem)
 
-        consumed.sort(key=lambda e: e.get("bbox", [0, 0, 0, 0])[0])
-        texts = [best.get("text", "")] + [e.get("text", "") for e in consumed]
+        ordered = [best] + consumed
+        ordered.sort(key=lambda e: (e.get("bbox") or [0, 0, 0, 0])[0])
+        texts = [e.get("text", "") for e in ordered]
         return " ".join(texts), consumed
 
     def _keyword_match(self, region, markdown_text: str) -> Tuple[str, float]:
@@ -192,6 +201,18 @@ class FieldMatcher:
             m = re.search(pattern, markdown_text)
             if m:
                 matched_text = m.group(1).strip()
+                # 截断到下一个关键字（blob 文本中值常与后续标签粘连，
+                # 如 "预录入编号：123 海关编号：456" 只取 "123"）
+                for other in region.match_keywords:
+                    if not other or other == kw:
+                        continue
+                    idx = matched_text.find(other)
+                    if idx != -1:
+                        matched_text = matched_text[:idx]
+                        break
+                matched_text = matched_text.strip().strip("。．，,、；;：:")
+                if not matched_text:
+                    continue
                 # 置信度基于匹配文本长度与关键词长度的比例
                 kw_len = len(kw)
                 text_len = len(matched_text)

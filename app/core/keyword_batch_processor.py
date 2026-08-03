@@ -21,9 +21,14 @@ class KeywordBatchProcessor:
         self.max_workers = max(1, max_workers)
 
     def process_batch(self, pdf_paths: List[str], keywords: List[str],
-                      progress_cb: Optional[Callable[[int, int, str], None]] = None
+                      progress_cb: Optional[Callable[[int, int, str], None]] = None,
+                      completed_results: Optional[list] = None,
                       ) -> List[FileKeywordResult]:
-        """并行处理全部文件，结果按输入顺序回填；单文件异常不中断批次"""
+        """并行处理全部文件，结果按输入顺序回填；单文件异常不中断批次。
+
+        completed_results 用于取消场景：进度回调抛 InterruptedError 时，
+        已完成的文件结果已收集到该列表（worker 取消后可展示部分结果）。
+        """
         results: List[FileKeywordResult] = [None] * len(pdf_paths)
         total = len(pdf_paths)
         completed = 0
@@ -39,6 +44,8 @@ class KeywordBatchProcessor:
                     results[idx] = FileKeywordResult(
                         source_file=pdf_paths[idx], success=False, error_msg=str(e))
                 completed += 1
+                if completed_results is not None:
+                    completed_results.append(results[idx])
                 if progress_cb:
                     progress_cb(completed, total, pdf_paths[idx])
         return results

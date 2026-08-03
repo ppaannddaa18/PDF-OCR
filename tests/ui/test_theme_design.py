@@ -153,6 +153,33 @@ class TestDesignTokenPipeline:
         assert font.family() in ('Consolas', 'Courier New')
         assert font.pointSize() == 13
 
+    def test_get_font_mono_cached(self, qapp, monkeypatch):
+        """mono family 解析结果缓存：重复调用不再枚举系统字体"""
+        ThemeManager._mono_family_cache.clear()
+        calls = []
+        from PyQt6 import QtGui
+        real_families = QtGui.QFontDatabase.families
+        monkeypatch.setattr(
+            QtGui.QFontDatabase, "families",
+            lambda: (calls.append(1), real_families())[1])
+        ThemeManager.get_font('mono')
+        ThemeManager.get_font('mono')
+        assert len(calls) == 1
+        ThemeManager._mono_family_cache.clear()
+
+    def test_new_semantic_color_roles(self):
+        """结果表语义色 token 三个设计均存在（match_alt_bg / edited_bg）"""
+        ThemeManager.set_design('default')
+        ThemeManager.set_theme('light')
+        assert ThemeManager.get_color('match_alt_bg') == '#FFF0E5'
+        assert ThemeManager.get_color('edited_bg') == '#E5F3FF'
+        ThemeManager.set_design('gguf')
+        assert ThemeManager.get_color('match_alt_bg') == '#33260F'
+        assert ThemeManager.get_color('edited_bg') == '#20303F'
+        ThemeManager.set_design('rapid')
+        assert ThemeManager.get_color('match_alt_bg') == '#F3E3C8'
+        assert ThemeManager.get_color('edited_bg') == '#E4EEF7'
+
     def test_get_font_unknown_level_still_raises(self):
         with pytest.raises(ValueError, match="Unknown font level"):
             ThemeManager.get_font('nonexistent')
@@ -184,6 +211,7 @@ class TestEngineStatusBand:
         assert band.status() == 'initializing'
         assert band.STATUS_COLORS['initializing'] == '#E0B23C'
         assert band.minimumHeight() == 2
+        assert band.maximumHeight() == EngineStatusBand.BAND_HEIGHT == 2
         band.set_status('ready')
         assert band.status() == 'ready'
         assert band.STATUS_COLORS['ready'] == '#8FB573'

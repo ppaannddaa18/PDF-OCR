@@ -230,7 +230,8 @@ class CancelResultDialog(QDialog):
                 with open(cls.PENDING_TASK_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            print(f"加载待恢复任务失败: {e}")
+            import logging
+            logging.getLogger("PDFOCR").warning(f"加载待恢复任务失败: {e}")
         return None
 
     @classmethod
