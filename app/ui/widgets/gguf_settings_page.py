@@ -82,7 +82,10 @@ class GgufSettingsForm(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollArea > QWidget > QWidget { background: transparent; }
+        """)
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
@@ -99,7 +102,7 @@ class GgufSettingsForm(QWidget):
 
         hint = BodyLabel("参数保存后需重启引擎生效；设备（GPU/CPU）切换需重启程序")
         hint.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_disabled')}; font-size: 12px;")
+            f"color: {ThemeManager.get_color('text_secondary')}; font-size: 12px;")
         content_layout.addWidget(hint)
         self._hint_label = hint
 
@@ -391,12 +394,14 @@ class GgufSettingsForm(QWidget):
     def _make_value_edit(self, default: str) -> QLineEdit:
         edit = QLineEdit(default)
         edit.setFixedWidth(180)
+        self._apply_edit_palette(edit)
         self._theme_inputs.append(edit)
         return edit
 
     def _make_path_edit(self):
         edit = QLineEdit()
         edit.setPlaceholderText("路径")
+        self._apply_edit_palette(edit)
         self._theme_inputs.append(edit)
         btn = PushButton("浏览…")
         btn.setFixedWidth(72)
@@ -441,6 +446,7 @@ class GgufSettingsForm(QWidget):
         line_edit = QLineEdit()
         line_edit.setFixedWidth(80)
         line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._apply_edit_palette(line_edit)
 
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setMinimum(int(min_val / step))
@@ -497,7 +503,7 @@ class GgufSettingsForm(QWidget):
         hint = getattr(self, '_hint_label', None)
         if hint is not None:
             hint.setStyleSheet(
-                f"color: {ThemeManager.get_color('text_disabled')}; font-size: 12px;")
+                f"color: {ThemeManager.get_color('text_secondary')}; font-size: 12px;")
         border = ThemeManager.get_color('border')
         bg = ThemeManager.get_color('bg_surface')
         primary = ThemeManager.get_color('primary')
@@ -508,8 +514,12 @@ class GgufSettingsForm(QWidget):
                     border-radius: 4px;
                     padding: 4px 8px;
                     background: {bg};
+                    color: {ThemeManager.get_color('text_primary')};
+                    selection-background-color: {primary};
+                    selection-color: {ThemeManager.get_color('on_accent')};
                 }}
             """)
+            self._apply_edit_palette(line_edit)
         for slider in self._theme_sliders:
             slider.setStyleSheet(f"""
                 QSlider::groove:horizontal {{
@@ -530,6 +540,20 @@ class GgufSettingsForm(QWidget):
                     margin: -5px 0;
                 }}
             """)
+
+    def _apply_edit_palette(self, edit: QLineEdit):
+        """QLineEdit 显式文本/占位符调色板
+
+        纯 Qt 控件不随 qfluentwidgets 主题换色；深色设计下若不指定，
+        文字保持默认深色，在深色背景上不可读（GGUF 设置页问题根因）。
+        """
+        from PyQt6.QtGui import QColor, QPalette
+        pal = edit.palette()
+        pal.setColor(QPalette.ColorRole.Text,
+                     QColor(ThemeManager.get_color('text_primary')))
+        pal.setColor(QPalette.ColorRole.PlaceholderText,
+                     QColor(ThemeManager.get_color('text_secondary')))
+        edit.setPalette(pal)
 
     # ── 配置加载/读取 ──────────────────────────────────────────
 
