@@ -84,22 +84,35 @@ class KeywordExtractor:
         return result
 
     def _loose_one(self, kw: str, lines: List[str], text: str) -> str:
-        """L1 同行剩余 → L2 下一行拼接 → L3 blob 兜底"""
+        """L1 同行剩余 → L2 后续行拼接（跳过标签行）→ L3 blob 兜底"""
         for i, line in enumerate(lines):
             pos = line.find(kw)
             if pos == -1:
                 continue
             rest = line[pos + len(kw):].lstrip("：:（( ")
+            # 同行剩余止于下一个关键字（blob/同行多列时值常与后续标签粘连）
+            rest = self._truncate_at_other_keyword(rest, kw)
+            # 剩余部分只是相邻字段标签（如 贸易国（地区）（DEU））→ 走 L2 跨行
+            if self._is_label_like(rest):
+                rest = ""
             if self._plausible(rest):
                 return self._clean(rest)
-            # L2：同行剩余为空/不可信 → 拼接后 1..max_next_lines 行
+            # L2：同行剩余为空/不可信 → 拼接后续行；标签行（相邻字段标题）
+            # 跳过但不消耗预算，兼容「标签在上一行、值在下一行」的表格布局
             joined = rest
-            for j in range(1, self.max_next_lines + 1):
-                if i + j >= len(lines):
-                    break
-                joined += lines[i + j].strip()
+            scanned = 0
+            j = 1
+            while scanned < self.max_next_lines and i + j < len(lines):
+                nxt = lines[i + j].strip()
+                nxt = self._truncate_at_other_keyword(nxt, kw)
+                if self._is_label_like(nxt):
+                    j += 1
+                    continue
+                scanned += 1
+                joined += nxt
                 if self._plausible(joined):
                     return self._clean(joined)
+                j += 1
             break
         # L3：单行 blob 退化 → 复用 _extract_value（止于下一锚点/闭括号/标点）
         if len(lines) <= 1 and kw in text:
@@ -108,6 +121,33 @@ class KeywordExtractor:
             if value:
                 return value
         return ""
+
+    def _truncate_at_other_keyword(self, value: str, kw: str) -> str:
+        """值文本止于下一个用户关键字（防把相邻字段标签当作值）"""
+        for other in self.keywords:
+            if not other or other == kw:
+                continue
+            idx = value.find(other)
+            if idx != -1:
+                value = value[:idx]
+                break
+        return value.strip()
+
+    @staticmethod
+    def _is_label_like(value: str) -> bool:
+        """标签行启发式：空行，或「纯中文前缀 + 末尾括号编码」形态
+
+        覆盖报关单等表格的相邻字段标题（如 贸易国（地区）（DEU）、
+        经停港（BEL003）、入境口岸（210101）、（DEU））：这些行是标签
+        而非值，L2 跨行扫描时应跳过，直到找到真正的值行。
+        """
+        s = value.strip()
+        if not s:
+            return True
+        m = re.search(r"^(.*?)[（(][A-Za-z0-9]+[）)]$", s)
+        if m and not re.search(r"[A-Za-z0-9]", m.group(1)):
+            return True
+        return False
 
     @staticmethod
     def _plausible(value: str) -> bool:

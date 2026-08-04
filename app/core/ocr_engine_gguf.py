@@ -128,7 +128,7 @@ class GGUFOCREngine(OCREngineBase):
                 self._n_gpu_layers = gguf_cfg.get("n_gpu_layers", 999)  # GPU 模式：全部卸载
                 self._mmproj_offload = gguf_cfg.get("mmproj_offload", True)
 
-            self._max_tokens = gguf_cfg.get("max_tokens", 512)
+            self._max_tokens = gguf_cfg.get("max_tokens", 2048)
             self._temperature = gguf_cfg.get("temperature", 0.0)
 
             # 解析配置参数

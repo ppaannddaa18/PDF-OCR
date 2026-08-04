@@ -76,6 +76,37 @@ class TestLooseMatch:
         assert cells["价税合计"].status == "confirmed"
         assert cells["备注"].value == "无"
 
+    def test_loose_skips_neighbor_label_lines(self):
+        """值在标签下方多行：相邻字段标签行（括号编码）跳过且不消耗预算"""
+        ex = KeywordExtractor(["合同协议号"], loose=True, max_next_lines=1)
+        cells = ex.extract(
+            "合同协议号\n"
+            "贸易国（地区）（DEU）\n"
+            "启运国（地区）（BEL）\n"
+            "经停港（BEL003）\n"
+            "入境口岸（210101）\n"
+            "P132372"
+        )
+        assert cells["合同协议号"].value == "P132372"
+        assert cells["合同协议号"].status == "pending"
+        assert cells["合同协议号"].source == "loose"
+
+    def test_loose_merged_line_stops_at_other_keyword(self):
+        """同行多列：剩余文本以其他关键字开头 → 截断并跨行取值"""
+        ex = KeywordExtractor(["合同协议号", "贸易国"], loose=True, max_next_lines=1)
+        cells = ex.extract(
+            "合同协议号 贸易国（地区）（DEU） 启运国（地区）（BEL）\nP132372"
+        )
+        assert cells["合同协议号"].value == "P132372"
+
+    def test_loose_label_like_pure_cjk_value_kept(self):
+        """非标签行（如 安特卫普（比利时））不被跳过"""
+        ex = KeywordExtractor(["经停港"], loose=True, max_next_lines=1)
+        cells = ex.extract("经停港\n安特卫普（比利时）")
+        assert cells["经停港"].status == "pending"
+        # _clean 沿旧语义去除结尾闭括号（与精确路径一致）
+        assert cells["经停港"].value.startswith("安特卫普")
+
 
 class TestStatusMatrix:
     def test_not_found_empty_value(self):

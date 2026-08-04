@@ -171,7 +171,7 @@ def get_default_config() -> dict:
                 "host": "127.0.0.1",
                 "n_gpu_layers": 999,
                 "mmproj_offload": True,
-                "max_tokens": 512,
+                "max_tokens": 2048,
                 "temperature": 0.0,
                 "idle_unload_seconds": 300,
                 # 辅助内容解析

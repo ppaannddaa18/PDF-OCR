@@ -148,7 +148,7 @@ class GgufSettingsForm(QWidget):
         self.ed_n_gpu_layers = self._make_value_edit("99")
         self._add_value_row(service_grid, 6, "GPU 层数 (n_gpu_layers)", self.ed_n_gpu_layers,
                             "加载到 GPU 的层数；-1 全部、0 全部 CPU")
-        self.ed_max_tokens = self._make_value_edit("512")
+        self.ed_max_tokens = self._make_value_edit("2048")
         self._add_value_row(service_grid, 7, "最大生成 token (max_tokens)", self.ed_max_tokens)
         self.ed_temperature = self._make_value_edit("0.0")
         self._add_value_row(service_grid, 8, "温度 (temperature)", self.ed_temperature)
@@ -570,7 +570,7 @@ class GgufSettingsForm(QWidget):
         self.rb_device_gpu.setChecked(device == "gpu")
         self.rb_device_cpu.setChecked(device != "gpu")
         self.ed_n_gpu_layers.setText(str(gguf_cfg.get("n_gpu_layers", 99)))
-        self.ed_max_tokens.setText(str(gguf_cfg.get("max_tokens", 512)))
+        self.ed_max_tokens.setText(str(gguf_cfg.get("max_tokens", 2048)))
         self.ed_temperature.setText(str(gguf_cfg.get("temperature", 0.0)))
         self.ed_idle_unload.setText(str(gguf_cfg.get("idle_unload_seconds", 300)))
         self.sw_mmproj_offload.setChecked(gguf_cfg.get("mmproj_offload", False))
@@ -667,7 +667,7 @@ class GgufSettingsForm(QWidget):
             "device": "gpu" if self.rb_device_gpu.isChecked() else "cpu",
             "n_gpu_layers": self._parse_int(self.ed_n_gpu_layers.text(), 99),
             "mmproj_offload": self.sw_mmproj_offload.isChecked(),
-            "max_tokens": self._parse_int(self.ed_max_tokens.text(), 512),
+            "max_tokens": self._parse_int(self.ed_max_tokens.text(), 2048),
             "temperature": self._parse_float(self.ed_temperature.text(), 0.0),
             "idle_unload_seconds": self._parse_int(self.ed_idle_unload.text(), 300),
             # 辅助内容解析
@@ -724,7 +724,7 @@ class GgufSettingsForm(QWidget):
         self.ed_port.setText("8080")
         self.rb_device_gpu.setChecked(True)
         self.ed_n_gpu_layers.setText("99")
-        self.ed_max_tokens.setText("512")
+        self.ed_max_tokens.setText("2048")
         self.ed_temperature.setText("0.0")
         self.ed_idle_unload.setText("300")
         self.sw_mmproj_offload.setChecked(False)
