@@ -386,6 +386,7 @@ class TestDragDrop:
         panel.dropEvent(event)
         assert len(panel.files) == 2
         assert all(f.endswith('.pdf') for f in panel.files)
+        assert event.isAccepted()
 
     def test_drop_rejects_non_pdf(self, qapp):
         panel = FileListPanel()
@@ -396,3 +397,4 @@ class TestDragDrop:
             Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
         panel.dropEvent(event)
         assert panel.files == []
+        assert not event.isAccepted()  # 无 PDF 时忽略拖放（与 dragEnterEvent 对称）

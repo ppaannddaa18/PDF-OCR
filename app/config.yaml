@@ -8,7 +8,8 @@ appearance:
   animations_enabled: true
   theme: dark
 batch:
-  max_workers: 2
+  max_workers: 4
+  retry_times: 2
 export:
   include_confidence: true
 ocr:
@@ -18,19 +19,19 @@ ocr:
       footer: false
       footer_image: false
       footnote: false
-      header: true
+      header: false
       header_image: false
       margin_text: false
       page_number: true
-    confidence_threshold: 0.8
+    confidence_threshold: 1.0
     device: gpu
     host: 127.0.0.1
     idle_unload_seconds: 300
     layout_geometry: auto
-    max_pixels: 2822144
-    max_tokens: 512
-    min_pixels: 146432
-    mmproj_offload: false
+    max_pixels: 1003520
+    max_tokens: 2048
+    min_pixels: 112896
+    mmproj_offload: true
     mmproj_path: models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf
     model_params:
       chart_recognition: true
@@ -42,13 +43,13 @@ ocr:
       orientation_correction: false
       seal_recognition: true
     model_path: models/PaddleOCR-VL-1.6-GGUF.gguf
-    n_gpu_layers: 99
+    n_gpu_layers: 999
     nms_postprocess: true
-    port: 9999
-    prompt_type: table
+    port: 8080
+    prompt_type: text
     repetition_penalty: 1.0
     server_path: llama-b9969/llama-server.exe
     stability: 0.0
-    temperature: 0.2
+    temperature: 0.0
 pdf:
   render_dpi: 200

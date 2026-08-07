@@ -1,17 +1,20 @@
 """
-引擎选择对话框 - 启动时在 GGUF / RapidOCR 之间强制选择（Task P1）
+引擎选择对话框 - 启动时在 GGUF / RapidOCR 之间强制选择（Task P1 重设计）
 
-两张引擎卡片按各自设计语言的色板自绘（视觉预演）；对话框整体保留
-系统主题跟随（appearance.theme 的 light/dark/auto 仅此处生效，用 default 设计）。
+结构：顶部品牌区 + 60/40 非对称卡片区 + 底部动作轨（工位分配台）。
+对话框固定浅色（setTheme(LIGHT)），不随系统主题变化；GGUF 卡片使用
+深色信号台色板、Rapid 卡片使用暖纸档案绿色板（色值从 ThemeManager
+调色板映射，不重复硬编码）。
 
 交互约束（硬性）：
 - 无默认选中；「进入」按钮默认禁用，选中卡片后才可用
-- 单选卡片高亮描边；双击卡片 = 选择并确认
+- 单选卡片高亮描边 + 「本会话」预订标签；双击卡片 = 选择并确认
+- 卡片支持键盘：Space=选中，Enter=选中并确认
 - Esc / 关闭按钮 / X = 退出程序（choose_engine 侧处理 QApplication.quit()）
 - 依赖缺失时仍允许选择，确认时弹一次 InfoBar.warning
 """
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtGui import QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -19,33 +22,39 @@ from PyQt6.QtWidgets import (
     QLabel,
     QVBoxLayout,
 )
-from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton
+from qfluentwidgets import (
+    InfoBar, InfoBarPosition, PrimaryPushButton, Theme, setTheme,
+)
 
 from app.ui.theme_manager import ThemeManager
 
-# GGUF 设计语言色板（重设计：暗松绿 × 黄铜金）
-GGUF_COLORS = {
-    "bg": "#10150F",
-    "panel": "#171E16",
-    "accent": "#C9A227",
-    "teal": "#8FB573",
-    "text": "#E9E7D9",
-    "muted": "#A5AC97",
-}
-# RapidOCR 设计语言色板（重设计：暖纸 × 档案绿）
-RAPID_COLORS = {
-    "bg": "#F6F3ED",
-    "panel": "#FFFFFF",
-    "accent": "#1E7B5C",
-    "teal": "#0E7490",
-    "text": "#2A2724",
-    "muted": "#6E675E",
-}
 
-# 依赖徽章色
-_BADGE_OK = "#2FBF71"
-_BADGE_WARN = "#F5A623"
-_BADGE_ERR = "#E5484D"
+def _palette_colors(design: str, palette_key: str) -> dict:
+    """从 ThemeManager 调色板映射卡片所需颜色（避免硬编码重复色板）"""
+    p = ThemeManager.COLORS[design][palette_key]
+    return {
+        "bg": p["bg_primary"],
+        "panel": p["bg_surface"],
+        "surface_2": p.get("surface_2", p["bg_hover"]),
+        "selected_bg": (
+            p.get("surface_2", p["bg_hover"])
+            if design == "gguf"
+            else p.get("bg_selected", p.get("surface_2", p["bg_hover"]))
+        ),
+        "accent": p.get("accent", p["primary"]),
+        "on_accent": p["on_accent"],
+        "teal": p.get("accent_alt", p["primary_hover"]),
+        "text": p["text_primary"],
+        "muted": p["text_secondary"],
+        "hover_border": p["border_focus"],
+        "ok": p["success"],
+        "warn": p.get("warning_text", p["warning"]),
+        "err": p["error"],
+    }
+
+
+GGUF_COLORS = _palette_colors("gguf", "dark")
+RAPID_COLORS = _palette_colors("rapid", "light")
 
 # 卡片内容规格
 _CARD_SPECS = {
@@ -54,6 +63,7 @@ _CARD_SPECS = {
         "tagline": "本地大模型版面识别，版面理解最强",
         "features": ["VLM 版面分析", "图表 / 印章 / 跨页表格", "关键字语义提取"],
         "perf": "约 2 秒/页，需 6GB 显存",
+        "tooltip": "GGUF 是 llama.cpp 模型格式；VLM（视觉语言模型）能理解整页版面，适合复杂文档。",
         "colors": GGUF_COLORS,
     },
     "rapid": {
@@ -61,13 +71,14 @@ _CARD_SPECS = {
         "tagline": "CPU 轻量快速，零外部依赖",
         "features": ["CPU 轻量", "模板框选", "零外部依赖"],
         "perf": "轻量，CPU 即可",
+        "tooltip": "RapidOCR 是传统 OCR 引擎，CPU 轻量运行，适合模板框选式识别。",
         "colors": RAPID_COLORS,
     },
 }
 
 
 class _EngineCard(QFrame):
-    """引擎选择卡片：自绘色板、单选高亮描边、双击确认"""
+    """引擎选择卡片：品牌色面板、单选高亮、键盘可操作、双击确认"""
 
     def __init__(self, engine_key: str, dialog: "EngineSelectDialog"):
         super().__init__(dialog)
@@ -78,18 +89,61 @@ class _EngineCard(QFrame):
 
         self.setObjectName(f"{engine_key}Card")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(360, 348)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMinimumHeight(360)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 22, 24, 18)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 20, 24, 18)
+        layout.setSpacing(12)
 
-        # 引擎名（accent 色）
-        title = QLabel(_CARD_SPECS[engine_key]["title"])
-        title.setStyleSheet(
-            f"color: {self._colors['accent']}; font-size: 20px; font-weight: 700;"
+        # 标题行：单选圆圈 + 引擎名（accent 色）+ 「本会话」预订标签
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._radio = QLabel()
+        self._radio.setFixedSize(18, 18)
+        self._radio.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._radio.setStyleSheet(
+            f"border: 2px solid {self._colors['muted']};"
+            f"border-radius: 9px; background: transparent; color: transparent;"
         )
-        layout.addWidget(title)
+        title_row.addWidget(self._radio, 0, Qt.AlignmentFlag.AlignTop)
+
+        self._title = QLabel(_CARD_SPECS[engine_key]["title"])
+        self._title.setToolTip(_CARD_SPECS[engine_key]["tooltip"])
+        self._title.setStyleSheet(
+            f"color: {self._colors['accent']}; font-size: 18px; font-weight: 600;"
+        )
+        title_row.addWidget(self._title)
+        title_row.addStretch(1)
+
+        self._session_tag = QLabel("本会话")
+        self._session_tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._session_tag.setFixedHeight(22)
+        self._session_tag.setStyleSheet(
+            f"background-color: {self._colors['accent']};"
+            f"color: {self._colors['on_accent']};"
+            f"border-radius: 11px; font-size: 11px; font-weight: 600;"
+            f"padding: 0 10px;"
+        )
+        self._session_tag.setVisible(False)
+        title_row.addWidget(self._session_tag, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(title_row)
+
+        # 状态行：圆点 + 文字（语义色，非按钮外观）
+        status_row = QHBoxLayout()
+        status_row.setSpacing(4)
+        self._status_dot = QLabel("●")
+        self._status_dot.setStyleSheet(
+            f"color: {self._colors['ok']}; font-size: 11px;"
+        )
+        status_row.addWidget(self._status_dot)
+        self._badge = QLabel()
+        self._badge.setStyleSheet(
+            f"color: {self._colors['ok']}; font-size: 11px; font-weight: 600;"
+        )
+        status_row.addWidget(self._badge)
+        status_row.addStretch(1)
+        layout.addLayout(status_row)
 
         # 一句话定位（teal 点缀）
         tagline = QLabel(_CARD_SPECS[engine_key]["tagline"])
@@ -101,34 +155,30 @@ class _EngineCard(QFrame):
 
         # 能力清单
         features = QLabel(
-            "\n".join(_CARD_SPECS[engine_key]["features"])
+            "\n".join("✓ " + f for f in _CARD_SPECS[engine_key]["features"])
         )
         features.setWordWrap(True)
         features.setStyleSheet(
-            f"color: {self._colors['text']}; font-size: 13px; line-height: 20px;"
+            f"color: {self._colors['text']}; font-size: 13px; line-height: 22px;"
         )
         layout.addWidget(features)
 
-        # 性能标签（accent 色条）
+        # 性能标签（accent 描边小标签，非全宽胶囊）
         perf = QLabel(_CARD_SPECS[engine_key]["perf"])
-        perf.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        perf.setFixedHeight(26)
+        perf.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        perf.setFixedHeight(22)
         perf.setStyleSheet(
-            f"background-color: {self._colors['accent']};"
-            f"color: {self._colors['bg']};"
-            f"border-radius: 13px; font-size: 12px; font-weight: 600;"
+            f"border: 1px solid {self._colors['accent']};"
+            f"color: {self._colors['accent']};"
+            f"border-radius: 10px; padding: 2px 10px;"
+            f"font-size: 11px; font-weight: 600;"
         )
         layout.addWidget(perf)
 
         layout.addStretch(1)
 
-        # 依赖状态徽章 + 缺项文本
-        self._badge = QLabel()
-        self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._badge.setFixedHeight(24)
-        self._badge.setStyleSheet("color: transparent;")
-        layout.addWidget(self._badge)
-
+        # 缺项文本
         self._issues_label = QLabel()
         self._issues_label.setWordWrap(True)
         self._issues_label.setStyleSheet(
@@ -141,24 +191,27 @@ class _EngineCard(QFrame):
     # ---- 对外 ----
 
     def set_selected(self, selected: bool):
-        """设置选中态（高亮描边）"""
+        """设置选中态（圆圈勾选 + 高亮描边 + 「本会话」标签 + 背景微变）"""
         self._selected = selected
+        self._session_tag.setVisible(selected)
         self._apply_style()
 
     def set_badge(self, available: bool, issues: list):
-        """更新依赖徽章：红=不可用，黄=警告，绿=就绪"""
+        """更新状态：绿=就绪，黄=警告，红=不可用（圆点+文字）"""
         if available and not issues:
-            self._badge.setText("就绪")
-            self._badge.setStyleSheet(self._badge_style(_BADGE_OK, "#FFFFFF"))
-            self._issues_label.setText("")
+            color = self._colors["ok"]
+            text = "就绪"
         elif available:
-            self._badge.setText("部分依赖缺失")
-            self._badge.setStyleSheet(self._badge_style(_BADGE_WARN, "#3A2400"))
-            self._issues_label.setText("\n".join(issues))
+            color = self._colors["warn"]
+            text = "部分依赖缺失"
         else:
-            self._badge.setText("依赖不完整")
-            self._badge.setStyleSheet(self._badge_style(_BADGE_ERR, "#FFFFFF"))
-            self._issues_label.setText("\n".join(issues))
+            color = self._colors["err"]
+            text = "依赖不完整"
+        self._status_dot.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._badge.setStyleSheet(
+            f"color: {color}; font-size: 11px; font-weight: 600;")
+        self._badge.setText(text)
+        self._issues_label.setText("\n".join(issues))
 
     # ---- 事件 ----
 
@@ -173,22 +226,52 @@ class _EngineCard(QFrame):
             self._dialog._confirm()
         super().mouseDoubleClickEvent(event)
 
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._dialog._select_card(self.engine_key)
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._dialog._confirm()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     # ---- 内部 ----
 
     def _apply_style(self):
         border = self._colors["accent"] if self._selected else "transparent"
+        panel = self._colors["selected_bg"] if self._selected else self._colors["panel"]
+        if self._selected:
+            self._radio.setStyleSheet(
+                f"border: 2px solid {self._colors['accent']};"
+                f"border-radius: 9px;"
+                f"background-color: {self._colors['accent']};"
+                f"color: {self._colors['on_accent']};"
+                f"font-size: 11px; font-weight: 700;"
+            )
+            self._radio.setText("✓")
+        else:
+            self._radio.setStyleSheet(
+                f"border: 2px solid {self._colors['muted']};"
+                f"border-radius: 9px; background: transparent; color: transparent;"
+            )
+            self._radio.setText("")
+        self.setProperty("selected", "true" if self._selected else "false")
         self.setStyleSheet(
             f"#{self.objectName()} {{"
-            f"  background-color: {self._colors['panel']};"
+            f"  background-color: {panel};"
             f"  border: 2px solid {border};"
             f"  border-radius: 12px;"
             f"}}"
-        )
-
-    def _badge_style(self, bg: str, fg: str) -> str:
-        return (
-            f"background-color: {bg}; color: {fg};"
-            f"border-radius: 12px; font-size: 12px; font-weight: 600;"
+            f"#{self.objectName()}:hover {{"
+            f"  border: 2px solid {self._colors['hover_border']};"
+            f"}}"
+            f"#{self.objectName()}:focus {{"
+            f"  border: 2px solid {self._colors['hover_border']};"
+            f"}}"
+            # 选中态优先于聚焦/悬停（同特异性，后写生效）
+            f"#{self.objectName()}[selected='true'] {{"
+            f"  border: 2px solid {self._colors['accent']};"
+            f"}}"
         )
 
 
@@ -197,42 +280,78 @@ class EngineSelectDialog(QDialog):
 
     def __init__(self, config: dict = None, parent=None):
         super().__init__(parent)
+        # 固定浅色，不随系统主题变化；GGUF 窗口进入后再由 _apply_design 切深色
+        setTheme(Theme.LIGHT)
+
         self._selected = None
         self._availability = {
             "gguf": {"available": True, "issues": []},
             "rapid": {"available": True, "issues": []},
         }
-        self._warning_shown = False
+        self._warning_shown = set()  # 已弹过 warning 的引擎 key（按引擎记录）
 
         self.setWindowTitle("选择 OCR 引擎")
         self.setModal(True)
-        self.setFixedSize(820, 560)
+        self.setMinimumSize(880, 640)  # 可增长：缺项文本多行/高 DPI 时不裁底部按钮
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(36, 30, 36, 24)
+        root.setContentsMargins(32, 28, 32, 24)
         root.setSpacing(16)
 
-        # 标题（default 设计，跟随系统主题）
-        title = QLabel("选择 OCR 引擎")
-        title.setStyleSheet("font-size: 22px; font-weight: 700;")
+        # 顶部品牌区
+        brand_row = QHBoxLayout()
+        brand = QLabel("PDF OCR")
+        brand.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_primary')};"
+            f"font-size: 16px; font-weight: 600;"
+        )
+        brand_row.addWidget(brand)
+        brand_row.addStretch(1)
+        root.addLayout(brand_row)
+
+        separator = QFrame()
+        separator.setFixedHeight(1)
+        separator.setStyleSheet(
+            f"background-color: {ThemeManager.get_color('border')}; border: none;"
+        )
+        root.addWidget(separator)
+
+        # 标题区
+        title = QLabel("选择本次会话的识别引擎")
+        title.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_primary')};"
+            f"font-size: 22px; font-weight: 600;"
+        )
         root.addWidget(title)
 
-        # 两张卡片并排
+        subtitle = QLabel(
+            "请根据文档类型选择合适的识别引擎，单次会话仅限一种。"
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')}; font-size: 13px;"
+        )
+        root.addWidget(subtitle)
+
+        # 卡片区（60/40 非对称：GGUF 左主、Rapid 右辅）
         cards_row = QHBoxLayout()
-        cards_row.setSpacing(24)
+        cards_row.setSpacing(20)
         self.gguf_card = _EngineCard("gguf", self)
         self.rapid_card = _EngineCard("rapid", self)
-        cards_row.addWidget(self.gguf_card)
-        cards_row.addWidget(self.rapid_card)
+        self.gguf_card.setMinimumWidth(460)
+        self.rapid_card.setMinimumWidth(300)
+        cards_row.addWidget(self.gguf_card, 3)
+        cards_row.addWidget(self.rapid_card, 2)
         root.addLayout(cards_row)
 
         root.addStretch(1)
 
-        # 底部：说明文字 + 进入按钮
+        # 底部动作轨
         bottom = QHBoxLayout()
         hint = QLabel("本次会话使用，每次启动重新选择")
         hint.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_secondary')}; font-size: 12px;")
+            f"color: {ThemeManager.get_color('text_secondary')}; font-size: 12px;"
+        )
         bottom.addWidget(hint)
         bottom.addStretch(1)
         self.enter_btn = PrimaryPushButton("进入", self)
@@ -271,19 +390,19 @@ class EngineSelectDialog(QDialog):
     # ---- 内部 ----
 
     def _select_card(self, engine_key: str):
-        """选中一张卡片：高亮描边 + 启用进入按钮"""
+        """选中一张卡片：高亮描边 + 「本会话」标签 + 启用进入按钮"""
         self._selected = engine_key
         for card in (self.gguf_card, self.rapid_card):
             card.set_selected(card.engine_key == engine_key)
         self.enter_btn.setEnabled(True)
 
     def _confirm(self):
-        """确认选择：依赖不完整时先弹一次 warning，再点才进入"""
+        """确认选择：依赖不完整时每个引擎先弹一次 warning，再点才进入"""
         if self._selected is None:
             return
         avail = self._availability.get(self._selected, {"available": True, "issues": []})
-        if not avail["available"] and not self._warning_shown:
-            self._warning_shown = True
+        if not avail["available"] and self._selected not in self._warning_shown:
+            self._warning_shown.add(self._selected)
             InfoBar.warning(
                 title="依赖不完整",
                 content="所选引擎依赖不完整，进入后可能初始化失败（可到『模型设置』页修正后重启引擎）",

@@ -195,6 +195,8 @@ class FileListPanel(QWidget):
         # ThemeManager，天然主题安全）
         self.list_widget = QListWidget()
         self.list_widget.setItemDelegate(_StatusBarDelegate(self.list_widget))
+        # 显式使用全站正文字号，避免回退到 Qt 默认 9pt（旧版 ListWidget 自带 14px）
+        self.list_widget.setFont(ThemeManager.get_font('body'))
         self.list_widget.setUniformItemSizes(True)
         self.list_widget.itemClicked.connect(self._on_item_clicked)
         self.list_widget.currentItemChanged.connect(
@@ -276,6 +278,7 @@ class FileListPanel(QWidget):
             QListWidget::item {{
                 height: 44px;
                 padding-left: {ThemeManager.get_spacing('sm')}px;
+                font-size: 13px;
                 color: {ThemeManager.get_color('text_primary')};
             }}
             QListWidget::item:hover {{
@@ -402,7 +405,7 @@ class FileListPanel(QWidget):
         remaining = paths[1:]
         processed_count = 1
 
-        def process_batch(batch_paths, start_count):
+        def process_batch(batch_paths):
             nonlocal processed_count
             for p in batch_paths:
                 if p not in self.files:
@@ -420,12 +423,12 @@ class FileListPanel(QWidget):
         # 分批调度
         for i in range(0, len(remaining), self.BATCH_SIZE):
             batch = remaining[i:i + self.BATCH_SIZE]
-            timer = QTimer()
+            timer = QTimer(self)
             timer.setSingleShot(True)
 
-            def make_callback(b=batch, s=processed_count + i, t=timer):
+            def make_callback(b=batch, t=timer):
                 def cb():
-                    process_batch(b, s)
+                    process_batch(b)
                     if t in self._pending_timers:
                         self._pending_timers.remove(t)
                 return cb
@@ -603,7 +606,7 @@ class FileListPanel(QWidget):
         event.ignore()
 
     def dropEvent(self, event: QDropEvent):
-        """拖拽放下事件 - 处理 PDF 文件"""
+        """拖拽放下事件 - 处理 PDF 文件（无 PDF 时忽略，与 dragEnterEvent 对称）"""
         files = []
         for url in event.mimeData().urls():
             path = url.toLocalFile()
@@ -611,4 +614,6 @@ class FileListPanel(QWidget):
                 files.append(path)
         if files:
             self.add_files(files)  # add_files 内部已触发 file_selected 信号
-        event.acceptProposedAction()
+            event.acceptProposedAction()
+        else:
+            event.ignore()

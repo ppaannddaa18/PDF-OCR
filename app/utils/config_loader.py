@@ -129,6 +129,7 @@ def _validate_config(config: dict) -> None:
         "ocr": dict,
         "batch": dict,
         "export": dict,
+        "appearance": dict,
     }
     defaults = get_default_config()
     for key, expected_type in required_keys.items():
@@ -152,15 +153,9 @@ def get_default_config() -> dict:
         },
         "pdf": {
             "render_dpi": 200,
-            "max_preview_size": 2000,
         },
         "ocr": {
             "engine": "gguf",       # "gguf" | "rapidocr"
-            "lang": "ch",
-            "use_gpu": True,
-            "use_angle_cls": True,
-            "det_db_box_thresh": 0.5,
-            "drop_score": 0.5,
             # GGUF 专属配置
             "gguf": {
                 "device": "gpu",  # "gpu" 或 "cpu"
@@ -173,7 +168,7 @@ def get_default_config() -> dict:
                 "mmproj_offload": True,
                 "max_tokens": 2048,
                 "temperature": 0.0,
-                "idle_unload_seconds": 300,
+                "timeout_seconds": 120,
                 # 辅助内容解析
                 "auxiliary_parsing": {
                     "header": False,
@@ -203,10 +198,16 @@ def get_default_config() -> dict:
                 "repetition_penalty": 1.00,
                 "stability": 0.00,
                 "confidence_threshold": 1.0,
-                "min_pixels": 147384,
-                "max_pixels": 2822400,
+                # 官方 mmproj 元数据默认值（PaddleOCR-VL-1.6-GGUF）：
+                # min_pixels=112896 (14*14*28*28)，max_pixels=1003520；
+                # Spotting 模式需将 mmproj image_max_pixels 改为 1605632。
+                "min_pixels": 112896,
+                "max_pixels": 1003520,
                 # NMS 后处理
                 "nms_postprocess": True,
+                # 字段匹配
+                "match_iou_threshold": 0.5,
+                "match_neighbor_radius": 50,
             },
             # RapidOCR 专属
             "rapidocr": {
@@ -223,5 +224,8 @@ def get_default_config() -> dict:
         "export": {
             "default_format": "xlsx",
             "include_confidence": True
-        }
+        },
+        "appearance": {
+            "animations_enabled": True,
+        },
     }

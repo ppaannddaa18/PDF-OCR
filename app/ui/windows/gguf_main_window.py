@@ -196,12 +196,8 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
 
         threading.Thread(target=_reinit, daemon=True, name="OCR-Restart").start()
 
-    def _on_settings_test_connection(self):
-        """测试连接：后台请求 llama-server /health"""
-        gguf = self.config.get("ocr", {}).get("gguf", {})
-        host = gguf.get("host", "127.0.0.1")
-        port = gguf.get("port", 8080)
-
+    def _on_settings_test_connection(self, host: str, port: int):
+        """测试连接：后台请求 llama-server /health（host/port 为表单当前值）"""
         import threading
 
         def _probe():
@@ -337,8 +333,15 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
                     field_names.append(fn)
         self.filter_field_combo.addItems(field_names)
 
-        self.status_label.setText(
-            f"已移除 {Path(removed_path).name}，剩余 {len(self.file_panel.files)} 个文件")
+        remaining = len(self.file_panel.files)
+        current = self.file_panel.current_file()
+        if current:
+            self.status_label.setText(
+                f"已移除 {Path(removed_path).name}，剩余 {remaining} 个文件"
+                f" - 当前: {Path(current).name}")
+        else:
+            self.status_label.setText(
+                f"已移除 {Path(removed_path).name}，剩余 {remaining} 个文件")
 
     # ── 关键字提取/汇总/核对/导出（从旧 main_window.py 机械迁移） ──
 

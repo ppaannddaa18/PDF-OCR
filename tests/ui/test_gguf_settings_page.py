@@ -2,6 +2,7 @@
 import pytest
 from PyQt6 import sip
 from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QMessageBox
 
 import app.ui.windows.base_window as base_window_module
 from app.ui.theme_manager import ThemeManager
@@ -40,7 +41,7 @@ def _make_config() -> dict:
                 "mmproj_offload": False,
                 "max_tokens": 512,
                 "temperature": 0.2,
-                "idle_unload_seconds": 300,
+                "timeout_seconds": 120,
                 "auxiliary_parsing": {
                     "header": True, "footer": False, "page_number": True,
                     "footnote": False, "margin_text": False,
@@ -64,10 +65,12 @@ def _make_config() -> dict:
                 "min_pixels": 146432,
                 "max_pixels": 2822144,
                 "nms_postprocess": True,
+                "match_iou_threshold": 0.5,
+                "match_neighbor_radius": 50,
             },
         },
         "pdf": {"render_dpi": 200},
-        "batch": {"max_workers": 2},
+        "batch": {"max_workers": 2, "retry_times": 2},
         "export": {"include_confidence": True},
     }
 
@@ -84,15 +87,20 @@ def _destroy(w):
 class TestGgufSettingsForm:
     def test_load_patch_roundtrip(self, qapp):
         """表单加载配置 → get_config_patch 还原全部受管键"""
-        form = GgufSettingsForm(_make_config(), show_theme_options=False)
-        patch_gguf = form.get_config_patch()["ocr"]["gguf"]
+        form = GgufSettingsForm(_make_config())
+        patch = form.get_config_patch()
+        patch_gguf = patch["ocr"]["gguf"]
         expected = _make_config()["ocr"]["gguf"]
         for key, value in expected.items():
             assert patch_gguf[key] == value, key
+        assert patch["pdf"]["render_dpi"] == 200
+        assert patch["batch"]["max_workers"] == 2
+        assert patch["batch"]["retry_times"] == 2
+        assert patch["export"]["include_confidence"] is True
         _destroy(form)
 
     def test_toggle_and_edit_reflected(self, qapp):
-        form = GgufSettingsForm(_make_config(), show_theme_options=False)
+        form = GgufSettingsForm(_make_config())
         form.sw_nms.setChecked(False)
         form.slider_confidence["slider"].setValue(50)  # 0.5
         form.ed_port.setText("9999")
@@ -106,9 +114,9 @@ class TestGgufSettingsForm:
         assert patch["model_params"]["layout_analysis"] is False
         _destroy(form)
 
-    def test_hide_theme_options(self, qapp):
-        """GGUF 页：无主题三单选，patch 不含 theme"""
-        form = GgufSettingsForm(_make_config(), show_theme_options=False)
+    def test_no_theme_options(self, qapp):
+        """设置表单已移除主题三单选，patch 不含 theme"""
+        form = GgufSettingsForm(_make_config())
         assert not hasattr(form, 'rb_theme_light')
         assert not hasattr(form, 'bg_theme')
         patch = form.get_config_patch()
@@ -116,21 +124,184 @@ class TestGgufSettingsForm:
         assert "animations_enabled" in patch["appearance"]
         _destroy(form)
 
-    def test_theme_options_kept_for_wrapper(self, qapp):
-        """旧对话框兼容：默认保留主题三单选"""
-        form = GgufSettingsForm(_make_config(), show_theme_options=True)
-        assert hasattr(form, 'rb_theme_dark')
-        assert form.rb_theme_dark.isChecked()
-        assert form.get_config_patch()["appearance"]["theme"] == "dark"
+    def test_no_idle_unload_field(self, qapp):
+        """空闲卸载秒数已移除（引擎不消费的死键），行序回归：timeout 在 mmproj 之前"""
+        form = GgufSettingsForm(_make_config())
+        assert not hasattr(form, 'ed_idle_unload')
+        patch = form.get_config_patch()["ocr"]["gguf"]
+        assert "idle_unload_seconds" not in patch
+        assert patch["timeout_seconds"] == 120
+        _destroy(form)
+
+    def test_animations_switch_applies_immediately(self, qapp, monkeypatch):
+        """禁用动画开关即时生效（不再只写配置）"""
+        calls = []
+        monkeypatch.setattr(
+            "app.ui.widgets.gguf_settings_page.AnimationManager.set_enabled",
+            lambda enabled: calls.append(enabled))
+        form = GgufSettingsForm(_make_config())
+        calls.clear()  # 忽略 __init__/_load_settings 的初始调用
+        form.sw_animations["switch"].setChecked(True)  # 勾选 = 禁用
+        assert calls and calls[-1] is False
+        form.sw_animations["switch"].setChecked(False)
+        assert calls[-1] is True
+        _destroy(form)
+
+    def test_n_gpu_layers_empty_falls_back_to_999(self, qapp):
+        """清空 n_gpu_layers 保存时兜底 999（与默认值/重置一致）"""
+        form = GgufSettingsForm(_make_config())
+        form.ed_n_gpu_layers.setText("")
+        patch = form.get_config_patch()["ocr"]["gguf"]
+        assert patch["n_gpu_layers"] == 999
+        _destroy(form)
+
+    def test_cpu_mode_disables_gpu_fields(self, qapp):
+        """CPU 模式联动：禁用 GPU 层数与 mmproj 卸载输入（引擎强制 0/关）"""
+        form = GgufSettingsForm(_make_config())
+        assert form.ed_n_gpu_layers.isEnabled()
+        assert form.sw_mmproj_offload.isEnabled()
+        form.rb_device_cpu.setChecked(True)
+        assert not form.ed_n_gpu_layers.isEnabled()
+        assert not form.sw_mmproj_offload.isEnabled()
+        # 切回 GPU 恢复可编辑
+        form.rb_device_gpu.setChecked(True)
+        assert form.ed_n_gpu_layers.isEnabled()
+        assert form.sw_mmproj_offload.isEnabled()
+        _destroy(form)
+
+    def test_cpu_loaded_config_disables_gpu_fields(self, qapp):
+        """加载 cpu 配置时初始状态即禁用 GPU 相关输入"""
+        cfg = _make_config()
+        cfg["ocr"]["gguf"]["device"] = "cpu"
+        form = GgufSettingsForm(cfg)
+        assert not form.ed_n_gpu_layers.isEnabled()
+        assert not form.sw_mmproj_offload.isEnabled()
         _destroy(form)
 
     def test_default_resets_service_fields(self, qapp):
-        form = GgufSettingsForm(_make_config(), show_theme_options=False)
+        form = GgufSettingsForm(_make_config())
         form.ed_port.setText("1")
         form.rb_device_cpu.setChecked(True)
         form._on_default()
         assert form.ed_port.text() == "8080"
         assert form.rb_device_gpu.isChecked()
+        _destroy(form)
+
+    def test_reset_uses_official_defaults(self, qapp):
+        """重置：从 get_default_config() 恢复官方默认，路径不置空"""
+        form = GgufSettingsForm(_make_config())
+        form.ed_port.setText("1")
+        form.ed_max_tokens.setText("256")
+        form.ed_n_gpu_layers.setText("0")
+        form.sw_mmproj_offload.setChecked(False)
+        form._set_slider_value(form.slider_min_pixels, 100000)
+        form._set_slider_value(form.slider_max_pixels, 5000000)
+        form._set_slider_value(form.slider_iou, 0.9)
+        form._set_slider_value(form.slider_neighbor, 5)
+        form.ed_render_dpi.setText("150")
+        form.ed_max_workers.setText("1")
+        form.ed_retry_times.setText("0")
+        form.sw_include_confidence["switch"].setChecked(False)
+        form._on_default()
+
+        assert form.ed_server_path.text() == "llama-b9969/llama-server.exe"
+        assert form.ed_model_path.text() == "models/PaddleOCR-VL-1.6-GGUF.gguf"
+        assert form.ed_mmproj_path.text() == "models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
+        assert form.ed_port.text() == "8080"
+        assert form.ed_n_gpu_layers.text() == "999"
+        assert form.ed_max_tokens.text() == "2048"
+        assert form.ed_temperature.text() == "0.0"
+        assert form.ed_timeout.text() == "120"
+        assert form.sw_mmproj_offload.isChecked() is True
+        assert form._get_slider_value(form.slider_min_pixels) == 112896
+        assert form._get_slider_value(form.slider_max_pixels) == 1003520
+        assert form._get_slider_value(form.slider_iou) == 0.5
+        assert form._get_slider_value(form.slider_neighbor) == 50
+        assert form.ed_render_dpi.text() == "200"
+        assert form.ed_max_workers.text() == "4"
+        assert form.ed_retry_times.text() == "2"
+        assert form.sw_include_confidence["switch"].isChecked() is True
+        _destroy(form)
+
+    def test_tooltips_cover_all_controls(self, qapp):
+        """数值/开关/滑块提示均含默认值，数值含调大调小、开关含开启关闭"""
+        form = GgufSettingsForm(_make_config())
+
+        path_tips = [
+            form.ed_server_path.toolTip(),
+            form.ed_model_path.toolTip(),
+            form.ed_mmproj_path.toolTip(),
+        ]
+        for tip in path_tips:
+            assert "默认" in tip, tip
+
+        fixed_tips = [
+            form.ed_host.toolTip(),
+            form.ed_port.toolTip(),
+        ]
+        for tip in fixed_tips:
+            assert "默认" in tip, tip
+
+        numeric_tips = [
+            form.ed_n_gpu_layers.toolTip(),
+            form.ed_max_tokens.toolTip(),
+            form.ed_temperature.toolTip(),
+            form.ed_timeout.toolTip(),
+            form.ed_render_dpi.toolTip(),
+            form.ed_max_workers.toolTip(),
+            form.ed_retry_times.toolTip(),
+            form.slider_repetition["line_edit"].toolTip(),
+            form.slider_stability["line_edit"].toolTip(),
+            form.slider_confidence["line_edit"].toolTip(),
+            form.slider_min_pixels["line_edit"].toolTip(),
+            form.slider_max_pixels["line_edit"].toolTip(),
+            form.slider_iou["line_edit"].toolTip(),
+            form.slider_neighbor["line_edit"].toolTip(),
+        ]
+        for tip in numeric_tips:
+            assert "默认" in tip and "调大" in tip and "调小" in tip, tip
+
+        switch_tips = [
+            form.sw_header["switch"].toolTip(),
+            form.sw_footer["switch"].toolTip(),
+            form.sw_page_number["switch"].toolTip(),
+            form.sw_footnote["switch"].toolTip(),
+            form.sw_margin_text["switch"].toolTip(),
+            form.sw_header_image["switch"].toolTip(),
+            form.sw_footer_image["switch"].toolTip(),
+            form.sw_orientation["switch"].toolTip(),
+            form.sw_distortion["switch"].toolTip(),
+            form.sw_layout["switch"].toolTip(),
+            form.sw_chart["switch"].toolTip(),
+            form.sw_seal["switch"].toolTip(),
+            form.sw_image_text["switch"].toolTip(),
+            form.sw_cross_page["switch"].toolTip(),
+            form.sw_heading["switch"].toolTip(),
+            form.sw_mmproj_offload.toolTip(),
+            form.sw_nms.toolTip(),
+            form.sw_include_confidence["switch"].toolTip(),
+        ]
+        for tip in switch_tips:
+            assert "默认" in tip and "开启" in tip and "关闭" in tip, tip
+        _destroy(form)
+
+    def test_slider_wheel_does_not_adjust(self, qapp):
+        """悬停滑块横条时滚轮不调节数值，避免误触"""
+        form = GgufSettingsForm(_make_config())
+
+        class FakeWheel:
+            def __init__(self):
+                self.ignored = False
+
+            def ignore(self):
+                self.ignored = True
+
+        slider = form.slider_min_pixels["slider"]
+        before = slider.value()
+        event = FakeWheel()
+        slider.wheelEvent(event)
+        assert slider.value() == before
+        assert event.ignored is True
         _destroy(form)
 
 
@@ -141,6 +312,36 @@ class TestGgufSettingsPage:
         assert page.btn_save is not None
         assert page.btn_restart is not None
         assert page.btn_test is not None
+        assert page.btn_reset is not None
+        _destroy(page)
+
+    def test_reset_button_right_of_save(self, qapp):
+        """重置按钮位于操作栏右下角（保存按钮右侧）"""
+        page = GgufSettingsPage(_make_config())
+        bar = page.btn_save.parentWidget()
+        assert bar.layout().indexOf(page.btn_reset) > bar.layout().indexOf(page.btn_save)
+        _destroy(page)
+
+    def test_reset_requires_confirmation(self, qapp, monkeypatch):
+        """未确认不重置；确认后调用表单 _on_default，且不触发保存"""
+        page = GgufSettingsPage(_make_config())
+        calls = []
+        monkeypatch.setattr(page.form, "_on_default", lambda: calls.append("reset"))
+        saved = []
+        page.save_requested.connect(saved.append)
+
+        monkeypatch.setattr(
+            "app.ui.widgets.gguf_settings_page.QMessageBox.question",
+            lambda *a, **k: QMessageBox.StandardButton.No)
+        page.btn_reset.click()
+        assert calls == []
+
+        monkeypatch.setattr(
+            "app.ui.widgets.gguf_settings_page.QMessageBox.question",
+            lambda *a, **k: QMessageBox.StandardButton.Yes)
+        page.btn_reset.click()
+        assert calls == ["reset"]
+        assert saved == []
         _destroy(page)
 
     def test_page_signals_emit_patch(self, qapp):
@@ -150,7 +351,8 @@ class TestGgufSettingsPage:
         tested = []
         page.save_requested.connect(saved.append)
         page.restart_requested.connect(restarted.append)
-        page.test_connection_requested.connect(lambda: tested.append(True))
+        page.test_connection_requested.connect(
+            lambda host, port: tested.append((host, port)))
 
         page.btn_save.click()
         page.btn_restart.click()
@@ -158,7 +360,19 @@ class TestGgufSettingsPage:
 
         assert len(saved) == 1 and "ocr" in saved[0]
         assert len(restarted) == 1 and "ocr" in restarted[0]
-        assert tested == [True]
+        assert tested == [("127.0.0.1", 8080)]
+        _destroy(page)
+
+    def test_test_button_emits_form_values_not_saved_config(self, qapp):
+        """测试连接携带表单当前 host/port（未保存也应测编辑中的值）"""
+        page = GgufSettingsPage(_make_config())
+        got = []
+        page.test_connection_requested.connect(
+            lambda host, port: got.append((host, port)))
+        page.form.ed_host.setText("192.168.1.10")
+        page.form.ed_port.setText("9999")
+        page.btn_test.click()
+        assert got == [("192.168.1.10", 9999)]
         _destroy(page)
 
 
@@ -239,5 +453,5 @@ class TestWindowHandlers:
         monkeypatch.setattr(
             "app.ui.widgets.gguf_settings_page.check_llama_health",
             lambda host, port: (True, "ok"))
-        window._on_settings_test_connection()
+        window._on_settings_test_connection("127.0.0.1", 8080)
         QTest.qWait(300)  # 后台线程 + 定时回调，不崩即可

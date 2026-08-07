@@ -139,8 +139,8 @@ class GGUFOCREngine(OCREngineBase):
             self._repetition_penalty = gguf_cfg.get("repetition_penalty", 1.00)
             self._stability = gguf_cfg.get("stability", 0.00)
             self._confidence_threshold = gguf_cfg.get("confidence_threshold", 1.0)
-            self._min_pixels = gguf_cfg.get("min_pixels", 147384)
-            self._max_pixels = gguf_cfg.get("max_pixels", 2822400)
+            self._min_pixels = gguf_cfg.get("min_pixels", 112896)
+            self._max_pixels = gguf_cfg.get("max_pixels", 1003520)
             self._nms_postprocess = gguf_cfg.get("nms_postprocess", True)
             self._timeout = gguf_cfg.get("timeout_seconds", 120)
 
@@ -150,7 +150,6 @@ class GGUFOCREngine(OCREngineBase):
             self._init_error: Optional[str] = None
             self._server_lock = threading.RLock()
             self._last_used_time = time.monotonic()
-            self._idle_unload_seconds = gguf_cfg.get("idle_unload_seconds", 300)
 
             # 匹配器
             self._matcher = FieldMatcher(config)

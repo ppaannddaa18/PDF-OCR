@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QDialog
 from qfluentwidgets import InfoBar
 
 from app.ui.engine_select_dialog import EngineSelectDialog
+from app.ui.theme_manager import ThemeManager
 import main as main_module
 
 # check_engine_availability 的假返回（choose_engine 弹窗路径用）
@@ -35,6 +36,74 @@ class TestEngineSelectDialog:
         assert dialog.enter_btn.isEnabled() is True
         QTest.mouseClick(dialog.rapid_card, Qt.MouseButton.LeftButton)
         assert dialog.selected_engine() == "rapid"
+
+    def test_asymmetric_card_layout(self, qapp):
+        """结构重排：GGUF 卡为主（更宽），Rapid 卡为辅"""
+        dialog = EngineSelectDialog({})
+        assert dialog.gguf_card.minimumWidth() > dialog.rapid_card.minimumWidth()
+
+    def test_session_tag_on_selection(self, qapp):
+        """选中卡片显示「本会话」标签，切换后标签跟随"""
+        dialog = EngineSelectDialog({})
+        dialog.show()
+        assert dialog.gguf_card._session_tag.text() == "本会话"
+        assert dialog.gguf_card._session_tag.isVisible() is False
+
+        QTest.mouseClick(dialog.gguf_card, Qt.MouseButton.LeftButton)
+        assert dialog.gguf_card._session_tag.isVisible() is True
+        assert dialog.rapid_card._session_tag.isVisible() is False
+
+        QTest.mouseClick(dialog.rapid_card, Qt.MouseButton.LeftButton)
+        assert dialog.gguf_card._session_tag.isVisible() is False
+        assert dialog.rapid_card._session_tag.isVisible() is True
+
+    def test_radio_indicator_reflects_selection(self, qapp):
+        """单选圆圈：未选为空，选中显示 ✓，切换时跟随"""
+        dialog = EngineSelectDialog({})
+        dialog.show()
+        assert dialog.gguf_card._radio.text() == ""
+
+        QTest.mouseClick(dialog.gguf_card, Qt.MouseButton.LeftButton)
+        assert dialog.gguf_card._radio.text() == "✓"
+        assert dialog.rapid_card._radio.text() == ""
+
+        QTest.mouseClick(dialog.rapid_card, Qt.MouseButton.LeftButton)
+        assert dialog.gguf_card._radio.text() == ""
+        assert dialog.rapid_card._radio.text() == "✓"
+
+    def test_title_tooltips_explain_terms(self, qapp):
+        """术语 Tooltip：GGUF/VLM 与 RapidOCR 有解释"""
+        dialog = EngineSelectDialog({})
+        assert "GGUF" in dialog.gguf_card._title.toolTip()
+        assert "VLM" in dialog.gguf_card._title.toolTip()
+        assert "RapidOCR" in dialog.rapid_card._title.toolTip()
+
+    def test_selected_background_tint(self, qapp):
+        """选中后卡片背景微变（GGUF surface_2 / Rapid bg_selected）"""
+        dialog = EngineSelectDialog({})
+        dialog.show()
+
+        QTest.mouseClick(dialog.gguf_card, Qt.MouseButton.LeftButton)
+        gguf_tint = ThemeManager.COLORS["gguf"]["dark"]["surface_2"]
+        assert gguf_tint in dialog.gguf_card.styleSheet()
+
+        QTest.mouseClick(dialog.rapid_card, Qt.MouseButton.LeftButton)
+        rapid_tint = ThemeManager.COLORS["rapid"]["light"]["bg_selected"]
+        assert rapid_tint in dialog.rapid_card.styleSheet()
+
+    def test_keyboard_select_and_confirm(self, qapp):
+        """卡片键盘：Space 选中，Enter 选中并确认"""
+        dialog = EngineSelectDialog({})
+        dialog.show()
+        dialog.gguf_card.setFocus()
+        QTest.keyClick(dialog.gguf_card, Qt.Key.Key_Space)
+        assert dialog.selected_engine() == "gguf"
+        assert dialog.enter_btn.isEnabled() is True
+
+        dialog.rapid_card.setFocus()
+        QTest.keyClick(dialog.rapid_card, Qt.Key.Key_Return)
+        assert dialog.selected_engine() == "rapid"
+        assert dialog.result() == QDialog.DialogCode.Accepted
 
     def test_esc_rejects(self, qapp):
         """Esc → reject（choose_engine 侧由此退出程序）"""
@@ -114,6 +183,40 @@ class TestEngineSelectDialog:
         QTest.mouseClick(dialog.enter_btn, Qt.MouseButton.LeftButton)
         assert dialog.result() == QDialog.DialogCode.Accepted  # 进入
         assert len(dialog.findChildren(InfoBar)) == 1  # 不重复弹
+
+    def test_warning_per_engine_after_card_switch(self, qapp):
+        """双引擎均不可用时：切卡后第二个引擎的 warning 不被跳过（按引擎记录）"""
+        dialog = EngineSelectDialog({})
+        dialog.set_availability({
+            "gguf": {"available": False, "issues": ["未找到 llama-server.exe"]},
+            "rapidocr": {"available": False, "issues": ["rapidocr 依赖缺失"]},
+        })
+        dialog.show()
+        # GGUF：第一次确认 → warning 不进入
+        QTest.mouseClick(dialog.gguf_card, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(dialog.enter_btn, Qt.MouseButton.LeftButton)
+        assert dialog.result() == QDialog.DialogCode.Rejected
+        assert len(dialog.findChildren(InfoBar)) == 1
+        # 切到 Rapid：该引擎的 warning 未弹过 → 仍应弹且不进入
+        QTest.mouseClick(dialog.rapid_card, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(dialog.enter_btn, Qt.MouseButton.LeftButton)
+        assert dialog.result() == QDialog.DialogCode.Rejected
+        assert len(dialog.findChildren(InfoBar)) == 2
+        # 再点 Rapid 确认 → 进入
+        QTest.mouseClick(dialog.enter_btn, Qt.MouseButton.LeftButton)
+        assert dialog.result() == QDialog.DialogCode.Accepted
+
+    def test_focus_border_uses_hover_color_not_accent(self, qapp):
+        """未选中卡片聚焦描边为 hover_border 色，与选中态 accent 区分"""
+        dialog = EngineSelectDialog({})
+        sheet = dialog.gguf_card.styleSheet()
+        accent = dialog.gguf_card._colors["accent"]
+        hover = dialog.gguf_card._colors["hover_border"]
+        assert "[selected='true']" in sheet  # 选中态规则存在
+        focus_rule = sheet.split(":focus")[1].split("[selected")[0]
+        assert hover in focus_rule  # 聚焦未选中 → hover_border
+        selected_rule = sheet.split("[selected='true']")[1]
+        assert accent in selected_rule  # 选中 → accent（覆盖聚焦/悬停）
 
 
 class TestChooseEngine:
