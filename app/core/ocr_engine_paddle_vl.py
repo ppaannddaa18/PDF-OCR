@@ -546,6 +546,9 @@ class PaddleOCRVLEngine(OCREngineBase):
         markdown = "\n".join(str(t) for t in texts) if texts else self._result_text(res)
         logger.info(f"PaddleOCR-VL 页面解析完成: {len(blocks)} lines, "
                     f"{elapsed:.0f}ms")
+        # raw_json 副本必须先于 del res 构造（res 持有整页 output_img 等大对象，
+        # 转换后的原生列表与原 numpy 数据解耦）
+        raw_json = _json_safe(dict(res)) if isinstance(res, dict) else {}
         # 页间清理：结果对象持有整页 output_img（几百 MB），显式释放 +
         # 回收 paddle 池空闲块（多页批次时池不复用膨胀）
         del res
@@ -561,7 +564,7 @@ class PaddleOCRVLEngine(OCREngineBase):
             blocks=blocks,
             markdown=markdown,
             tables=[],
-            raw_json={},
+            raw_json=raw_json,
             image_size=(W, H),
             inference_time_ms=elapsed,
             line_boxes=blocks,
@@ -698,3 +701,26 @@ def _blocks_to_elements(blocks: List[Block]) -> List[dict]:
         }
         for b in blocks
     ]
+
+
+def _json_safe(obj):
+    """递归转 JSON 可序列化：numpy/paddle Tensor/DataFrame → 原生/字符串"""
+    import numpy as np
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if hasattr(obj, "tolist"):
+        try:
+            return obj.tolist()
+        except Exception:
+            pass
+    if hasattr(obj, "block_label"):  # paddlex Block
+        return _json_safe({"block_label": obj.block_label,
+                           "block_content": getattr(obj, "content", ""),
+                           "block_bbox": getattr(obj, "bbox", [])})
+    return str(obj)

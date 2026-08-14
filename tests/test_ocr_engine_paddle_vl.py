@@ -61,6 +61,15 @@ class _FakePipe:
                 infer=types.SimpleNamespace(
                     generation_config=_FakeGenConfig())))
 
+    @property
+    def results(self):
+        """predict 返回列表（raw_json 测试用：构造后可再赋值覆盖）"""
+        return self._results
+
+    @results.setter
+    def results(self, value):
+        self._results = value
+
     def predict(self, arr, **kwargs):
         self.predict_calls.append((arr, kwargs))
         self.captured.update(kwargs)
@@ -657,4 +666,24 @@ def test_ignore_labels_default_empty():
     PaddleOCRVLEngine.reset_instance()
     eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {}}})
     assert eng._markdown_ignore_labels == []
+    PaddleOCRVLEngine.reset_instance()
+
+
+# ── raw_json 填充（JSON 视图/导出数据源） ─────────────────────
+
+def test_recognize_page_auto_fills_raw_json(monkeypatch):
+    """raw_json 填充：包含 parsing_res_list 且可 JSON 序列化"""
+    _install_fake_env(monkeypatch)
+    eng = PaddleOCRVLEngine({})
+    eng._pipe = _FakePipe({})
+    eng._initialized = True
+    eng._pipe.results = [{"parsing_res_list": [_FakeBlock("paragraph", "hi")],
+                          "spotting_res": {"rec_texts": ["hi"],
+                                           "rec_polys": [[[0, 0], [1, 0],
+                                                          [1, 1], [0, 1]]]}}]
+    page = eng.recognize_page_auto(Image.new("RGB", (100, 100), "white"))
+    import json
+    json.dumps(page.raw_json)  # 必须可序列化
+    assert page.raw_json["spotting_res"]["rec_texts"] == ["hi"]
+    assert page.raw_json["parsing_res_list"][0]["block_label"] == "paragraph"
     PaddleOCRVLEngine.reset_instance()
