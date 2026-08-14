@@ -601,13 +601,21 @@ class PaddleOCRVLEngine(OCREngineBase):
         except Exception:
             pass
         # 重复抑制热生效：每次 predict 前注入 generation_config（native 后端
-        # 忽略重复惩罚参数，需直接写 generation_config；0/None → 官方 greedy）
-        try:
-            gen = self._pipe.infer.generation_config
-            if getattr(gen, "repetition_penalty", None) != self._repetition_penalty:
-                gen.repetition_penalty = self._repetition_penalty
-        except Exception:
-            pass
+        # 忽略重复惩罚参数，需直接写 generation_config；0/None/1.0 → 不写，
+        # 保持官方 1.0 —— 生成链仅在 penalty!=1.0 时挂
+        # RepetitionPenaltyLogitsProcessor，penalty=0 会抛 ValueError）。
+        # 生产对象图：PaddleOCRVL 无 infer 属性，管线在
+        # self._pipe.paddlex_pipeline.vl_rec_model.infer 下（与
+        # _cast_params_to_bf16/_patch_vision_sdpa 同路径）
+        penalty = self._repetition_penalty
+        if penalty and penalty != 1.0:
+            try:
+                gen = self._pipe.paddlex_pipeline.vl_rec_model.infer.\
+                    generation_config
+                if getattr(gen, "repetition_penalty", None) != penalty:
+                    gen.repetition_penalty = penalty
+            except Exception:
+                pass
         arr = np.array(image.convert("RGB"))
         kwargs: dict = {}
         if max_new_tokens is not None:

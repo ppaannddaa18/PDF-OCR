@@ -39,19 +39,27 @@ def _spot_res(pairs):
 
 
 class _FakeGenConfig:
-    repetition_penalty = 1.1
+    """模拟 paddlex infer.generation_config（官方默认 repetition_penalty=1.0）"""
+    repetition_penalty = 1.0
 
 
 class _FakePipe:
-    """mock paddleocr.PaddleOCRVL：predict 返回构造结果列表（官方返回 list）"""
+    """mock paddleocr.PaddleOCRVL：predict 返回构造结果列表（官方返回 list）。
+
+    paddlex_pipeline.vl_rec_model.infer.generation_config 嵌套模拟生产对象图：
+    真实 PaddleOCRVL 无 infer 属性，管线对象挂在 paddlex_pipeline 下
+    （_pipelines/base.py:67），与引擎 _cast_params_to_bf16 等既有路径一致。
+    """
 
     def __init__(self, results, error=None, captured=None):
         self._results = results
         self._error = error
         self.captured = captured if captured is not None else {}
         self.predict_calls = []
-        self.infer = type("FakeInfer", (),
-                          {"generation_config": _FakeGenConfig()})()
+        self.paddlex_pipeline = types.SimpleNamespace(
+            vl_rec_model=types.SimpleNamespace(
+                infer=types.SimpleNamespace(
+                    generation_config=_FakeGenConfig())))
 
     def predict(self, arr, **kwargs):
         self.predict_calls.append((arr, kwargs))
@@ -583,13 +591,31 @@ def test_predict_once_passes_parse_config_kwargs(monkeypatch):
 
 
 def test_predict_once_injects_repetition_penalty_each_call(monkeypatch):
-    """重复抑制每次 predict 前注入 generation_config（热生效）"""
+    """重复抑制每次 predict 前注入 generation_config（热生效，生产对象图路径）"""
     PaddleOCRVLEngine.reset_instance()
     _install_fake_env(monkeypatch)
     eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {"repetition_penalty": 1.5}}})
-    eng._pipe = _FakePipe([{"spotting_res": {}, "parsing_res_list": []}])
+    pipe = _FakePipe([{"spotting_res": {}, "parsing_res_list": []}])
+    eng._pipe = pipe
     eng._initialized = True
     eng._repetition_penalty = 1.5  # 模拟配置已改
     eng._predict_once(Image.new("RGB", (100, 100), "white"), "spotting", None)
-    assert eng._pipe.infer.generation_config.repetition_penalty == 1.5
+    assert pipe.paddlex_pipeline.vl_rec_model.infer.\
+        generation_config.repetition_penalty == 1.5
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_predict_once_skips_injection_when_penalty_disabled(monkeypatch):
+    """repetition_penalty=0/None/1.0 → 不写入，generation_config 保持官方 1.0
+    （生成链仅 penalty!=1.0 时构造 RepetitionPenaltyLogitsProcessor，
+    penalty=0 会抛 ValueError）"""
+    PaddleOCRVLEngine.reset_instance()
+    _install_fake_env(monkeypatch)
+    eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {"repetition_penalty": 0}}})
+    pipe = _FakePipe([{"spotting_res": {}, "parsing_res_list": []}])
+    eng._pipe = pipe
+    eng._initialized = True
+    eng._predict_once(Image.new("RGB", (100, 100), "white"), "spotting", None)
+    assert pipe.paddlex_pipeline.vl_rec_model.infer.\
+        generation_config.repetition_penalty == 1.0
     PaddleOCRVLEngine.reset_instance()
