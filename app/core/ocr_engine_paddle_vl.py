@@ -525,6 +525,7 @@ class PaddleOCRVLEngine(OCREngineBase):
             res = self._predict_one(
                 image, prompt_label="spotting",
                 max_new_tokens=self._max_new_tokens)
+        res = self._filter_ignored_blocks(res)
         elapsed = (time.monotonic() - t0) * 1000
 
         spot = res.get("spotting_res") or {}
@@ -665,6 +666,19 @@ class PaddleOCRVLEngine(OCREngineBase):
         blocks = res.get("parsing_res_list") or []
         lines = [str(b.content) for b in blocks if b and getattr(b, "content", "")]
         return "\n".join(lines)
+
+    def _filter_ignored_blocks(self, res: dict) -> dict:
+        """辅助内容过滤：parsing_res_list 中 block_label 命中忽略集的块剔除
+        （等价 paddlex markdown_ignore_labels 语义；整页 spotting 行不受影响）"""
+        ignore = set(self._markdown_ignore_labels)
+        if not ignore:
+            return res
+        res = dict(res)
+        blocks = res.get("parsing_res_list") or []
+        kept = [b for b in blocks
+                if not (getattr(b, "block_label", None) in ignore)]
+        res["parsing_res_list"] = kept
+        return res
 
 
 def _is_oom(exc: Exception) -> bool:

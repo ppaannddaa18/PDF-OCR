@@ -69,6 +69,14 @@ class _FakePipe:
         return self._results
 
 
+class _FakeBlock:
+    """带 block_label/content 的假解析块（markdown_ignore_labels 过滤用）"""
+
+    def __init__(self, block_label, content):
+        self.block_label = block_label
+        self.content = content
+
+
 def _make_engine(pipe):
     eng = PaddleOCRVLEngine({})
     eng._initialized = True
@@ -618,4 +626,35 @@ def test_predict_once_skips_injection_when_penalty_disabled(monkeypatch):
     eng._predict_once(Image.new("RGB", (100, 100), "white"), "spotting", None)
     assert pipe.paddlex_pipeline.vl_rec_model.infer.\
         generation_config.repetition_penalty == 1.0
+    PaddleOCRVLEngine.reset_instance()
+
+
+# ── 辅助内容过滤（markdown_ignore_labels） ───────────────────
+
+def test_markdown_ignore_labels_filters_parsing_blocks():
+    """辅助内容过滤：block_label 命中 ignore 集的块从 markdown/raw 剔除"""
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {
+        "markdown_ignore_labels": ["header", "footer"]}}})
+    res = {
+        "parsing_res_list": [
+            _FakeBlock("header", "Hindawi Journal"),
+            _FakeBlock("paragraph", "Body text here"),
+            _FakeBlock("footer", "Copyright 2017"),
+        ],
+        "spotting_res": {"rec_texts": [], "rec_polys": []},
+    }
+    filtered = eng._filter_ignored_blocks(res)
+    labels = [b.block_label for b in filtered["parsing_res_list"]]
+    assert labels == ["paragraph"]
+    # 原结果不被就地修改（浅拷贝语义）
+    assert [b.block_label for b in res["parsing_res_list"]] == [
+        "header", "paragraph", "footer"]
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_ignore_labels_default_empty():
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {}}})
+    assert eng._markdown_ignore_labels == []
     PaddleOCRVLEngine.reset_instance()
