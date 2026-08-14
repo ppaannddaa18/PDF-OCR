@@ -40,6 +40,9 @@ logger = logging.getLogger("PDFOCR")
 _DEFAULT_SPOTTING_MAX_PIXELS = 1048576
 # 官方 spotting 像素上限（paddlex 3.7.2 pipeline.py:339 写死）
 _OFFICIAL_SPOTTING_MAX_PIXELS = 1605632
+# raw_json 大数组降级阈值：numpy 元素数超过则弃 tolist()（整页图像/逐块图像
+# 会展开成数百万数字 → 每页膨胀数百 MB），spotting 坐标数组在阈值内保留
+_JSON_SAFE_MAX_NDARRAY_ELEMS = 5000
 
 
 def _default_model_dir() -> str:
@@ -704,7 +707,14 @@ def _blocks_to_elements(blocks: List[Block]) -> List[dict]:
 
 
 def _json_safe(obj):
-    """递归转 JSON 可序列化：numpy/paddle Tensor/DataFrame → 原生/字符串"""
+    """递归转 JSON 可序列化：numpy/paddle Tensor/DataFrame → 原生/字符串
+
+    大数组降级：numpy 数组元素数 > 5000 不 tolist()（整页 output_img/逐块
+    img 会展开成数百万数字 → raw_json 每页膨胀数百 MB），降级为紧凑描述
+    ``{"__ndarray__": [shape...], "dtype": ...}``。spotting 的 rec_polys
+    生产为 list-of-list（官方 post_process_for_spotting 构造），不走 numpy
+    分支不受影响；(300,4,2) 2400 元素坐标数组仍在阈值内完整 tolist()。
+    """
     import numpy as np
     if isinstance(obj, dict):
         return {str(k): _json_safe(v) for k, v in obj.items()}
@@ -713,6 +723,9 @@ def _json_safe(obj):
     if isinstance(obj, (str, int, float, bool)) or obj is None:
         return obj
     if isinstance(obj, np.ndarray):
+        if obj.size > _JSON_SAFE_MAX_NDARRAY_ELEMS:
+            return {"__ndarray__": [int(s) for s in obj.shape],
+                    "dtype": str(obj.dtype)}
         return obj.tolist()
     if hasattr(obj, "tolist"):
         try:

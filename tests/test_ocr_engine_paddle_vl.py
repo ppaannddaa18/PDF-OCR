@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from app.core.ocr_engine_paddle_vl import PaddleOCRVLEngine
+from app.core.ocr_engine_paddle_vl import PaddleOCRVLEngine, _json_safe
 
 # 隔离真实 paddle/paddleocr/paddlex：unload/reset_instance 路径的
 # ``import paddle`` 若命中真实包会初始化 CUDA 上下文并加载整条依赖栈
@@ -687,3 +687,20 @@ def test_recognize_page_auto_fills_raw_json(monkeypatch):
     assert page.raw_json["spotting_res"]["rec_texts"] == ["hi"]
     assert page.raw_json["parsing_res_list"][0]["block_label"] == "paragraph"
     PaddleOCRVLEngine.reset_instance()
+
+
+def test_json_safe_large_array_degraded():
+    """大数组 ((100,100,3) uint8, 30000 元素 > 阈值) → 降级为紧凑描述"""
+    arr = np.zeros((100, 100, 3), dtype=np.uint8)
+    out = _json_safe(arr)
+    import json
+    json.dumps(out)  # 仍可 JSON 序列化
+    assert out == {"__ndarray__": [100, 100, 3], "dtype": "uint8"}
+
+
+def test_json_safe_spotting_shape_array_kept():
+    """典型 spotting 坐标形状 (300,4,2) float32（2400 元素 ≤ 阈值）→ tolist() 保留"""
+    arr = np.zeros((300, 4, 2), dtype=np.float32)
+    out = _json_safe(arr)
+    assert isinstance(out, list) and len(out) == 300
+    assert len(out[0]) == 4 and len(out[0][0]) == 2
