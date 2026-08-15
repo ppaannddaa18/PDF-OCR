@@ -81,6 +81,20 @@ def _wait_not_running(proc, timeout_ms=2000):
     return not proc.is_running()
 
 
+def _wait_until_events_done(proc, done, expected, timeout_ms=8000):
+    """轮询处理事件直到 file_done 达预期次数且线程停止。
+
+    线程最后一批信号（file_done/all_done）在 finished 前 ~10ms 内投递，
+    仅等 is_running() 翻转会漏掉这批事件，须同时等待事件计数。
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    while (len(done) < expected or proc.is_running()) \
+            and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(0.01)
+    return len(done) >= expected and not proc.is_running()
+
+
 def _run_until_done(proc, timeout_ms=3000):
     loop = QEventLoop()
     done = []
@@ -158,8 +172,8 @@ def test_cancel_stops_queue(qapp, tmp_path):
     loader.shutdown()
 
 
-def test_add_during_run_kept_for_next_start(qapp, tmp_path):
-    """运行中 add_files 追加的条目在本次运行结束后保留，可再次 start 处理"""
+def test_add_during_run_auto_continues(qapp, tmp_path):
+    """运行中 add_files 追加的条目在本次运行结束后自动续跑处理"""
     pdf1 = _make_2page_pdf(tmp_path)
     pdf2 = tmp_path / "doc2.pdf"
     shutil.copy(pdf1, pdf2)
@@ -174,14 +188,35 @@ def test_add_during_run_kept_for_next_start(qapp, tmp_path):
 
     proc.start()
     assert _wait_until(proc, "file_started"), "file_started 未触发"
-    proc.add_files([pdf2])  # 运行中追加：不应被本次运行结束清掉
+    proc.add_files([pdf2])  # 运行中追加：不被本次运行结束清掉，自动续跑
 
-    assert _wait_until(proc, "all_done"), "第一次运行未结束"
-    assert _wait_not_running(proc), "线程未在超时内停止"
-    assert [p for p, _ in done] == [pdf1]        # 本次运行只处理了 pdf1
-    assert len(engine.calls) == 2
-
-    _run_until_done(proc)                        # 第二次 start 处理追加的 pdf2
-    assert [p for p, _ in done] == [pdf1, pdf2]
+    assert _wait_until_events_done(proc, done, expected=2), "续跑未完成"
+    assert [p for p, _ in done] == [pdf1, pdf2]  # 续跑自动处理了 pdf2
     assert len(engine.calls) == 4
+    loader.shutdown()
+
+
+def test_retry_during_run_restarts_target(qapp, tmp_path):
+    """运行中重试（cancel + add_files 同一文件）：取消后自动续跑重新完整处理"""
+    pdf_path = _make_2page_pdf(tmp_path)
+    engine = _SlowEngine()
+    loader = PdfLoader(dpi=100)
+    proc = OcrDocProcessor(loader, engine, {})
+    done = []
+    proc.file_done.connect(lambda p, r: done.append((p, r)))
+    proc.add_files([pdf_path])
+
+    # 等 worker 真正开始处理文件后再模拟重试（cancel + 重新入队同一文件）
+    proc.start()
+    assert _wait_until(proc, "file_started"), "file_started 未触发"
+    proc.cancel()
+    proc.add_files([pdf_path])  # 与窗口 _on_retry 运行分支相同的调用序列
+
+    # 首次运行以 cancelled 收尾（file_done 部分页），续跑以 all_done 收尾
+    assert _wait_until_events_done(proc, done, expected=2), "续跑未完成"
+
+    assert len(done) == 2                        # 首次（0-2 页）+ 续跑（完整）
+    assert len(done[-1][1]) == 2                 # 续跑结果完整 2 页
+    assert 2 <= len(engine.calls) <= 4           # 首次 0-2 页 + 续跑 2 页
+    assert len(proc.get_cache(pdf_path)) == 2    # 缓存为续跑完整结果
     loader.shutdown()

@@ -34,6 +34,15 @@ def test_status_badge_text(qapp):
     assert "失败" in panel.status_text(fid)
 
 
+def test_file_id_by_path(qapp):
+    panel = OcrFilePanel()
+    fid = panel.add_file("C:/docs/a.pdf")
+    panel.add_file("C:/docs/b.pdf")
+    assert panel.file_id_by_path("C:/docs/a.pdf") == fid
+    assert panel.file_id_by_path("C:/docs/b.pdf") != fid
+    assert panel.file_id_by_path("C:/nope.pdf") is None
+
+
 def test_remove_and_clear(qapp):
     panel = OcrFilePanel()
     a = panel.add_file("C:/a.pdf")

@@ -95,6 +95,13 @@ class OcrFilePanel(QWidget):
     def paths(self) -> List[str]:
         return [m["path"] for _, m in self._items.values()]
 
+    def file_id_by_path(self, path: str):
+        """按路径查 file_id（不存在返回 None）"""
+        for fid, (_, meta) in self._items.items():
+            if meta["path"] == path:
+                return fid
+        return None
+
     def selected_path(self):
         item = self.list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None

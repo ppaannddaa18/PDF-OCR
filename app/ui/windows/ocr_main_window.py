@@ -10,16 +10,14 @@ import os
 import logging
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSpinBox,
-                             QFileDialog, QFrame)
+                             QFileDialog, QFrame, QApplication)
 from qfluentwidgets import (FluentWindow, InfoBar, PushButton, BodyLabel,
                             setTheme, Theme, setThemeColor)
 
 from app.ui.windows.base_window import AppBaseWindowMixin, _icon
 from app.ui.theme_manager import ThemeManager
-from app.core.pdf_loader import PdfLoader
-from app.core.ocr_engine import get_ocr_engine
 from app.core.ocr_doc_processor import OcrDocProcessor, is_image_file
 from app.core.ocr_exporter import export_txt, export_markdown, export_json
 from app.ui.widgets.ocr_file_panel import OcrFilePanel
@@ -167,6 +165,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         self.view_doc_btn.setCheckable(True)
         self.view_json_btn.setCheckable(True)
         self.view_doc_btn.setChecked(True)
+        self._active_view = "doc"  # 复制操作依据的当前视图
         self.view_doc_btn.clicked.connect(lambda: self._switch_view("doc"))
         self.view_json_btn.clicked.connect(lambda: self._switch_view("json"))
         layout.addWidget(self.view_doc_btn)
@@ -218,19 +217,27 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         if pages:
             self._show_file(path, pages)
         else:
-            # 未缓存 → 自动入队解析
+            # 未缓存 → 自动入队解析；导航复位到单页（防残留页号）
             self.file_label.setText(os.path.basename(path))
+            self.page_spin.blockSignals(True)
+            self.page_spin.setRange(1, 1)
+            self.page_spin.setValue(1)
+            self.page_spin.blockSignals(False)
+            self.total_label.setText("/ 1")
             if not self.processor.is_running():
                 self.processor.add_files([path])
                 self.processor.start()
 
     def _on_files_cleared(self):
         self.processor.cancel()
+        self.processor.clear_queue()  # 清空未处理条目，终止续跑
+        self.processor.clear_cache()
         self.file_panel.clear()
 
     # ── 视图 ───────────────────────────────────────────────────
 
     def _switch_view(self, name):
+        self._active_view = name
         self.view_doc_btn.setChecked(name == "doc")
         self.view_json_btn.setChecked(name == "json")
         self.doc_view.setVisible(name == "doc")
@@ -250,8 +257,12 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             return
         self.file_label.setText(f"{os.path.basename(path)} · {len(pages)} 页")
         self.total_label.setText(f"/ {len(pages)}")
+        # blockSignals：setRange 钳位 / setValue(1) 都会触发 valueChanged
+        # 导致 _on_page_changed 二次渲染，此处统一抑制
+        self.page_spin.blockSignals(True)
         self.page_spin.setRange(1, len(pages))
         self.page_spin.setValue(1)
+        self.page_spin.blockSignals(False)
         self._render_page(path, pages[0], 1)
 
     def _render_page(self, path, page_result, page_no):
@@ -286,17 +297,47 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         path = self.file_panel.selected_path()
         if not path:
             return
-        self.processor.cancel()
-        self.processor.add_files([path])
-        self.processor.start()
+        self.processor.clear_cache()
+        if self.processor.is_running():
+            # 运行中：取消当前批次并把目标重新入队；取消后 processor 续跑机制
+            # 自动重跑（add_files 会把它从本次运行快照摘除，不被清出）
+            self.processor.cancel()
+            self.processor.add_files([path])
+        else:
+            self.processor.add_files([path])
+            self.processor.start()
 
     def _on_copy(self):
-        text = self.doc_view.text()
-        if text:
-            from PyQt6.QtWidgets import QApplication
-            QApplication.clipboard().setText(text)
-            InfoBar.success(title="已复制", content="当前页文本已复制到剪贴板",
+        text = self._current_view_text()
+        if not text:
+            InfoBar.warning(title="无内容可复制", content="当前视图没有可复制的内容",
                             parent=self, duration=2000)
+            return
+        QApplication.clipboard().setText(text)
+        InfoBar.success(title="已复制", content="当前视图内容已复制到剪贴板",
+                        parent=self, duration=2000)
+
+    def _current_view_text(self) -> str:
+        """按当前视图取文本：doc → 文档视图纯文本；json → 树节点拼接"""
+        if self._active_view == "json":
+            return self._json_tree_text()
+        return self.doc_view.text()
+
+    def _json_tree_text(self) -> str:
+        """JSON 树文本：递归拼接各 item 第 0 列（叶子为 '键: 值'）"""
+        lines = []
+
+        def walk(item):
+            text = item.text(0)
+            if text:
+                lines.append(text)
+            for i in range(item.childCount()):
+                walk(item.child(i))
+
+        root = self.json_view.invisibleRootItem()
+        for i in range(root.childCount()):
+            walk(root.child(i))
+        return "\n".join(lines)
 
     def _on_export(self):
         path = self.file_panel.selected_path()
@@ -341,8 +382,11 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
 
     def _restore_history(self):
         for entry in self._load_history():
-            if os.path.exists(entry["path"]):
-                self.file_panel.add_file(entry["path"])
+            try:
+                if os.path.exists(entry["path"]):
+                    self.file_panel.add_file(entry["path"])
+            except Exception as e:
+                logger.warning(f"历史记录条目损坏，跳过: {e}")
 
     # ── 引擎/处理接线（post-init） ─────────────────────────────
 
@@ -359,19 +403,22 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
                 f"{os.path.basename(path)} 第 {page}/{total} 页 "
                 f"({ms / 1000:.1f}s)"))
         self.processor.file_done.connect(self._on_processor_file_done)
-        self.processor.file_failed.connect(
-            lambda path, err: InfoBar.error(
-                title="解析失败", content=f"{os.path.basename(path)}: {err}",
-                parent=self, duration=3000))
+        self.processor.file_failed.connect(self._on_processor_file_failed)
         self.processor.all_done.connect(
             lambda: self._set_status("解析完成"))
 
     def _on_processor_file_done(self, path, pages):
-        fid = next((f for f in self.file_panel._items
-                    if self.file_panel._items[f][1]["path"] == path), None)
+        fid = self.file_panel.file_id_by_path(path)
         if fid:
             total = sum(1 for p in pages if p.markdown or p.blocks)
             self.file_panel.set_status(fid, "done",
                                        f"{len(pages)} 页 · 成功 {total}")
         if self.file_panel.selected_path() == path:
             self._show_file(path, pages)
+
+    def _on_processor_file_failed(self, path, err):
+        fid = self.file_panel.file_id_by_path(path)
+        if fid:
+            self.file_panel.set_status(fid, "failed", err)
+        InfoBar.error(title="解析失败", content=f"{os.path.basename(path)}: {err}",
+                      parent=self, duration=3000)

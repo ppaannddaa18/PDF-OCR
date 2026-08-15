@@ -101,7 +101,16 @@ class OcrDocProcessor(QObject):
         self._cache: Dict[str, List[PageResult]] = {}
 
     def add_files(self, paths: List[str]) -> None:
-        self._queue.extend(p for p in paths if p not in self._queue)
+        for p in paths:
+            if p not in self._queue:
+                self._queue.append(p)
+            # 显式重加入（重试语义）：从本次运行快照摘除，
+            # 运行结束时不再被 _clear_run_queue 清出，由续跑机制重新处理
+            self._run_items.discard(p)
+
+    def clear_queue(self) -> None:
+        """清空未处理队列（运行中调用不影响已启动的线程，仅终止后续续跑）"""
+        self._queue.clear()
 
     def get_cache(self, path: str) -> Optional[List[PageResult]]:
         return self._cache.get(path)
@@ -141,11 +150,15 @@ class OcrDocProcessor(QObject):
         if self._thread is self.sender():
             self._clear_run_queue()
             self.all_done.emit()
+            if self._queue:
+                self.start()  # 续跑：运行期间追加/重试入队的条目
 
     def _on_cancelled(self) -> None:
         if self._thread is self.sender():
             self._clear_run_queue()
             self.cancelled.emit()
+            if self._queue:
+                self.start()  # 续跑：取消后仍有未处理条目（运行中重试）
 
     def _on_thread_finished(self) -> None:
         # finished 之后线程对象才可安全回收；若已被新线程替换，只回收旧对象
@@ -154,6 +167,10 @@ class OcrDocProcessor(QObject):
             thread.deleteLater()
         if self._thread is thread:
             self._thread = None
+            if self._queue:
+                # 竞态兜底：all_done/cancelled 处理之后又入队（如运行中重试
+                # 恰好发生在批次收尾），此时线程已停止，可安全续跑
+                self.start()
 
     def _clear_run_queue(self) -> None:
         """只清空本次运行快照条目，运行期间 add_files 追加的保留到下次 start"""
