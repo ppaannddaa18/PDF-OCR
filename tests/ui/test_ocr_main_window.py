@@ -242,3 +242,70 @@ def test_close_event_no_keeps_window(qapp, tmp_path, monkeypatch):
     while win.processor.is_running() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert not win.processor.is_running()
+
+
+def test_select_during_run_enqueues_file(qapp, tmp_path, monkeypatch):
+    """T8-I1-E：运行中点击未缓存文件 → 自动入队，本批结束后自动续跑完成"""
+    engine = _SlowFakeEngine()
+    win = _make_window(monkeypatch, engine)
+    pdf = _make_2page_pdf(tmp_path)
+    pdf2 = _make_2page_pdf(tmp_path, "doc2.pdf")
+    done = []
+    win.processor.file_done.connect(lambda p, r: done.append(p))
+    win.add_files([pdf])
+    _wait_signal(win.processor, "file_started")
+    assert win.processor.is_running()
+
+    win._on_file_selected(pdf2)  # 运行中点击未缓存文件
+    assert pdf2 in win.processor.pending_items()  # 已加入队列
+    assert "已加入队列" in win.status_label.text()
+
+    # 本批结束后续跑处理 pdf2（第二次 all_done），等全部完成且线程停止
+    from PyQt6.QtCore import QCoreApplication
+    deadline = time.monotonic() + 10
+    while (len(done) < 2 or win.processor.is_running()) \
+            and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(0.01)
+    assert set(done) == {pdf, pdf2}  # 续跑后两个文件均完成
+    assert win.processor.get_cache(pdf2) is not None
+
+
+def test_select_processing_file_no_rerun(qapp, tmp_path, monkeypatch):
+    """T8-I1-E：点击正在处理中的文件 → 仅提示，不重复入队/不触发重跑"""
+    engine = _SlowFakeEngine()
+    win = _make_window(monkeypatch, engine)
+    pdf = _make_2page_pdf(tmp_path)
+    win.add_files([pdf])
+    _wait_signal(win.processor, "file_started")
+    assert win.processor.is_running()
+
+    win._on_file_selected(pdf)  # 正在处理中的文件被点击
+    assert "已在处理队列中" in win.status_label.text()
+
+    _wait_signal(win.processor, "all_done", timeout_ms=8000)
+    assert engine.calls == 2  # 恰好处理一遍，未被重跑
+    assert win.processor.get_cache(pdf) is not None
+
+
+def test_cancel_during_run_marks_badge_cancelled(qapp, tmp_path, monkeypatch):
+    """T8-I1-F：运行中取消 → cancelled 信号 → 进行中文件徽章/状态栏"已取消"
+    （worker 先 file_done 写部分页"完成"再 emit cancelled，徽章被覆盖）"""
+    engine = _SlowFakeEngine()
+    win = _make_window(monkeypatch, engine)
+    pdf = _make_2page_pdf(tmp_path)
+    win.add_files([pdf])
+    _wait_signal(win.processor, "file_started")
+    fid = win.file_panel.file_id_by_path(pdf)
+    assert fid is not None
+
+    win.processor.cancel()
+    _wait_signal(win.processor, "cancelled", timeout_ms=5000)
+    assert "已取消" in win.file_panel.status_text(fid)
+    assert "完成" not in win.file_panel.status_text(fid)  # 假完成已被覆盖
+    assert "已取消" in win.status_label.text()
+
+    deadline = time.monotonic() + 5
+    while win.processor.is_running() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not win.processor.is_running()

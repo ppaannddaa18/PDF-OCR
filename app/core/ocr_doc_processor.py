@@ -20,7 +20,7 @@ def is_image_file(path: str) -> bool:
 
 class _ProcessThread(QThread):
     """后台处理线程：顺序执行文件队列，信号转发"""
-    file_started = pyqtSignal(int, int)
+    file_started = pyqtSignal(str, int, int)  # path, idx, total
     page_progress = pyqtSignal(str, int, int, float)
     file_done = pyqtSignal(str, list)
     file_failed = pyqtSignal(str, str)
@@ -41,7 +41,7 @@ class _ProcessThread(QThread):
             if self._cancel_flag.is_set():
                 self.cancelled.emit()
                 return
-            self.file_started.emit(idx, total)
+            self.file_started.emit(path, idx, total)
             try:
                 pages = self._process_file(path)
                 if self._cancel_flag.is_set():
@@ -86,7 +86,7 @@ class _ProcessThread(QThread):
 
 class OcrDocProcessor(QObject):
     """文档识别编排门面：队列管理 + 线程生命周期 + 结果缓存"""
-    file_started = pyqtSignal(int, int)
+    file_started = pyqtSignal(str, int, int)  # path, idx, total
     page_progress = pyqtSignal(str, int, int, float)
     file_done = pyqtSignal(str, list)
     file_failed = pyqtSignal(str, str)

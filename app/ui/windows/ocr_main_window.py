@@ -224,8 +224,16 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             self.page_spin.setValue(1)
             self.page_spin.blockSignals(False)
             self.total_label.setText("/ 1")
-            if not self.processor.is_running():
-                self.processor.add_files([path])
+            if path in self.processor.pending_items():
+                # 已在队列/正在处理：只提示不重新入队。add_files 会把目标
+                # discard 出本次运行快照再加入 _queue——若文件正在处理中，
+                # 续跑机制会重跑一次；点击应仅为选中查看，故在此拦截。
+                self._set_status(f"{os.path.basename(path)} 已在处理队列中")
+                return
+            self.processor.add_files([path])
+            if self.processor.is_running():
+                self._set_status("已加入队列（当前批次结束后处理）")
+            else:
                 self.processor.start()
 
     def _on_files_cleared(self):
@@ -407,18 +415,22 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         self.status_label.setText(text)
 
     def _create_processor(self):
+        self._processing_path = None  # 当前正在处理的文件（取消徽章定位用）
         self.processor = OcrDocProcessor(self.pdf_loader, self.ocr_engine,
                                          self.config)
-        self.processor.file_started.connect(
-            lambda idx, total: self._set_status(f"解析中 {idx + 1}/{total}"))
+        self.processor.file_started.connect(self._on_processor_file_started)
         self.processor.page_progress.connect(
             lambda path, page, total, ms: self._set_status(
                 f"{os.path.basename(path)} 第 {page}/{total} 页 "
                 f"({ms / 1000:.1f}s)"))
         self.processor.file_done.connect(self._on_processor_file_done)
         self.processor.file_failed.connect(self._on_processor_file_failed)
-        self.processor.all_done.connect(
-            lambda: self._set_status("解析完成"))
+        self.processor.cancelled.connect(self._on_processor_cancelled)
+        self.processor.all_done.connect(self._on_processor_all_done)
+
+    def _on_processor_file_started(self, path, idx, total):
+        self._processing_path = path
+        self._set_status(f"解析中 {idx + 1}/{total}")
 
     def _on_processor_file_done(self, path, pages):
         fid = self.file_panel.file_id_by_path(path)
@@ -435,6 +447,25 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             self.file_panel.set_status(fid, "failed", err)
         InfoBar.error(title="解析失败", content=f"{os.path.basename(path)}: {err}",
                       parent=self, duration=3000)
+
+    def _on_processor_cancelled(self):
+        """取消：状态栏"已取消"；进行中文件徽章覆盖为 cancelled。
+
+        取消时 worker 先 emit file_done（已解析部分页 → 徽章写"完成 N 页"）
+        再 emit cancelled，信号按序投递 → 此处用 _processing_path 定位进行中
+        文件覆盖徽章。注意 _processing_path 不能在 file_done 中清空（否则
+        cancelled 到达时无从定位），统一在 cancelled/all_done 收尾清空。
+        """
+        self._set_status("已取消")
+        if self._processing_path:
+            fid = self.file_panel.file_id_by_path(self._processing_path)
+            if fid:
+                self.file_panel.set_status(fid, "cancelled")
+            self._processing_path = None
+
+    def _on_processor_all_done(self):
+        self._processing_path = None
+        self._set_status("解析完成")
 
     # ── 窗口生命周期 ───────────────────────────────────────────
 
