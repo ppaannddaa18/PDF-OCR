@@ -309,3 +309,70 @@ def test_cancel_during_run_marks_badge_cancelled(qapp, tmp_path, monkeypatch):
     while win.processor.is_running() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert not win.processor.is_running()
+
+
+def _make_pdf(tmp_path, name="doc.pdf"):
+    import fitz
+    pdf = tmp_path / name
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Hello")
+    doc.save(str(pdf))
+    doc.close()
+    return str(pdf)
+
+
+def _count_render_calls(win, monkeypatch):
+    """包装 pdf_loader.render_page 计数（spy），返回 calls dict + 原方法"""
+    orig = win.pdf_loader.render_page
+    calls = {"n": 0}
+
+    def counting_render(pdf_path, page_num=0):
+        calls["n"] += 1
+        return orig(pdf_path, page_num)
+
+    monkeypatch.setattr(win.pdf_loader, "render_page", counting_render)
+    return calls
+
+
+def test_render_page_cache_hit(qapp, tmp_path, monkeypatch):
+    """T9：渲染缓存命中——同一文件同页两次 _render_page → render_page 只调用
+    一次；不同页不命中缓存"""
+    engine = _FakeEngine()
+    win = _make_window(monkeypatch, engine)
+    path = _make_pdf(tmp_path)
+    calls = _count_render_calls(win, monkeypatch)
+    page = PageResult(blocks=[], markdown="Page1")
+
+    win._render_page(path, page, 1)
+    win._render_page(path, page, 1)
+    assert calls["n"] == 1                      # 缓存命中：同页不再渲染
+    assert win._render_cache[path][1] is not None
+
+    win._render_page(path, page, 2)             # 不同页 → 未命中，重新渲染
+    assert calls["n"] == 2
+
+
+def test_render_cache_invalidated_on_reparse(qapp, tmp_path, monkeypatch):
+    """T9：重解析后渲染缓存失效——file_done 弹出旧渲染图并重渲染；
+    _on_retry 立即失效目标文件缓存"""
+    engine = _FakeEngine()
+    win = _make_window(monkeypatch, engine)
+    path = _make_pdf(tmp_path)
+    calls = _count_render_calls(win, monkeypatch)
+    page = PageResult(blocks=[], markdown="Page1")
+    monkeypatch.setattr(win.processor, "start", lambda: None)  # 不启动后台线程
+    win.file_panel.add_file(path)
+    win.file_panel.select_file(win.file_panel.file_id_by_path(path))
+
+    win._render_page(path, page, 1)
+    win._render_page(path, page, 1)
+    assert calls["n"] == 1                      # 命中缓存
+
+    win._on_processor_file_done(path, [page])   # 重解析完成 → 失效 + 重渲染
+    assert calls["n"] == 2                      # file_done 弹出缓存后 _show_file 重新渲染
+    win._render_page(path, page, 1)
+    assert calls["n"] == 2                      # 新缓存命中
+
+    win._on_retry()                             # 重试 → 立即失效（start 已屏蔽，无线程）
+    assert path not in win._render_cache

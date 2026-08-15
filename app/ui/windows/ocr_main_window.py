@@ -8,6 +8,7 @@ _post_init_base()（post-super）。
 import json
 import os
 import logging
+from collections import OrderedDict
 from datetime import datetime
 
 from PyQt6.QtCore import Qt
@@ -37,6 +38,8 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
     DESIGN = 'paddle_vl'
     ACCENT_COLOR = '#1E7B5C'
     FLUENT_THEME = Theme.LIGHT
+    # 渲染缓存上限：总页数超过该值按文件淘汰最旧（200 DPI 单页约 6~13MB）
+    _RENDER_CACHE_MAX_PAGES = 50
 
     def __init__(self, config):
         self._init_app_base(config)   # 必须在 super().__init__() 之前
@@ -47,6 +50,9 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
 
     def _post_init_base(self):
         super()._post_init_base()
+        # 渲染缓存：path -> {page_no: PIL Image}（图片文件 page_no 恒为 1，
+        # 与 PDF 同构；翻页/重绘命中缓存时跳过数百 ms~数秒的 fitz 渲染）
+        self._render_cache: OrderedDict = OrderedDict()
         self._create_processor()
         self._restore_history()
 
@@ -240,6 +246,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         self.processor.cancel()
         self.processor.clear_queue()  # 清空未处理条目，终止续跑
         self.processor.clear_cache()
+        self._render_cache.clear()
         self.file_panel.clear()
 
     # ── 视图 ───────────────────────────────────────────────────
@@ -274,14 +281,51 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         self._render_page(path, pages[0], 1)
 
     def _render_page(self, path, page_result, page_no):
-        """渲染一页：PDF 渲染/图片 + 视图更新"""
-        if is_image_file(path):
-            from PIL import Image
-            image = Image.open(path).convert("RGB")
-        else:
-            image = self.pdf_loader.render_page(path, page_no - 1)
-        self.doc_view.show_page(page_result, image)
-        self.json_view.show_result(page_result.raw_json)
+        """渲染一页：PDF 渲染/图片 + 视图更新（渲染缓存 + 异常保护）
+
+        缓存 path → {page_no: Image}：同一文件同页翻页/重绘不重复渲染
+        （200 DPI fitz 渲染数百 ms~数秒，GUI 线程同步执行）。渲染/打开
+        失败 → InfoBar 错误 + 画布占位（不清空已显示内容）。
+        """
+        try:
+            images = self._render_cache.get(path)
+            if images is None:
+                images = {}
+                self._render_cache[path] = images
+            if page_no not in images:
+                if is_image_file(path):
+                    from PIL import Image
+                    image = Image.open(path).convert("RGB")
+                else:
+                    image = self.pdf_loader.render_page(path, page_no - 1)
+                images[page_no] = image
+                self._prune_render_cache()
+            else:
+                self._render_cache.move_to_end(path)  # LRU：最近访问文件排后
+            self.doc_view.show_page(page_result, images[page_no])
+            self.json_view.show_result(page_result.raw_json)
+        except Exception as e:
+            logger.warning(f"页面渲染失败 {path} 第 {page_no} 页: {e}")
+            InfoBar.error(title="渲染失败",
+                          content=f"{os.path.basename(path)}: {e}",
+                          parent=self, duration=3000)
+            # 占位：显示画布空状态提示；不清空已显示内容（保留当前页图像/文本）
+            self.doc_view.canvas._show_empty_state()
+
+    def _prune_render_cache(self):
+        """渲染缓存上限控制：总页数 > 50 时按文件淘汰最旧（插入顺序）
+
+        单文件超限（如长 PDF 逐页浏览）时按页淘汰最小页号，防缓存无限增长。
+        """
+        while sum(len(imgs) for imgs in self._render_cache.values()) \
+                > self._RENDER_CACHE_MAX_PAGES:
+            if len(self._render_cache) > 1:
+                self._render_cache.popitem(last=False)  # 最旧文件
+            else:
+                path, pages = next(iter(self._render_cache.items()))
+                del pages[min(pages)]
+                if not pages:
+                    self._render_cache.pop(path, None)
 
     # ── 工具按钮 ───────────────────────────────────────────────
 
@@ -313,6 +357,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         if not path:
             return
         self.processor.clear_cache(path)   # 只清目标缓存
+        self._render_cache.pop(path, None)  # 重新解析 → 旧渲染图立即失效
         if self.processor.is_running():
             # 运行中：把未处理文件全部重新入队（保目标在内），再取消续跑。
             # add_files 的去重基于 _queue；_run_items 中的项不在 _queue，
@@ -433,6 +478,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         self._set_status(f"解析中 {idx + 1}/{total}")
 
     def _on_processor_file_done(self, path, pages):
+        self._render_cache.pop(path, None)  # 重解析内容变化 → 旧渲染图失效
         fid = self.file_panel.file_id_by_path(path)
         if fid:
             total = sum(1 for p in pages if p.markdown or p.blocks)

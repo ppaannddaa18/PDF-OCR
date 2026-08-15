@@ -15,6 +15,7 @@ class OcrDocView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._show_boxes = True
+        self._last_result = None  # 最近一次 show_page 的结果（重新勾选时重放检测框）
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -37,23 +38,41 @@ class OcrDocView(QWidget):
     def _on_boxes_toggled(self, on):
         self._show_boxes = on
         self.boxes_toggled.emit(on)
-        if not on:
+        if on:
+            # 重新勾选：用最近一次结果重放检测框（当前页立即恢复，无需翻页）
+            if self._last_result is not None:
+                self._apply_highlights(self._last_result)
+        else:
             self.canvas.clear_highlights()
 
     def set_boxes_visible(self, visible: bool):
         """编程方式开关检测框高亮（与复选框状态联动）"""
         self.boxes_check.setChecked(visible)
 
-    def show_page(self, result, image, show_boxes: bool = True):
-        """渲染一页：原图 + 结构化文本 + 检测框"""
+    def show_page(self, result, image, show_boxes: bool = None):
+        """渲染一页：原图 + 结构化文本 + 检测框
+
+        show_boxes 为 None（默认）时跟随复选框状态，不再覆盖用户勾选；
+        显式传布尔值时同步复选框，保证 _show_boxes 与勾选态始终一致。
+        """
+        self._last_result = result
         self.canvas.load_image(image)
-        self._show_boxes = show_boxes
+        if show_boxes is not None:
+            # setChecked 同态时不触发 toggled 信号，直接赋值保持同步
+            self._show_boxes = show_boxes
+            self.boxes_check.setChecked(show_boxes)
+        else:
+            self._show_boxes = self.boxes_check.isChecked()
         self.text_browser.setHtml(self._blocks_to_html(result))
-        if show_boxes and result.blocks:
-            self.canvas.clear_highlights()
-            for b in result.blocks:
-                if b.bbox and len(b.bbox) == 4:
-                    self.canvas.highlight_bbox(b.bbox)
+        if self._show_boxes:
+            self._apply_highlights(result)
+
+    def _apply_highlights(self, result):
+        """清空后绘制 result 的全部检测框（与复选框状态解耦）"""
+        self.canvas.clear_highlights()
+        for b in result.blocks:
+            if b.bbox and len(b.bbox) == 4:
+                self.canvas.highlight_bbox(b.bbox)
 
     def text(self) -> str:
         return self.text_browser.toPlainText()
