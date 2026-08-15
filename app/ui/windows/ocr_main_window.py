@@ -12,7 +12,7 @@ from datetime import datetime
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSpinBox,
-                             QFileDialog, QFrame, QApplication)
+                             QFileDialog, QFrame, QApplication, QMessageBox)
 from qfluentwidgets import (FluentWindow, InfoBar, PushButton, BodyLabel,
                             setTheme, Theme, setThemeColor)
 
@@ -283,13 +283,20 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         dlg.exec()
 
     def _on_config_apply(self, patch):
-        """保存配置 + 热生效（引擎 predict 参数即时读取；无需重启管线）"""
+        """保存配置 + 热生效（引擎 apply_config 即时更新解析参数；无需重启管线）"""
         self._merge_config_patch(self.config, patch)
         from app.utils.config_loader import save_config
         try:
             save_config(self.config)
         except Exception as e:
             logger.warning(f"配置保存失败: {e}")
+        # 热生效：引擎实例属性即时更新（fake/无此方法的引擎跳过）
+        apply = getattr(self.ocr_engine, "apply_config", None)
+        if apply is not None:
+            try:
+                apply(patch)
+            except Exception as e:
+                logger.warning(f"引擎配置热生效失败: {e}")
         InfoBar.success(title="配置已应用", content="解析参数已更新",
                         parent=self, duration=2000)
 
@@ -422,3 +429,27 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             self.file_panel.set_status(fid, "failed", err)
         InfoBar.error(title="解析失败", content=f"{os.path.basename(path)}: {err}",
                       parent=self, duration=3000)
+
+    # ── 窗口生命周期 ───────────────────────────────────────────
+
+    def closeEvent(self, event):
+        """关闭确认：任务进行中 → 确认弹窗；确认后 cancel + 走 base 异步清理
+
+        base closeEvent 只处理 self.worker（BatchProcessor），本窗口恒为
+        None —— OcrDocProcessor 线程由本窗口自管，关闭时必须 cancel，否则
+        队列在后台继续处理并与引擎卸载（_infer_lock）形成竞态。cancel 后
+        当前页推理无法中断，base 清理线程的引擎 unload 会等 _infer_lock
+        自然完成，无需 wait。
+        """
+        if getattr(self, "processor", None) is not None \
+                and self.processor.is_running():
+            ret = QMessageBox.question(
+                self, "退出确认",
+                "识别任务仍在进行（当前页完成后将停止）。确定退出？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if ret != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self.processor.cancel()
+        super().closeEvent(event)

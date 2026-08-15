@@ -144,3 +144,77 @@ def test_file_failed_badge(qapp, tmp_path, monkeypatch):
     fid = win.file_panel.file_id_by_path(str(bad))
     assert fid is not None
     assert "失败" in win.file_panel.status_text(fid)
+
+
+def _patch_quit_and_dialog(monkeypatch):
+    """C1 测试配套：确认弹窗应答 + 屏蔽 base 异步清理的 QApplication.quit()
+
+    base closeEvent 最后的清理线程会调 QApplication.quit()；真实调用会置
+    quitNow，导致本测试之后所有 QEventLoop.exec()（_wait_signal 等）立即
+    返回 —— 测试会话内必须屏蔽。
+    """
+    import PyQt6.QtWidgets as qt_widgets
+    monkeypatch.setattr(qt_widgets.QApplication, "quit",
+                        lambda *a, **k: None)
+    return qt_widgets
+
+
+def _make_2page_pdf(tmp_path):
+    import fitz
+    pdf = tmp_path / "doc.pdf"
+    doc = fitz.open()
+    doc.new_page()
+    doc.new_page()
+    doc.save(str(pdf))
+    doc.close()
+    return str(pdf)
+
+
+def test_close_event_cancels_processor(qapp, tmp_path, monkeypatch):
+    """C1：任务进行中关闭窗口 → 确认弹窗（Yes）→ 处理器被 cancel"""
+    engine = _SlowFakeEngine()
+    win = _make_window(monkeypatch, engine)
+    win.add_files([_make_2page_pdf(tmp_path)])
+    _wait_signal(win.processor, "file_started")  # 任务运行中（慢引擎 2 页）
+    assert win.processor.is_running()
+
+    qt_widgets = _patch_quit_and_dialog(monkeypatch)
+    monkeypatch.setattr(
+        qt_widgets.QMessageBox, "question",
+        lambda *a, **k: qt_widgets.QMessageBox.StandardButton.Yes)
+
+    win.show()
+    win.close()
+
+    # cancel 已生效：当前页推理完成后线程停止（轮询等待）
+    deadline = time.monotonic() + 5
+    while win.processor.is_running() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not win.processor.is_running()
+
+
+def test_close_event_no_keeps_window(qapp, tmp_path, monkeypatch):
+    """C1：任务进行中关闭 → 确认弹窗（No）→ 关闭被 ignore，任务继续"""
+    engine = _SlowFakeEngine()
+    win = _make_window(monkeypatch, engine)
+    win.add_files([_make_2page_pdf(tmp_path)])
+    _wait_signal(win.processor, "file_started")
+    assert win.processor.is_running()
+
+    qt_widgets = _patch_quit_and_dialog(monkeypatch)
+    monkeypatch.setattr(
+        qt_widgets.QMessageBox, "question",
+        lambda *a, **k: qt_widgets.QMessageBox.StandardButton.No)
+
+    win.show()
+    closed = win.close()
+    assert not closed                  # 关闭事件被 ignore
+    assert win.isVisible()             # 窗口保留
+    assert win.processor.is_running()  # 任务未被取消
+
+    # 等任务自然完成，线程停止后窗口可安全回收
+    _wait_signal(win.processor, "all_done", timeout_ms=8000)
+    deadline = time.monotonic() + 5
+    while win.processor.is_running() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not win.processor.is_running()

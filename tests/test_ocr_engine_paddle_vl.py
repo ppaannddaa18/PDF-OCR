@@ -669,6 +669,108 @@ def test_ignore_labels_default_empty():
     PaddleOCRVLEngine.reset_instance()
 
 
+# ── 配置热生效（apply_config，解析配置弹窗接线） ─────────────
+
+def test_apply_config_updates_parse_attributes():
+    """I1：apply_config 全键更新——类型转换与 __init__ 一致（float/bool/int/list）"""
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({})
+    eng.apply_config({"ocr": {"paddle_vl": {
+        "repetition_penalty": 1.5,
+        "markdown_ignore_labels": ["header", "footer"],
+        "use_doc_orientation_classify": True,
+        "use_doc_unwarping": True,
+        "use_chart_recognition": False,
+        "use_seal_recognition": False,
+        "use_ocr_for_image_block": False,
+        "merge_layout_blocks": False,
+        "spotting_min_pixels": 256,
+        "spotting_max_pixels": 1605632,
+        "block_spotting": True,
+    }}})
+    assert eng._repetition_penalty == 1.5
+    assert eng._markdown_ignore_labels == ["header", "footer"]
+    assert eng._use_doc_orientation_classify is True
+    assert eng._use_doc_unwarping is True
+    assert eng._use_chart_recognition is False
+    assert eng._use_seal_recognition is False
+    assert eng._use_ocr_for_image_block is False
+    assert eng._merge_layout_blocks is False
+    assert eng._spotting_min_pixels == 256
+    assert eng._spotting_max_pixels == 1605632
+    assert eng._block_spotting is True
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_apply_config_missing_keys_unchanged():
+    """I1：缺失键保持不变；spotting_max_pixels=0 → 默认适配值（同 __init__）"""
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {
+        "repetition_penalty": 1.1, "block_spotting": True}}})
+    eng.apply_config({"ocr": {"paddle_vl": {
+        "repetition_penalty": 0.0, "spotting_max_pixels": 0}}})
+    assert eng._repetition_penalty == 0.0
+    assert eng._spotting_max_pixels == 1048576
+    assert eng._block_spotting is True          # 缺失键不变
+    assert eng._use_doc_orientation_classify is False
+    assert eng._markdown_ignore_labels == []
+    assert eng._spotting_min_pixels == 0
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_apply_config_empty_patch_noop():
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {"repetition_penalty": 1.1}}})
+    eng.apply_config({})
+    assert eng._repetition_penalty == 1.1
+    PaddleOCRVLEngine.reset_instance()
+
+
+# ── _collect 辅助内容过滤（逐块模式识别前剔除） ──────────────
+
+def test_collect_filters_ignored_labels_before_vlm(monkeypatch):
+    """I2：逐块模式辅助内容过滤——ignore 标签块识别前剔除（不进 vlm_entries）
+
+    assemble 阶段标签已被改写为 "spotting"，_filter_ignored_blocks（按原
+    标签）永不命中 → 必须在 _collect 改写前过滤。整页假盒 label "spotting"
+    不在忽略集，不受影响。过滤集合每次调用从引擎实例读取 → apply_config
+    热生效（无需重装 patch）。
+    """
+    PaddleOCRVLEngine.reset_instance()
+    _install_fake_env(monkeypatch)
+    eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {
+        "markdown_ignore_labels": ["header"]}}})
+    eng._patch_spotting_max_pixels()
+    import paddlex.inference.pipelines.paddleocr_vl.pipeline as _vlp
+    collect = _vlp._PaddleOCRVLPipeline._paddleocr_vl_collect_page_vlm_entries_core
+    blocks = [
+        {"img": np.zeros((30, 100, 3), dtype=np.uint8),
+         "label": "header", "box": [0, 0, 100, 30]},
+        {"img": np.zeros((100, 100, 3), dtype=np.uint8),
+         "label": "paragraph", "box": [0, 30, 100, 130]},
+    ]
+    entries, has_spot, _drops = collect(None, 0, blocks, [[]],
+                                        {"image_labels": ["image"]})
+    assert len(entries) == 1                      # 只剩 paragraph 块进 VLM
+    assert entries[0][1] == 1
+    assert blocks[0]["label"] == "header"         # 忽略块未被改写/未送 VLM
+    assert blocks[1]["label"] == "spotting"
+    assert has_spot is True
+    # 热生效：apply_config 追加忽略标签 → 再次 collect 也剔除
+    eng.apply_config({"ocr": {"paddle_vl": {
+        "markdown_ignore_labels": ["header", "paragraph"]}}})
+    blocks2 = [
+        {"img": np.zeros((30, 100, 3), dtype=np.uint8),
+         "label": "header", "box": [0, 0, 100, 30]},
+        {"img": np.zeros((100, 100, 3), dtype=np.uint8),
+         "label": "paragraph", "box": [0, 30, 100, 130]},
+    ]
+    entries2, _hs2, _dr2 = collect(None, 0, blocks2, [[]],
+                                   {"image_labels": ["image"]})
+    assert len(entries2) == 0
+    PaddleOCRVLEngine.reset_instance()
+
+
 # ── raw_json 填充（JSON 视图/导出数据源） ─────────────────────
 
 def test_recognize_page_auto_fills_raw_json(monkeypatch):

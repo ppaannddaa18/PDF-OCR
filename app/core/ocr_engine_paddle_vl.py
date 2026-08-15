@@ -252,6 +252,7 @@ class PaddleOCRVLEngine(OCREngineBase):
         ``ocr.paddle_vl.spotting_max_pixels: 1605632`` 可禁用像素适配
         （但标签改写仍生效，勿用于回退）。
         """
+        engine = self  # 闭包捕获引擎引用：辅助过滤集合每次调用读取（配置热生效）
         max_pixels = self._spotting_max_pixels
         if not max_pixels:
             max_pixels = _OFFICIAL_SPOTTING_MAX_PIXELS
@@ -262,9 +263,17 @@ class PaddleOCRVLEngine(OCREngineBase):
             page_vlm_entries = []
             page_has_spotting = False
             page_drop_figures = set()
+            # 辅助内容过滤（识别前）：布局模式原标签命中忽略集 → 不送 VLM。
+            # 必须在 label 改写**之前**过滤 —— assemble 阶段标签已被改写为
+            # "spotting"，_filter_ignored_blocks（按原标签）永不命中。每次
+            # 调用从引擎实例读取（apply_config 热生效，无需重装 patch）；
+            # 整页假盒 label "spotting" 不在忽略集，不受影响。
+            ignore_labels = set(engine._markdown_ignore_labels)
             for j, block in enumerate(blocks_for_img):
                 block_img = block["img"]
                 block_label = block["label"]
+                if block_label in ignore_labels:
+                    continue
                 if (block_label not in layout_prep_cfg["image_labels"]
                         and block_img is not None):
                     block["label"] = "spotting"  # 布局块改写；假盒本身已是
@@ -685,6 +694,42 @@ class PaddleOCRVLEngine(OCREngineBase):
                 if not (getattr(b, "block_label", None) in ignore)]
         res["parsing_res_list"] = kept
         return res
+
+    # ── 配置热生效（解析配置弹窗） ─────────────────────────────
+
+    def apply_config(self, patch: dict) -> None:
+        """解析配置弹窗热生效：更新实例属性（缺失键保持不变）。
+
+        类型转换与 __init__ 一致（float/bool/int/list）；识别参数
+        （_predict_once kwargs、_filter_ignored_blocks、_collect 闭包辅助
+        过滤）均从实例属性读取 → 应用后即时生效，无需重启管线。注意：
+        _collect 闭包内的 spotting 像素上限为 patch 安装时快照（同
+        max_pixels 既有语义），spotting_max_pixels 改动需重新加载管线生效。
+        """
+        cfg = (patch or {}).get("ocr", {}).get("paddle_vl", {})
+        if not cfg:
+            return
+        if "repetition_penalty" in cfg:
+            self._repetition_penalty = float(cfg.get("repetition_penalty") or 0)
+        if "markdown_ignore_labels" in cfg:
+            self._markdown_ignore_labels = list(
+                cfg.get("markdown_ignore_labels") or [])
+        for key, attr in (
+            ("use_doc_orientation_classify", "_use_doc_orientation_classify"),
+            ("use_doc_unwarping", "_use_doc_unwarping"),
+            ("use_chart_recognition", "_use_chart_recognition"),
+            ("use_seal_recognition", "_use_seal_recognition"),
+            ("use_ocr_for_image_block", "_use_ocr_for_image_block"),
+            ("merge_layout_blocks", "_merge_layout_blocks"),
+            ("block_spotting", "_block_spotting"),
+        ):
+            if key in cfg:
+                setattr(self, attr, bool(cfg[key]))
+        if "spotting_min_pixels" in cfg:
+            self._spotting_min_pixels = int(cfg.get("spotting_min_pixels") or 0)
+        if "spotting_max_pixels" in cfg:
+            v = int(cfg.get("spotting_max_pixels") or 0)
+            self._spotting_max_pixels = v or _DEFAULT_SPOTTING_MAX_PIXELS
 
 
 def _is_oom(exc: Exception) -> bool:
