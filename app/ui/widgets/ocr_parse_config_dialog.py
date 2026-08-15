@@ -10,7 +10,7 @@ _AUX_ITEMS = [
     ("header_image", "页眉图片", False),
     ("footer", "页脚", False),
     ("footer_image", "页脚图片", False),
-    ("page number", "页码", True),
+    ("number", "页码", True),
     ("footnote", "脚注", False),
     ("aside_text", "旁注文本", False),
 ]

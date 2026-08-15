@@ -40,9 +40,9 @@ def test_roundtrip(qapp):
     assert pv["use_doc_orientation_classify"] is True
     assert pv["repetition_penalty"] == 1.3
     # markdown_ignore_labels 语义：header 未勾选（恢复解析）→ 忽略集含 header；
-    # page number 默认勾选 → 忽略集不含 page number
+    # number 默认勾选 → 忽略集不含 number（真实 PP-DocLayoutV3 标签）
     assert "header" in pv["markdown_ignore_labels"]
-    assert "page number" not in pv["markdown_ignore_labels"]
+    assert "number" not in pv["markdown_ignore_labels"]
 
 
 def test_block_spotting_seed_layout_checkbox(qapp):

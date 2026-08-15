@@ -683,15 +683,20 @@ class PaddleOCRVLEngine(OCREngineBase):
         return "\n".join(lines)
 
     def _filter_ignored_blocks(self, res: dict) -> dict:
-        """辅助内容过滤：parsing_res_list 中 block_label 命中忽略集的块剔除
-        （等价 paddlex markdown_ignore_labels 语义；整页 spotting 行不受影响）"""
+        """辅助内容过滤：parsing_res_list 中 label 命中忽略集的块剔除。
+
+        真实 paddlex 3.7.2 ``PaddleOCRVLBlock`` 属性为 ``label``（非
+        ``block_label``），同时兼容旧属性（``getattr`` 双属性兜底）；
+        等价 paddlex markdown_ignore_labels 语义；整页 spotting 行不受影响。
+        """
         ignore = set(self._markdown_ignore_labels)
         if not ignore:
             return res
         res = dict(res)
         blocks = res.get("parsing_res_list") or []
         kept = [b for b in blocks
-                if not (getattr(b, "block_label", None) in ignore)]
+                if not ((getattr(b, "label", None)
+                         or getattr(b, "block_label", None)) in ignore)]
         res["parsing_res_list"] = kept
         return res
 
@@ -759,6 +764,8 @@ def _json_safe(obj):
     ``{"__ndarray__": [shape...], "dtype": ...}``。spotting 的 rec_polys
     生产为 list-of-list（官方 post_process_for_spotting 构造），不走 numpy
     分支不受影响；(300,4,2) 2400 元素坐标数组仍在阈值内完整 tolist()。
+    paddlex Block 统一映射为官方 ``_to_json`` 结构
+    ``{"block_label", "block_content", "block_bbox"}``。
     """
     import numpy as np
     if isinstance(obj, dict):
@@ -777,8 +784,11 @@ def _json_safe(obj):
             return obj.tolist()
         except Exception:
             pass
-    if hasattr(obj, "block_label"):  # paddlex Block
-        return _json_safe({"block_label": obj.block_label,
+    if hasattr(obj, "label") or hasattr(obj, "block_label"):  # paddlex Block
+        # 真实 paddlex 3.7.2 属性为 label/content/bbox；旧对象仅 block_label
+        # （label 缺失/为空时 block_label 兜底）→ 统一映射官方 _to_json 结构
+        return _json_safe({"block_label": getattr(obj, "label", None)
+                           or getattr(obj, "block_label", None),
                            "block_content": getattr(obj, "content", ""),
                            "block_bbox": getattr(obj, "bbox", [])})
     return str(obj)

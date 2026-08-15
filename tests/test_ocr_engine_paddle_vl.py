@@ -86,6 +86,15 @@ class _FakeBlock:
         self.content = content
 
 
+class _FakeBlockReal:
+    """带 label/content/bbox 的假解析块（真实 paddlex 3.7.2 属性名）"""
+
+    def __init__(self, label, content, bbox=None):
+        self.label = label
+        self.content = content
+        self.bbox = bbox if bbox is not None else [0, 0, 0, 0]
+
+
 def _make_engine(pipe):
     eng = PaddleOCRVLEngine({})
     eng._initialized = True
@@ -662,6 +671,27 @@ def test_markdown_ignore_labels_filters_parsing_blocks():
     PaddleOCRVLEngine.reset_instance()
 
 
+def test_markdown_ignore_labels_filters_real_attr_blocks():
+    """真实属性名（label/content/bbox）：label 命中 ignore 集的块被剔除"""
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {
+        "markdown_ignore_labels": ["header", "number"]}}})
+    res = {
+        "parsing_res_list": [
+            _FakeBlockReal("header", "Hindawi Journal"),
+            _FakeBlockReal("paragraph", "Body text here"),
+            _FakeBlockReal("number", "Page 42"),
+        ],
+        "spotting_res": {"rec_texts": [], "rec_polys": []},
+    }
+    filtered = eng._filter_ignored_blocks(res)
+    assert [b.label for b in filtered["parsing_res_list"]] == ["paragraph"]
+    # 原结果不被就地修改（浅拷贝语义）
+    assert [b.label for b in res["parsing_res_list"]] == [
+        "header", "paragraph", "number"]
+    PaddleOCRVLEngine.reset_instance()
+
+
 def test_ignore_labels_default_empty():
     PaddleOCRVLEngine.reset_instance()
     eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {}}})
@@ -806,3 +836,23 @@ def test_json_safe_spotting_shape_array_kept():
     out = _json_safe(arr)
     assert isinstance(out, list) and len(out) == 300
     assert len(out[0]) == 4 and len(out[0][0]) == 2
+
+
+def test_json_safe_real_block_to_official_dict():
+    """真实属性名块（label/content/bbox）→ 官方 _to_json 结构字典"""
+    b = _FakeBlockReal("paragraph", "hi", bbox=[0, 0, 100, 50])
+    out = _json_safe(b)
+    import json
+    json.dumps(out)  # 必须可序列化
+    assert out == {"block_label": "paragraph",
+                   "block_content": "hi",
+                   "block_bbox": [0, 0, 100, 50]}
+
+
+def test_json_safe_legacy_block_label_fallback():
+    """旧属性块（仅 block_label）：label 缺失 → block_label 兜底，bbox 缺省 []"""
+    b = _FakeBlock("header", "legacy")
+    out = _json_safe(b)
+    assert out == {"block_label": "header",
+                   "block_content": "legacy",
+                   "block_bbox": []}
