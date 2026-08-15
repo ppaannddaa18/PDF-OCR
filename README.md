@@ -188,3 +188,27 @@ QT_QPA_PLATFORM=offscreen venv\Scripts\python.exe -m pytest tests/ -q
 ## 许可证
 
 MIT License
+
+## PaddleOCR-VL 独立识别程序
+
+仓库内另有一个独立的文档识别程序（入口 `main_ocr.py`）：本地 PaddleOCR-VL（paddlepaddle / paddlex 官方管线，原生推理）整页版面理解，批量解析 PDF 与图片，支持版面分析与行级 spotting 识别，结果可导出 TXT / Markdown / JSON。与主程序的 GGUF 推理操作台不同，它直接加载 PaddleOCR-VL 官方权重做本地推理，不依赖 llama-server 与 GGUF 模型文件。
+
+### 启动
+
+```bat
+run_ocr.bat
+```
+
+或直接：
+
+```bash
+venv-paddle\Scripts\python.exe main_ocr.py
+```
+
+程序在独立的 `venv-paddle` 环境中运行（PaddleOCR-VL 依赖与主程序环境隔离），启动后直接进入识别主窗口，无需选择引擎。
+
+### 与主程序的关系
+
+- 两个程序并行存在，共用 `app/` 下的基础模块（配置、日志、PDF 加载、主题等）
+- paddle_vl 引擎（`app/core/ocr_engine_paddle_vl.py`）归本独立程序所有；主程序 `main.py` 的引擎选择界面只提供 GGUF 与 RapidOCR 双引擎
+- 主程序 GGUF 引擎走 llama.cpp（llama-server HTTP API），独立程序走 PaddleOCR-VL 官方原生推理（`vl_rec_backend="native"`），模型与运行环境相互独立
