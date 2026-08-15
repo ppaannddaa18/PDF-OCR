@@ -297,3 +297,65 @@ def test_retry_during_run_restarts_target(qapp, tmp_path):
     assert 2 <= len(engine.calls) <= 4           # 首次 0-2 页 + 续跑 2 页
     assert len(proc.get_cache(pdf_path)) == 2    # 缓存为续跑完整结果
     loader.shutdown()
+
+
+def test_shutdown_stops_and_never_restarts(qapp, tmp_path):
+    """C3：运行中 shutdown（运行中已追加文件 → 队列非空）→ 线程停止后
+    不再续跑：cancelled 触发、引擎调用计数在停止后不再增长"""
+    pdf1 = _make_2page_pdf(tmp_path)
+    pdf2 = tmp_path / "doc2.pdf"
+    shutil.copy(pdf1, pdf2)
+    pdf2 = str(pdf2)
+
+    engine = _SlowEngine()
+    loader = PdfLoader(dpi=100)
+    proc = OcrDocProcessor(loader, engine, {})
+    cancelled = []
+    done = []
+    proc.file_done.connect(lambda p, r: done.append((p, r)))
+    proc.cancelled.connect(lambda: cancelled.append(1))
+    proc.add_files([pdf1])
+
+    proc.start()
+    assert _wait_until(proc, "file_started"), "file_started 未触发"
+    proc.add_files([pdf2])   # 运行中追加：关闭瞬间队列非空（C3 竞态前提）
+    proc.shutdown()          # cancel + clear_queue + 置位
+
+    assert _wait_until(proc, "cancelled", timeout_ms=5000), "cancelled 未触发"
+    assert _wait_not_running(proc), "线程未在超时内停止"
+    assert cancelled
+    calls_after_stop = len(engine.calls)
+
+    # 越过原续跑窗口（_SlowEngine 每页 0.15s）：若续跑发生，调用计数会继续增长
+    deadline = time.monotonic() + 0.6
+    while time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(0.05)
+    assert len(engine.calls) == calls_after_stop  # 不再续跑：引擎调用冻结
+    assert not proc.is_running()
+    assert proc.pending_items() == []             # 队列与运行快照均已清空
+    loader.shutdown()
+
+
+def test_start_after_shutdown_is_noop(qapp, tmp_path):
+    """C3：shutdown 后即使重新入队，start() 也为 no-op（防御）"""
+    pdf_path = _make_2page_pdf(tmp_path)
+    engine = _SlowEngine()
+    loader = PdfLoader(dpi=100)
+    proc = OcrDocProcessor(loader, engine, {})
+    proc.add_files([pdf_path])
+    proc.start()
+    assert _wait_until(proc, "file_started"), "file_started 未触发"
+    proc.shutdown()
+    assert _wait_not_running(proc), "线程未在超时内停止"
+    calls_after_shutdown = len(engine.calls)
+
+    proc.add_files([pdf_path])   # 模拟关闭后仍有调用方尝试入队启动
+    proc.start()                 # 防御：_shutting_down 置位后直接返回
+    deadline = time.monotonic() + 0.6
+    while time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(0.05)
+    assert not proc.is_running()
+    assert len(engine.calls) == calls_after_shutdown  # 未启动新线程
+    loader.shutdown()

@@ -103,6 +103,7 @@ class OcrDocProcessor(QObject):
         self._thread: Optional[_ProcessThread] = None
         self._cancel_flag = threading.Event()
         self._cache: Dict[str, List[PageResult]] = {}
+        self._shutting_down = False  # 关闭标志：置位后不再续跑/启动（窗口关闭用）
 
     def add_files(self, paths: List[str]) -> None:
         for p in paths:
@@ -143,7 +144,7 @@ class OcrDocProcessor(QObject):
         return self._thread is not None and self._thread.isRunning()
 
     def start(self) -> None:
-        if self.is_running() or not self._queue:
+        if self._shutting_down or self.is_running() or not self._queue:
             return
         self._cancel_flag.clear()
         self._run_items = set(self._queue)  # 本次运行快照
@@ -163,6 +164,17 @@ class OcrDocProcessor(QObject):
     def cancel(self) -> None:
         self._cancel_flag.set()
 
+    def shutdown(self) -> None:
+        """永久停止：置位关闭标志 + 取消 + 清空队列，线程停止后不再续跑。
+
+        窗口 closeEvent 在 base 引擎卸载（_infer_lock）前调用；若无此标志，
+        取消后队列非空时 _on_cancelled/_on_all_done/_on_thread_finished 会
+        续跑新线程，与引擎卸载形成竞态。置位后 start() 亦为 no-op（防御）。
+        """
+        self._shutting_down = True
+        self.cancel()
+        self.clear_queue()
+
     def _on_file_done(self, path: str, pages: List[PageResult]) -> None:
         self._cache[path] = pages
         self.file_done.emit(path, pages)
@@ -171,14 +183,14 @@ class OcrDocProcessor(QObject):
         if self._thread is self.sender():
             self._clear_run_queue()
             self.all_done.emit()
-            if self._queue:
+            if self._queue and not self._shutting_down:
                 self.start()  # 续跑：运行期间追加/重试入队的条目
 
     def _on_cancelled(self) -> None:
         if self._thread is self.sender():
             self._clear_run_queue()
             self.cancelled.emit()
-            if self._queue:
+            if self._queue and not self._shutting_down:
                 self.start()  # 续跑：取消后仍有未处理条目（运行中重试）
 
     def _on_thread_finished(self) -> None:

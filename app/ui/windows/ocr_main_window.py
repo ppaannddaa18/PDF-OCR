@@ -439,13 +439,15 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
     # ── 窗口生命周期 ───────────────────────────────────────────
 
     def closeEvent(self, event):
-        """关闭确认：任务进行中 → 确认弹窗；确认后 cancel + 走 base 异步清理
+        """关闭确认：任务进行中 → 确认弹窗；确认后 shutdown + 走 base 异步清理
 
         base closeEvent 只处理 self.worker（BatchProcessor），本窗口恒为
-        None —— OcrDocProcessor 线程由本窗口自管，关闭时必须 cancel，否则
-        队列在后台继续处理并与引擎卸载（_infer_lock）形成竞态。cancel 后
-        当前页推理无法中断，base 清理线程的引擎 unload 会等 _infer_lock
-        自然完成，无需 wait。
+        None —— OcrDocProcessor 线程由本窗口自管，关闭时必须 shutdown
+        （cancel + clear_queue + 置位），否则：① 队列在后台继续处理并与引擎
+        卸载（_infer_lock）形成竞态；② 运行中追加过文件时取消后队列非空，
+        续跑机制会启动新线程，与 base 引擎卸载竞态。shutdown 置位后
+        _on_cancelled/_on_all_done 不再续跑、start() 亦为 no-op。当前页推理
+        无法中断，base 清理线程的引擎 unload 会等 _infer_lock 自然完成。
         """
         if getattr(self, "processor", None) is not None \
                 and self.processor.is_running():
@@ -457,5 +459,5 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             if ret != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            self.processor.cancel()
+            self.processor.shutdown()
         super().closeEvent(event)
