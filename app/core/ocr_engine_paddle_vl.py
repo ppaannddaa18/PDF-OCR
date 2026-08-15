@@ -24,7 +24,9 @@ Spotting 任务（行级文本 + 坐标）：
 - 459/570 个 fp32 参数（paddlex keep_in_fp32 精度保护）→ bf16 原地转换省 ~1GB
   （逆用官方 dtype 切换手法 _share_data_with，model_utils.py:1349-1353）；
 - 官方 spotting 像素上限 1605632（~2090 patches → 全序列 logits 大块分配
-  ~3.9GB OOM）→ 运行时替换为配置值（默认 1M，实测 138 行/38.9s/峰值 6.8GB）。
+  ~3.9GB OOM）→ 运行时替换为配置值（默认 1M，实测 138 行/38.9s/峰值 6.8GB）；
+  min 官方 112896 → 配置值（默认 0 → 回退 112896）；min/max 每次调用从
+  引擎实例读取（apply_config 热生效）。
 
 线程安全：native 生成非线程安全，推理加锁（多 worker 并行时排队）。
 """
@@ -269,8 +271,11 @@ class PaddleOCRVLEngine(OCREngineBase):
           靠标签命中坐标解析与偏移映射）；assemble 阶段表格等非 spotting 块
           保留原标签走官方分支（表格 HTML 转换等）；
         - 官方 spotting 分支写死 ``blk_max_pixels = 1605632``（~8192 patches
-          → 视觉注意力 fp32 矩阵大块分配 ~3.9GB，8GB 卡 OOM）→ 降为配置值
-          （默认 1M）；其余分派沿用官方 per-label 像素配置
+          → 视觉注意力 fp32 矩阵大块分配 ~3.9GB，8GB 卡 OOM）与
+          ``blk_min_pixels = 112896`` → 均为配置驱动（spotting_max_pixels
+          默认 1M / spotting_min_pixels 默认 0 → 回退官方 112896），且
+          **每次调用从引擎实例读取**（与 ignore 集同模式，apply_config
+          热生效，无需重装 patch）；其余分派沿用官方 per-label 像素配置
           （layout_prep_cfg 键，缺失回退 _DEFAULT_MIN/MAX_PIXELS）；
         - 整页假盒（use_layout_detection=False）label 已是 "spotting" → 直接
           走 spotting 分支；布局模式（block_spotting）文本类块改写后同分支，
@@ -282,10 +287,9 @@ class PaddleOCRVLEngine(OCREngineBase):
         ``ocr.paddle_vl.spotting_max_pixels: 1605632`` 可禁用像素适配
         （但标签改写仍生效，勿用于回退）。
         """
-        engine = self  # 闭包捕获引擎引用：辅助过滤集合每次调用读取（配置热生效）
-        max_pixels = self._spotting_max_pixels
-        if not max_pixels:
-            max_pixels = _OFFICIAL_SPOTTING_MAX_PIXELS
+        # 闭包捕获引擎引用（而非快照）：辅助过滤集合与 spotting 像素上下限
+        # 每次调用从 engine 读取 → apply_config 热生效（无需重装 patch）
+        engine = self
         import paddlex.inference.pipelines.paddleocr_vl.pipeline as _vlp
 
         def _collect(self, page_idx, blocks_for_img, imgs_in_doc_for_img,
@@ -347,8 +351,13 @@ class PaddleOCRVLEngine(OCREngineBase):
                         # 整页假盒（label 已是 spotting）/布局原生 spotting 块
                         text_prompt = "Spotting:"
                         page_has_spotting = True
-                        blk_min_pixels = 112896
-                        blk_max_pixels = max_pixels
+                        # 每次调用从引擎实例读取（apply_config 热生效）；
+                        # min 默认 0 → 回退官方 112896
+                        blk_min_pixels = (
+                            engine._spotting_min_pixels or _DEFAULT_MIN_PIXELS)
+                        blk_max_pixels = (
+                            engine._spotting_max_pixels
+                            or _OFFICIAL_SPOTTING_MAX_PIXELS)
                         block_img = _vlp.pre_process_for_spotting(block_img)
                     elif (block_label == "seal"
                           and layout_prep_cfg.get(
@@ -368,8 +377,11 @@ class PaddleOCRVLEngine(OCREngineBase):
                         block["label"] = "spotting"
                         text_prompt = "Spotting:"
                         page_has_spotting = True
-                        blk_min_pixels = 112896
-                        blk_max_pixels = max_pixels
+                        blk_min_pixels = (
+                            engine._spotting_min_pixels or _DEFAULT_MIN_PIXELS)
+                        blk_max_pixels = (
+                            engine._spotting_max_pixels
+                            or _OFFICIAL_SPOTTING_MAX_PIXELS)
                         block_img = _vlp.pre_process_for_spotting(block_img)
 
                     page_vlm_entries.append(
@@ -383,9 +395,9 @@ class PaddleOCRVLEngine(OCREngineBase):
             _collect)
         _vlp._PaddleOCRVLPipeline._paddleocr_vl_collect_block_vlm_inputs = (
             _collect)
-        if max_pixels != _OFFICIAL_SPOTTING_MAX_PIXELS:
-            logger.info(f"PaddleOCR-VL: spotting max_pixels → {max_pixels}"
-                        "（8GB 显存适配）")
+        if self._spotting_max_pixels != _OFFICIAL_SPOTTING_MAX_PIXELS:
+            logger.info(f"PaddleOCR-VL: spotting max_pixels → "
+                        f"{self._spotting_max_pixels}（8GB 显存适配，热生效）")
 
     def _patch_assemble_spotting_merge(self) -> None:
         """assemble 合并版：逐块 spotting 坐标偏移映射 + 页级累积。
@@ -823,9 +835,9 @@ class PaddleOCRVLEngine(OCREngineBase):
 
         类型转换与 __init__ 一致（float/bool/int/list）；识别参数
         （_predict_once kwargs、_filter_ignored_blocks、_collect 闭包辅助
-        过滤）均从实例属性读取 → 应用后即时生效，无需重启管线。注意：
-        _collect 闭包内的 spotting 像素上限为 patch 安装时快照（同
-        max_pixels 既有语义），spotting_max_pixels 改动需重新加载管线生效。
+        过滤与 spotting 像素上下限）均从实例属性读取 → 应用后即时生效，
+        无需重启管线（_collect 闭包每次调用读 engine._spotting_min_pixels
+        /_spotting_max_pixels，不再使用 patch 安装时快照）。
         """
         cfg = (patch or {}).get("ocr", {}).get("paddle_vl", {})
         if not cfg:

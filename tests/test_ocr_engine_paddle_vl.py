@@ -918,6 +918,46 @@ def test_collect_dispatches_official_labels(monkeypatch):
     PaddleOCRVLEngine.reset_instance()
 
 
+def test_collect_spotting_pixels_hot_reload(monkeypatch):
+    """T4：spotting 分支 min/max 像素每次调用从引擎实例读取 ——
+    apply_config 热改后同一次 patch 内再次 collect 即反映新值
+    （不再是 patch 安装时快照）"""
+    PaddleOCRVLEngine.reset_instance()
+    _install_fake_env(monkeypatch)
+    eng = PaddleOCRVLEngine({})
+    eng._patch_spotting_max_pixels()
+    import paddlex.inference.pipelines.paddleocr_vl.pipeline as _vlp
+    collect = _vlp._PaddleOCRVLPipeline._paddleocr_vl_collect_page_vlm_entries_core
+
+    def _blocks():
+        # 每次调用全新块列表（改写分支会就地改 label）
+        return [
+            {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+             "label": "text", "box": [0, 0, 80, 80]},      # 改写 spotting 分支
+            {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+             "label": "spotting", "box": [0, 80, 80, 160]},  # 原生 spotting 分支
+        ]
+
+    cfg = {"image_labels": ["image"]}
+    # 默认值：min 0 → 回退官方 112896；max → 8GB 适配默认 1048576
+    entries, _hs, _dr = collect(None, 0, _blocks(), [[]], cfg)
+    assert entries[0][4] == (112896, 1048576)
+    assert entries[1][4] == (112896, 1048576)
+    # 热生效：apply_config 修改 min/max → 再次 collect 反映新值（无需重装 patch）
+    eng.apply_config({"ocr": {"paddle_vl": {
+        "spotting_min_pixels": 256, "spotting_max_pixels": 1605632}}})
+    entries2, _hs2, _dr2 = collect(None, 0, _blocks(), [[]], cfg)
+    assert entries2[0][4] == (256, 1605632)
+    assert entries2[1][4] == (256, 1605632)
+    # min=0 → 回退官方 112896；max=0 → 回退默认 1048576（同 __init__ 语义）
+    eng.apply_config({"ocr": {"paddle_vl": {
+        "spotting_min_pixels": 0, "spotting_max_pixels": 0}}})
+    entries3, _hs3, _dr3 = collect(None, 0, _blocks(), [[]], cfg)
+    assert entries3[0][4] == (112896, 1048576)
+    assert entries3[1][4] == (112896, 1048576)
+    PaddleOCRVLEngine.reset_instance()
+
+
 def test_collect_image_family_official_ocr_path(monkeypatch):
     """T3：image 家族（image/figure）保留官方路径 —— use_ocr_for_image_block
     （image_labels 空集）→ OCR:；入 image_labels → 跳过；figure 恒 OCR:"""
