@@ -77,6 +77,12 @@ class OcrDocView(QWidget):
     def text(self) -> str:
         return self.text_browser.toPlainText()
 
+    def clear_view(self):
+        """清空视图：画布复位 + 文本/检测框/高亮清空（清空队列后防残留旧状态）"""
+        self.canvas.clear()
+        self.text_browser.clear()
+        self._last_result = None
+
     @staticmethod
     def _blocks_to_html(result: PageResult) -> str:
         """markdown/块内容 → HTML：标题/段落、table 等宽、行内 <br>

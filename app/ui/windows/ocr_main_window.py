@@ -53,6 +53,8 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         # 渲染缓存：path -> {page_no: PIL Image}（图片文件 page_no 恒为 1，
         # 与 PDF 同构；翻页/重绘命中缓存时跳过数百 ms~数秒的 fitz 渲染）
         self._render_cache: OrderedDict = OrderedDict()
+        # 当前视图实际渲染来源文件（复制时检测视图与选中文件脱节）
+        self._rendered_path = None
         self._create_processor()
         self._restore_history()
 
@@ -220,7 +222,8 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
 
     def _on_file_selected(self, path):
         pages = self.processor.get_cache(path)
-        if pages:
+        if pages is not None:
+            # 已缓存（含空列表——取消等场景的部分结果）→ 直接展示，不重复入队
             self._show_file(path, pages)
         else:
             # 未缓存 → 自动入队解析；导航复位到单页（防残留页号）
@@ -243,11 +246,33 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
                 self.processor.start()
 
     def _on_files_cleared(self):
+        if self.processor.is_running():
+            ret = QMessageBox.question(
+                self, "清空确认",
+                "识别仍在进行，清空将中断任务。确定清空？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if ret != QMessageBox.StandardButton.Yes:
+                return
         self.processor.cancel()
         self.processor.clear_queue()  # 清空未处理条目，终止续跑
         self.processor.clear_cache()
         self._render_cache.clear()
         self.file_panel.clear()
+        self._reset_view_after_clear()
+
+    def _reset_view_after_clear(self):
+        """清空后复位源文件栏/页码/双视图，防残留旧文件状态"""
+        self.file_label.setText("未选择文件")
+        # blockSignals：setRange/setValue 会触发 valueChanged 二次渲染
+        self.page_spin.blockSignals(True)
+        self.page_spin.setRange(1, 1)
+        self.page_spin.setValue(1)
+        self.page_spin.blockSignals(False)
+        self.total_label.setText("/ 1")
+        self.doc_view.clear_view()
+        self.json_view.clear()
+        self._rendered_path = None
 
     # ── 视图 ───────────────────────────────────────────────────
 
@@ -304,6 +329,9 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
                 self._render_cache.move_to_end(path)  # LRU：最近访问文件排后
             self.doc_view.show_page(page_result, images[page_no])
             self.json_view.show_result(page_result.raw_json)
+            # 渲染成功后记录来源：复制时用于检测视图与选中文件脱节
+            # （失败路径不更新——视图仍显示上一个文件的旧内容）
+            self._rendered_path = path
         except Exception as e:
             logger.warning(f"页面渲染失败 {path} 第 {page_no} 页: {e}")
             InfoBar.error(title="渲染失败",
@@ -374,6 +402,14 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             self.processor.start()
 
     def _on_copy(self):
+        selected = self.file_panel.selected_path()
+        if selected is not None and self._rendered_path is not None \
+                and self._rendered_path != selected:
+            InfoBar.warning(
+                title="视图与选中文件不一致",
+                content=f"当前视图显示的是 "
+                        f"{os.path.basename(self._rendered_path)} 的内容",
+                parent=self, duration=3000)
         text = self._current_view_text()
         if not text:
             InfoBar.warning(title="无内容可复制", content="当前视图没有可复制的内容",
@@ -416,9 +452,16 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         if not out_dir:
             return
         base = os.path.splitext(os.path.basename(path))[0]
-        files = export_txt(pages, out_dir, base)
-        files += export_markdown(pages, out_dir, base)
-        files += export_json(pages, out_dir, base)
+        try:
+            os.makedirs(out_dir, exist_ok=True)  # 防御：所选目录可能已被删除
+            files = export_txt(pages, out_dir, base)
+            files += export_markdown(pages, out_dir, base)
+            files += export_json(pages, out_dir, base)
+        except Exception as e:
+            logger.warning(f"导出失败: {e}")
+            InfoBar.error(title="导出失败", content=str(e),
+                          parent=self, duration=3000)
+            return
         InfoBar.success(title="导出完成", content=f"{len(files)} 个文件",
                         parent=self, duration=3000)
 
@@ -479,6 +522,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
 
     def _on_processor_file_done(self, path, pages):
         self._render_cache.pop(path, None)  # 重解析内容变化 → 旧渲染图失效
+        self._set_status(f"完成 · {len(pages)} 页")
         fid = self.file_panel.file_id_by_path(path)
         if fid:
             total = sum(1 for p in pages if p.markdown or p.blocks)
@@ -488,6 +532,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             self._show_file(path, pages)
 
     def _on_processor_file_failed(self, path, err):
+        self._set_status("失败")
         fid = self.file_panel.file_id_by_path(path)
         if fid:
             self.file_panel.set_status(fid, "failed", err)

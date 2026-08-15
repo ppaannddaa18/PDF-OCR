@@ -376,3 +376,117 @@ def test_render_cache_invalidated_on_reparse(qapp, tmp_path, monkeypatch):
 
     win._on_retry()                             # 重试 → 立即失效（start 已屏蔽，无线程）
     assert path not in win._render_cache
+
+
+def _wait_cached(win, path, timeout_ms=8000):
+    """轮询等待指定文件解析完成（processEvents 驱动信号，避免 QEventLoop
+    晚连导致的 5s 空等）"""
+    from PyQt6.QtCore import QCoreApplication
+    deadline = time.monotonic() + timeout_ms / 1000
+    while win.processor.get_cache(path) is None and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(0.01)
+    assert win.processor.get_cache(path) is not None
+
+
+def _make_isolated_window(monkeypatch, engine, tmp_path):
+    """构造窗口并把历史文件指向临时路径——_restore_history 默认读用户真实
+    历史（~/.pdf_ocr_tool），会把前序测试残留的临时 PDF 路径加进面板，
+    污染 paths()/selected_path() 断言"""
+    import app.ui.windows.base_window as base_mod
+    from app.ui.windows.ocr_main_window import OcrMainWindow
+    monkeypatch.setattr(OcrMainWindow, "_history_path",
+                        lambda self: str(tmp_path / "hist.json"))
+    monkeypatch.setattr(base_mod, "get_ocr_engine", lambda cfg: engine)
+    return OcrMainWindow({"app": {"name": "OCR", "window_size": [1200, 800]},
+                          "ocr": {"engine": "paddle_vl", "paddle_vl": {}},
+                          "pdf": {"render_dpi": 100}})
+
+
+def test_files_cleared_resets_view(qapp, tmp_path, monkeypatch):
+    """T10：清空后源文件栏/页码/双视图全部复位，无残留旧状态"""
+    engine = _FakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    pdf = _make_2page_pdf(tmp_path)
+    win.add_files([pdf])
+    _wait_cached(win, pdf)
+    win.file_panel.select_file(win.file_panel.file_id_by_path(pdf))
+    assert win.file_label.text() != "未选择文件"
+    assert win.doc_view.text_browser.toPlainText() != ""
+
+    win._on_files_cleared()  # 空闲清空：无确认弹窗
+    assert win.file_label.text() == "未选择文件"
+    assert win.page_spin.value() == 1 and win.page_spin.maximum() == 1
+    assert win.total_label.text() == "/ 1"
+    assert win.doc_view.text_browser.toPlainText() == ""
+    assert win.doc_view.canvas.pixmap_item is None
+    assert win.json_view.topLevelItemCount() == 0
+    assert win.file_panel.paths() == []
+    assert win.processor.get_cache(pdf) is None
+
+
+def test_clear_during_run_asks_confirmation(qapp, tmp_path, monkeypatch):
+    """T10：运行中清空 → 确认弹窗；No 保留文件，Yes 清空并复位视图"""
+    engine = _SlowFakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    pdf = _make_2page_pdf(tmp_path)
+    win.add_files([pdf])
+    _wait_signal(win.processor, "file_started")
+    assert win.processor.is_running()
+
+    import PyQt6.QtWidgets as qt_widgets
+    monkeypatch.setattr(
+        qt_widgets.QMessageBox, "question",
+        lambda *a, **k: qt_widgets.QMessageBox.StandardButton.No)
+    win._on_files_cleared()
+    assert win.file_panel.paths() == [pdf]   # No：任务与文件均保留
+
+    monkeypatch.setattr(
+        qt_widgets.QMessageBox, "question",
+        lambda *a, **k: qt_widgets.QMessageBox.StandardButton.Yes)
+    win._on_files_cleared()
+    assert win.file_panel.paths() == []      # Yes：清空
+    assert win.file_label.text() == "未选择文件"
+
+    deadline = time.monotonic() + 5          # 等线程自然停止，避免跨测试残留
+    while win.processor.is_running() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not win.processor.is_running()
+
+
+def test_select_cached_empty_pages_no_reenqueue(qapp, tmp_path, monkeypatch):
+    """T10：0 页缓存（[]）也视为已缓存——点击不反复入队重跑"""
+    engine = _FakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    pdf = _make_2page_pdf(tmp_path)
+    monkeypatch.setattr(win.processor, "start", lambda: None)
+    # 取消等场景：进行中文件的部分结果可能为空列表，且已写入缓存
+    win.processor._cache[pdf] = []
+
+    win._on_file_selected(pdf)
+    assert pdf not in win.processor.pending_items()  # 未入队、未重跑
+    assert win.processor.get_cache(pdf) == []
+
+
+def test_copy_warns_when_view_disconnected(qapp, tmp_path, monkeypatch):
+    """T10：视图渲染来源与选中文件不一致 → 复制时 InfoBar.warning 提示，
+    仍复制当前视图（渲染来源）文本"""
+    from qfluentwidgets import InfoBar
+    from PyQt6.QtWidgets import QApplication
+    engine = _FakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    pdf_a = _make_pdf(tmp_path, "a.pdf")
+    pdf_b = _make_pdf(tmp_path, "b.pdf")
+    page_a = PageResult(blocks=[], markdown="内容 A")
+    win._render_page(pdf_a, page_a, 1)           # 视图渲染来源 = A
+    monkeypatch.setattr(win.processor, "start", lambda: None)
+    win.file_panel.add_file(pdf_b)               # 选中 B（未缓存 → 不渲染）
+    win.file_panel.select_file(win.file_panel.file_id_by_path(pdf_b))
+    assert win._rendered_path == pdf_a           # 视图仍是 A 的内容
+
+    warns = []
+    monkeypatch.setattr(InfoBar, "warning",
+                        lambda *a, **k: warns.append(k))
+    win._on_copy()
+    assert warns and "a.pdf" in warns[0]["content"]  # 脱节提示含视图来源文件名
+    assert QApplication.clipboard().text() == "内容 A"  # 复制的是视图文本

@@ -22,6 +22,29 @@ def test_export_txt(tmp_path):
     assert (tmp_path / "doc_p2.txt").read_text(encoding="utf-8") == "Second"
 
 
+def test_export_txt_preserves_body_punctuation(tmp_path):
+    """T10：只剔除行首 markdown 语法——正文中的 -/#/*/`/~ 等字符保留，
+    日期/编号/代码符号不被破坏；标题行仍整行剔除"""
+    pages = [PageResult(
+        blocks=[],
+        markdown="# 标题\n\n"
+                 "会议日期：2024-08-15\n"
+                 "C# 语言 入门\n"
+                 "编号 1234-5678\n"
+                 "- 列表项 `code` 保留\n"
+                 "> 引用行",
+        raw_json={})]
+    files = export_txt(pages, str(tmp_path), "doc")
+    text = (tmp_path / "doc_p1.txt").read_text(encoding="utf-8")
+    assert "2024-08-15" in text          # 日期中的连字符保留
+    assert "C# 语言 入门" in text         # 正文 # 保留
+    assert "1234-5678" in text           # 编号连字符保留
+    assert "列表项 `code` 保留" in text    # 行首 "- " 剥除，正文符号保留
+    assert "引用行" in text               # 行首 "> " 剥除
+    assert "标题" not in text             # 标题行整行剔除
+    assert "20240815" not in text         # 连字符未被删除（无日期变形）
+
+
 def test_export_markdown_merged(tmp_path):
     files = export_markdown(_pages(), str(tmp_path), "doc")
     text = (tmp_path / "doc.md").read_text(encoding="utf-8")

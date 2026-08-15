@@ -7,13 +7,18 @@ from app.models.page_result import PageResult
 
 
 def _page_text(result: PageResult) -> str:
-    """markdown 去标记 → 纯文本（标题行整行剔除，不残留标题文字）"""
+    """markdown 去标记 → 纯文本（标题行整行剔除；列表/引用只剥行首标记）
+
+    只剔除行首 markdown 语法（`- `、`* `、`+ `、`> `、标题行整行），正文中的
+    `-`/`#`/`*`/`` ` ``/`~` 等字符原样保留——日期（2024-08-15）、编号
+    （1234-5678）、代码符号（C# 语言）不被破坏。
+    """
     text = result.markdown or ""
     kept = []
     for line in text.splitlines():
         if re.match(r"^\s*#+(?=\s|$)", line):
             continue
-        kept.append(re.sub(r"[#>*`~-]", "", line))
+        kept.append(re.sub(r"^\s*(?:[-*+]\s|>\s)", "", line))
     return "\n".join(kept).strip()
 
 
