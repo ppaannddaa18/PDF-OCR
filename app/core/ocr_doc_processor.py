@@ -45,6 +45,8 @@ class _ProcessThread(QThread):
             try:
                 pages = self._process_file(path)
                 if self._cancel_flag.is_set():
+                    # 取消：进行中文件的已解析页保留（file_done 先写缓存再发信号，与正常路径一致）
+                    self.file_done.emit(path, pages)
                     self.cancelled.emit()
                     return
                 self.file_done.emit(path, pages)
@@ -67,9 +69,10 @@ class _ProcessThread(QThread):
             try:
                 page = self._engine.recognize_page_auto(img)
             except Exception:
-                # 单页失败不中断文件：构造失败占位（markdown 空）
+                # 单页失败不中断文件：构造失败占位（markdown 空）并计入结果
                 page = PageResult(blocks=[], markdown="", image_size=img.size)
                 self.page_progress.emit(path, i + 1, count, 0.0)
+                pages.append(page)
                 continue
             self.page_progress.emit(path, i + 1, count,
                                     (time.monotonic() - t0) * 1000)
@@ -92,6 +95,7 @@ class OcrDocProcessor(QObject):
         self._engine = engine
         self._dpi = int(config.get("pdf", {}).get("render_dpi", 200))
         self._queue: List[str] = []
+        self._run_items: set = set()  # 本次运行快照：结束后只清空这批条目
         self._thread: Optional[_ProcessThread] = None
         self._cancel_flag = threading.Event()
         self._cache: Dict[str, List[PageResult]] = {}
@@ -112,6 +116,7 @@ class OcrDocProcessor(QObject):
         if self.is_running() or not self._queue:
             return
         self._cancel_flag.clear()
+        self._run_items = set(self._queue)  # 本次运行快照
         self._thread = _ProcessThread(self._loader, self._engine,
                                       list(self._queue), self._dpi,
                                       self._cancel_flag)
@@ -120,7 +125,9 @@ class OcrDocProcessor(QObject):
         self._thread.file_done.connect(self._on_file_done)
         self._thread.file_failed.connect(self.file_failed)
         self._thread.all_done.connect(self._on_all_done)
-        self._thread.cancelled.connect(self.cancelled)
+        self._thread.cancelled.connect(self._on_cancelled)
+        # 保持引用直至 finished（QThread 收尾时置 None 属 Qt UB），finished 后回收
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.start()
 
     def cancel(self) -> None:
@@ -131,6 +138,25 @@ class OcrDocProcessor(QObject):
         self.file_done.emit(path, pages)
 
     def _on_all_done(self) -> None:
-        self._queue.clear()
-        self._thread = None
-        self.all_done.emit()
+        if self._thread is self.sender():
+            self._clear_run_queue()
+            self.all_done.emit()
+
+    def _on_cancelled(self) -> None:
+        if self._thread is self.sender():
+            self._clear_run_queue()
+            self.cancelled.emit()
+
+    def _on_thread_finished(self) -> None:
+        # finished 之后线程对象才可安全回收；若已被新线程替换，只回收旧对象
+        thread = self.sender()
+        if thread is not None:
+            thread.deleteLater()
+        if self._thread is thread:
+            self._thread = None
+
+    def _clear_run_queue(self) -> None:
+        """只清空本次运行快照条目，运行期间 add_files 追加的保留到下次 start"""
+        if self._run_items:
+            self._queue = [p for p in self._queue if p not in self._run_items]
+            self._run_items = set()
