@@ -39,3 +39,24 @@ def test_json_view_tree(qapp):
     all_text = "\n".join(view.topLevelItem(i).text(0)
                          for i in range(view.topLevelItemCount()))
     assert "parsing_res_list" in all_text
+
+
+def test_json_view_scalar_leaves_keep_keys(qapp):
+    """叶子节点键值同显：col0 为 "键: 值"，键不被值覆盖"""
+    view = OcrJsonView()
+    view.show_result({"parsing_res_list": [
+        {"block_label": "paragraph", "block_content": "Hello"},
+        {"score": 0.97}]})
+
+    def collect(item):
+        yield item.text(0)
+        for i in range(item.childCount()):
+            yield from collect(item.child(i))
+
+    all_text = "\n".join(t
+                         for i in range(view.topLevelItemCount())
+                         for t in collect(view.topLevelItem(i)))
+    assert "parsing_res_list" in all_text          # 顶层键仍在
+    assert "block_label: paragraph" in all_text    # 嵌套标量键值同显
+    assert "block_content: Hello" in all_text
+    assert "score: 0.97" in all_text

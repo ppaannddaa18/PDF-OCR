@@ -136,5 +136,6 @@ class OcrJsonView(QTreeWidget):
                 parent.addChild(item)
                 self._fill(item, v)
         else:
-            parent.setText(0, str(obj))
+            # 叶子：键值同显（dict 键 或 列表 [i]），避免键被值覆盖
+            parent.setText(0, f"{parent.text(0)}: {obj}")
             parent.setText(1, type(obj).__name__)
