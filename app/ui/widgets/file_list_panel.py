@@ -13,7 +13,7 @@
 from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal as Signal, Qt, QRect, QTimer
-from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent
+from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QStyledItemDelegate, QStyleOptionViewItem,
@@ -104,8 +104,13 @@ class _StatusBarDelegate(QStyledItemDelegate):
         )
 
         # 右侧区域：页数 + 解析徽标（小一号字体，右对齐）
-        font = option.font
-        font.setPointSize(max(1, font.pointSize() - 1))
+        # 必须基于副本：option.font 是 Qt 内部复用对象的 QFont 引用，
+        # 直接修改会累积污染（每次 paint -1pt，列表行字号逐行变小）
+        font = QFont(option.font)
+        if font.pointSizeF() > 0:
+            font.setPointSize(max(1, font.pointSize() - 1))
+        else:
+            font.setPixelSize(max(1, font.pixelSize() - 1))
         painter.setFont(font)
 
         page_count = index.data(PAGE_ROLE)

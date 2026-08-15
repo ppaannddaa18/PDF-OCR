@@ -2,6 +2,8 @@
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+from app.models.page_result import Block
+
 
 @dataclass
 class KeywordCell:
@@ -22,6 +24,7 @@ class PageKeywordResult:
     cells: Dict[str, KeywordCell] = field(default_factory=dict)
     success: bool = True
     error_msg: str = ""
+    line_boxes: List[Block] = field(default_factory=list)  # OCR 检测层行盒（预览核对用）
 
 
 @dataclass

@@ -170,14 +170,6 @@ TOOLTIPS = {
         "非极大值抑制，去除重叠检测框。开启：检测框更干净，"
         "但可能误删重叠的合法内容；关闭：保留全部框。"
         "（默认：开启）"),
-    "match_iou_threshold": (
-        "字段区域与 OCR 框的 IoU 匹配阈值（第 1 级匹配）。调大：匹配更严格，"
-        "漏匹配会降级为就近/关键词匹配；调小：更容易命中，但可能匹配到相邻字段。"
-        "（默认：0.50）"),
-    "match_neighbor_radius": (
-        "第 2 级就近搜索半径（像素）。调大：能抓到标签下方/附近更远的取值"
-        "（如“合同协议号→P132372”）；调小：更精准但易漏。"
-        "（默认：50）"),
     "pdf.render_dpi": (
         "PDF 页面渲染分辨率。调大：OCR 更清晰、识别更准，但更慢、更占内存，"
         "且超过 max_pixels 会被压缩，收益有限；调小：更快更省内存，小字可能糊。"
@@ -229,11 +221,8 @@ def check_llama_health(host: str, port: int, timeout: float = 5.0, getter=None):
 class GgufSettingsForm(QWidget):
     """GGUF 引擎参数设置表单（可嵌入页面或对话框）"""
 
-    settings_applied = Signal(dict)
-
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
-        self._original_config = copy.deepcopy(config)
         self._config = copy.deepcopy(config)
         self._init_ui()
         self._load_settings()
@@ -545,25 +534,6 @@ class GgufSettingsForm(QWidget):
 
         content_layout.addWidget(HorizontalSeparator())
 
-        # ===== 字段匹配 =====
-        content_layout.addLayout(self._create_section_title("字段匹配"))
-        content_layout.addWidget(BodyLabel(
-            "将 OCR 结果匹配到用户定义区域的三级策略：IoU → 就近搜索 → 关键词兜底"))
-
-        self.slider_iou = self._create_slider_row(
-            "IoU 匹配阈值 (match_iou_threshold)", 0.0, 1.0, 0.50, 0.01,
-            tooltip=TOOLTIPS["match_iou_threshold"]
-        )
-        content_layout.addLayout(self.slider_iou["layout"])
-
-        self.slider_neighbor = self._create_slider_row(
-            "就近搜索半径 (match_neighbor_radius)", 0, 200, 50, 1,
-            tooltip=TOOLTIPS["match_neighbor_radius"]
-        )
-        content_layout.addLayout(self.slider_neighbor["layout"])
-
-        content_layout.addWidget(HorizontalSeparator())
-
         # ===== 文档与批处理 =====
         content_layout.addLayout(self._create_section_title("文档与批处理"))
 
@@ -845,10 +815,6 @@ class GgufSettingsForm(QWidget):
 
         self.sw_nms.setChecked(gguf_cfg.get("nms_postprocess", True))
 
-        # 字段匹配
-        self._set_slider_value(self.slider_iou, gguf_cfg.get("match_iou_threshold", 0.5))
-        self._set_slider_value(self.slider_neighbor, gguf_cfg.get("match_neighbor_radius", 50))
-
         # 文档与批处理
         pdf_cfg = self._config.get("pdf", {})
         self.ed_render_dpi.setText(str(pdf_cfg.get("render_dpi", 200)))
@@ -938,8 +904,6 @@ class GgufSettingsForm(QWidget):
             "min_pixels": int(self._get_slider_value(self.slider_min_pixels)),
             "max_pixels": int(self._get_slider_value(self.slider_max_pixels)),
             "nms_postprocess": self.sw_nms.isChecked(),
-            "match_iou_threshold": self._get_slider_value(self.slider_iou),
-            "match_neighbor_radius": int(self._get_slider_value(self.slider_neighbor)),
         }
         return settings
 
@@ -1032,12 +996,6 @@ class GgufSettingsForm(QWidget):
                                gguf.get("max_pixels", 1003520))
         self.sw_nms.setChecked(gguf.get("nms_postprocess", True))
 
-        # 字段匹配
-        self._set_slider_value(self.slider_iou,
-                               gguf.get("match_iou_threshold", 0.5))
-        self._set_slider_value(self.slider_neighbor,
-                               gguf.get("match_neighbor_radius", 50))
-
         # 文档与批处理
         self.ed_render_dpi.setText(str(defaults["pdf"].get("render_dpi", 200)))
         self.ed_max_workers.setText(str(defaults["batch"].get("max_workers", 4)))
@@ -1056,10 +1014,6 @@ class GgufSettingsForm(QWidget):
             duration=2000,
             parent=self
         )
-
-    def apply_animations(self):
-        """应用动画开关（开关勾选 = 禁用动画）"""
-        AnimationManager.set_enabled(not self.sw_animations["switch"].isChecked())
 
 
 class GgufSettingsPage(QWidget):

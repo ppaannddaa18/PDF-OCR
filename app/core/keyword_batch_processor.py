@@ -19,6 +19,8 @@ class KeywordBatchProcessor:
         self.ocr_engine = ocr_engine
         self.config = config or {}
         self.max_workers = max(1, max_workers)
+        # 单页失败重试次数（设置页 batch.retry_times；0 = 不重试）
+        self.retry_times = max(0, int(self.config.get("batch", {}).get("retry_times", 2)))
 
     def process_batch(self, pdf_paths: List[str], keywords: List[str],
                       progress_cb: Optional[Callable[[int, int, str], None]] = None,
@@ -64,11 +66,21 @@ class KeywordBatchProcessor:
 
     def _extract_page(self, pdf_path: str, page_no: int,
                       extractor: KeywordExtractor) -> PageKeywordResult:
-        try:
-            image = self.pdf_loader.render_page(pdf_path, page_no - 1)
-            result = self.ocr_engine.recognize_page_auto(image)
-            markdown = getattr(result, "markdown", "") or ""
-            cells = extractor.extract(markdown)
-            return PageKeywordResult(page_no=page_no, cells=cells)
-        except Exception as e:
-            return PageKeywordResult(page_no=page_no, success=False, error_msg=str(e))
+        """单页提取（含重试：渲染/OCR 偶发失败时按 retry_times 重试）"""
+        last_err: Optional[Exception] = None
+        for attempt in range(self.retry_times + 1):
+            try:
+                image = self.pdf_loader.render_page(pdf_path, page_no - 1)
+                result = self.ocr_engine.recognize_page_auto(image)
+                markdown = getattr(result, "markdown", "") or ""
+                cells = extractor.extract(markdown)
+                # 检测层行盒（预览核对用）：引擎不提供 → 空列表，行为与旧版一致
+                line_boxes = list(getattr(result, "line_boxes", None) or [])
+                return PageKeywordResult(page_no=page_no, cells=cells,
+                                         line_boxes=line_boxes)
+            except Exception as e:
+                last_err = e
+                if attempt < self.retry_times:
+                    continue
+        return PageKeywordResult(page_no=page_no, success=False,
+                                 error_msg=str(last_err))

@@ -8,13 +8,15 @@
 - 批量添加（分批 + 进度信号 + 定时器清理）
 - 拖拽 PDF 文件
 """
-from PyQt6.QtCore import Qt, QMimeData, QUrl, QPointF
-from PyQt6.QtGui import QDropEvent
+from PyQt6.QtCore import Qt, QMimeData, QUrl, QPointF, QRect, QModelIndex
+from PyQt6.QtGui import QDropEvent, QFont, QImage, QPainter
 from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
 
 from app.ui.theme_manager import ThemeManager
 from app.ui.widgets.file_list_panel import (
-    FileListPanel, STATUS_ROLE, PATH_ROLE, PAGE_ROLE, PARSE_ROLE, status_color,
+    FileListPanel, _StatusBarDelegate,
+    STATUS_ROLE, PATH_ROLE, PAGE_ROLE, PARSE_ROLE, status_color,
 )
 
 
@@ -202,6 +204,32 @@ class TestStatusIndicator:
         panel.add_files(['a.pdf'])
         panel.set_pdf_config_status('ghost.pdf', 'custom')
         assert panel.list_widget.item(0).data(STATUS_ROLE) is None
+
+    def test_paint_does_not_pollute_option_font(self, qapp):
+        """paint 不修改 option.font：回归「列表行字号逐行变小」累积污染
+
+        option.font 是 Qt 内部复用对象的 QFont 引用，delegate 内直接
+        setPointSize 会污染下一次 paint（每次 -1pt）。必须基于副本。
+        """
+        delegate = _StatusBarDelegate()
+        img = QImage(200, 44, QImage.Format.Format_ARGB32)
+        img.fill(0xFFFFFFFF)
+        painter = QPainter(img)
+
+        option = QStyleOptionViewItem()
+        option.font = QFont('Arial', 13)
+        option.rect = QRect(0, 0, 200, 44)
+        option.state = QStyle.StateFlag.State_Enabled
+        option.widget = None
+
+        delegate.paint(painter, option, QModelIndex())
+        first = option.font.pointSizeF()
+        delegate.paint(painter, option, QModelIndex())
+        second = option.font.pointSizeF()
+        painter.end()
+
+        assert first == 13.0
+        assert second == 13.0  # 被污染时会变成 12.0
 
     def test_status_bar_renders_on_left_edge(self, qapp):
         """渲染验证：delegate 在列表项左侧绘制 3px 状态色条"""

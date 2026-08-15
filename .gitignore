@@ -56,3 +56,4 @@ llava*.dll
 
 # 项目级 Codex 配置（可能包含 API Key 等敏感信息）
 .codex/
+venv-paddle/

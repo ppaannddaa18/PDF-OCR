@@ -34,6 +34,29 @@ def test_include_status_off(tmp_path):
     assert "报关单号_状态" not in rows[0]
 
 
+def test_include_confidence_off_by_default():
+    """默认不导出置信度列（旧导出格式不变）"""
+    rows = KeywordExporter()._build_rows(_make_results())
+    assert "报关单号_置信度" not in rows[0]
+
+
+def test_include_confidence_adds_column():
+    """include_confidence=True 时每关键字加置信度列（设置页开关接线点）"""
+    rows = KeywordExporter()._build_rows(_make_results(), include_confidence=True)
+    assert rows[0]["报关单号_置信度"] == 1.0
+    assert rows[0]["价税合计_置信度"] == 1.0
+    # 失败文件占位行无单元格 → 不添加列
+    assert "报关单号_置信度" not in rows[1]
+
+
+def test_to_excel_include_confidence_roundtrip(tmp_path):
+    out = tmp_path / "kw_conf.xlsx"
+    KeywordExporter().to_excel(_make_results(), str(out), include_confidence=True)
+    df = pd.read_excel(out)
+    assert "报关单号_置信度" in df.columns
+    assert df.loc[0, "报关单号_置信度"] == 1.0
+
+
 def test_to_excel_roundtrip(tmp_path):
     out = tmp_path / "kw.xlsx"
     KeywordExporter().to_excel(_make_results(), str(out))

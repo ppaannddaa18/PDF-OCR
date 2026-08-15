@@ -2,9 +2,14 @@
 
 PDF 文本层坐标为 pt（72dpi 基准）；画布场景坐标是渲染 DPI 的图像像素。
 调用方传 scale = render_dpi / 72 换算，与 PdfCanvas 场景一致。
+页面 rotation ≠ 0 时（如 90° 扫描件），get_text("words") 返回文档坐标，
+须先经 page.rotation_matrix 变换为旋转后渲染坐标再缩放，否则高亮框
+画在画布外（GUI 实测：y=1864-2226 超出画布高 1653）。
 无文本层 / 未找到 → 返回 []（调用方只渲染不高亮）。
 """
 from typing import List, Optional
+
+import fitz
 
 
 def locate_words(page, text: str, scale: float = 1.0,
@@ -29,7 +34,11 @@ def locate_words(page, text: str, scale: float = 1.0,
     if not words:
         return []
     needle = text.replace(" ", "")
-    rects = [(w[0], w[1], w[2], w[3]) for w in words]
+    # 文档坐标 → 旋转后渲染坐标（rotation=0 时 rotation_matrix 为单位矩阵）
+    rects = []
+    for w in words:
+        r = fitz.Rect(w[0], w[1], w[2], w[3]) * page.rotation_matrix
+        rects.append((r.x0, r.y0, r.x1, r.y1))
     seq = [w[4].replace(" ", "") for w in words]
     n = len(words)
     found: List[List[float]] = []

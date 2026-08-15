@@ -17,7 +17,6 @@ class RapidSettingsDialog(QDialog):
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
-        self._original_config = copy.deepcopy(config)
         self._config = copy.deepcopy(config)
         self.setWindowTitle("设置")
         self.setMinimumSize(420, 220)

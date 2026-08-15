@@ -29,6 +29,8 @@ class BatchProcessor:
         self.ocr = ocr_engine
         self.max_workers = max_workers
         self.config = config  # 用于获取page_dpi等配置
+        # 单文件失败重试次数（设置页 batch.retry_times；0 = 不重试）
+        self.retry_times = max(0, int(config.get("batch", {}).get("retry_times", 2)))
         # 页面渲染缓存：pdf_path -> rendered_image
         self._page_cache: Dict[str, Image.Image] = {}
         self._page_cache_lock = threading.Lock()
@@ -59,6 +61,21 @@ class BatchProcessor:
             self._page_cache.clear()
 
     def process_one(self, pdf_path: str, template: Template) -> FileResult:
+        """处理单个PDF文件 — 失败按 retry_times 重试，全部失败保留最后一次错误"""
+        last_result = None
+        for attempt in range(self.retry_times + 1):
+            result = self._process_one_attempt(pdf_path, template)
+            if result.success:
+                return result
+            last_result = result
+            if attempt < self.retry_times:
+                import logging
+                logging.getLogger("PDFOCR").warning(
+                    f"[process_one] 第 {attempt + 1} 次尝试失败，重试 {pdf_path}: "
+                    f"{result.error_msg}")
+        return last_result
+
+    def _process_one_attempt(self, pdf_path: str, template: Template) -> FileResult:
         """
         处理单个PDF文件 — 根据引擎类型自动选择处理路径
 
@@ -83,7 +100,7 @@ class BatchProcessor:
                     # GGUF: 整页一次推理
                     page_results = self.ocr.recognize_page(
                         rendered_image, regions,
-                        page_dpi=self.config.get("ocr", {}).get("gguf", {}).get("page_dpi", 200)
+                        page_dpi=self.config.get("pdf", {}).get("render_dpi", 200)
                     )
                     for region in regions:
                         text, conf, match_level, _ = page_results.get(
@@ -133,6 +150,10 @@ class BatchProcessor:
             return FileResult(source_file=pdf_path, fields=fields, success=True)
 
         except Exception as e:
+            # 失败信息必须落日志：UI 只显示 error_msg，根因排查依赖此记录
+            import logging
+            logging.getLogger("PDFOCR").error(
+                f"[process_one] 识别失败 {pdf_path}: {e}", exc_info=True)
             return FileResult(source_file=pdf_path, fields={}, success=False, error_msg=str(e))
 
     def process_batch(

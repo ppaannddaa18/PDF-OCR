@@ -23,7 +23,7 @@ MRO 契约（硬性，详见 base_window.py 顶部注释）：
 import logging
 import re
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 from qfluentwidgets import (
     FluentWindow,
@@ -57,16 +57,20 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
     DESIGN = 'gguf'
     ACCENT_COLOR = '#C9A227'
     FLUENT_THEME = Theme.DARK
+    # 健康检查回调（后台线程 → 主线程，信号 QueuedConnection 自动投递）
+    _health_check_done = pyqtSignal(bool, str)
 
     def __init__(self, config):
-        # 固定 gguf 路径：config 引擎强制 gguf
-        config.setdefault("ocr", {})["engine"] = "gguf"
+        # 引擎尊重主流程选择（paddle_vl/gguf 均走本窗口）；无引擎配置时默认 gguf
+        config.setdefault("ocr", {})["engine"] = config.get("ocr", {}).get(
+            "engine") or "gguf"
         self._init_app_base(config)  # pre-super：纯数据（config/世代/shutting_down/design）
         self._init_keyword_state()   # pre-super：关键字子系统纯数据
         super().__init__()
         logging.getLogger("PDFOCR").info(
             f"Session start | engine={self.engine_type} | design={self.design} | window=GgufMainWindow")
         self._post_init_base()  # post-super：UI 部件（页面/导航/引擎异步初始化）
+        self._health_check_done.connect(self._on_health_check_done)
         # 签名元素 1：窗口顶部 2px 引擎状态发光横线
         self.engine_band = EngineStatusBand(self)
         self.engine_band.setGeometry(
@@ -117,7 +121,15 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         return self.keyword_page
 
     def _create_settings_page(self) -> QWidget:
-        """创建模型设置页（GgufSettingsPage：表单 + 操作带）"""
+        """创建模型设置页：按会话引擎动态切换（paddle_vl → PaddleVlSettingsPage；
+        gguf → GgufSettingsPage）"""
+        if self.engine_type == "paddle_vl":
+            from app.ui.widgets.paddle_vl_settings_page import PaddleVlSettingsPage
+            self.settings_page = PaddleVlSettingsPage(self.config, self)
+            self.settings_page.save_requested.connect(self._on_settings_save)
+            self.settings_page.restart_requested.connect(
+                self._on_settings_restart)
+            return self.settings_page
         from app.ui.widgets.gguf_settings_page import GgufSettingsPage
         self.settings_page = GgufSettingsPage(self.config, self)
         self.settings_page.save_requested.connect(self._on_settings_save)
@@ -144,8 +156,24 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
             parent=self, duration=3000)
 
     def _on_settings_restart(self, patch: dict):
-        """重启引擎：合并配置 + 写盘；设备（GPU/CPU）变更走程序重启，
-        其余参数进程内卸载重初始化"""
+        """重启引擎：合并配置 + 写盘；GGUF 设备（GPU/CPU）变更走程序重启，
+        其余参数进程内卸载重初始化；paddle_vl 无设备概念直接进程内重启"""
+        if self.engine_type == "paddle_vl":
+            self._merge_config_patch(self.config, patch)
+            try:
+                from app.utils.config_loader import save_config
+                save_config(self.config)
+            except Exception as e:
+                InfoBar.error(title="保存失败", content=f"无法保存设置: {e}",
+                              parent=self, duration=5000)
+                return
+            self._reinit_engine_in_process()
+            InfoBar.success(
+                title="引擎已重启",
+                content="参数已应用，PaddleOCR-VL 管线重新初始化中",
+                parent=self, duration=3000)
+            return
+
         old_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
         self._merge_config_patch(self.config, patch)
         new_device = self.config.get("ocr", {}).get("gguf", {}).get("device", "gpu")
@@ -203,19 +231,22 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         def _probe():
             from app.ui.widgets.gguf_settings_page import check_llama_health
             ok, msg = check_llama_health(host, port)
-
-            def _show():
-                if ok:
-                    InfoBar.success(title="连接正常", content=msg,
-                                    parent=self, duration=3000)
-                else:
-                    InfoBar.error(
-                        title="连接失败",
-                        content=f"{msg}（可点击『重启引擎』启动服务）",
-                        parent=self, duration=5000)
-            QTimer.singleShot(0, _show)
+            # 跨线程回调必须走信号（QueuedConnection 自动投递到主线程）：
+            # PyQt6 的 QTimer.singleShot(0, 闭包) 从后台线程调用不执行
+            self._health_check_done.emit(ok, msg)
 
         threading.Thread(target=_probe, daemon=True, name="HealthCheck").start()
+
+    def _on_health_check_done(self, ok: bool, msg: str):
+        """健康检查结果（后台线程经信号投递到主线程）"""
+        if ok:
+            InfoBar.success(title="连接正常", content=msg,
+                            parent=self, duration=3000)
+        else:
+            InfoBar.error(
+                title="连接失败",
+                content=f"{msg}（可点击『重启引擎』启动服务）",
+                parent=self, duration=5000)
 
     def _register_sub_interfaces(self):
         """注册侧边导航（FluentWindow：左侧 NavigationInterface，4 页）"""
@@ -444,7 +475,8 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
             return
         try:
             from app.core.keyword_exporter import KeywordExporter
-            KeywordExporter().to_excel(results, path)
+            include_conf = self.config.get("export", {}).get("include_confidence", False)
+            KeywordExporter().to_excel(results, path, include_confidence=include_conf)
         except Exception as e:
             InfoBar.error(title="导出失败", content=str(e), parent=self, duration=3000)
             return
@@ -460,7 +492,8 @@ class GgufMainWindow(AppBaseWindowMixin, FluentWindow):
         self.keyword_page.inspection._file_index = file_index
         self.keyword_page.inspection.show_inspection(
             fr.source_file, page_no, self.pdf_loader, dpi,
-            fr.pages[page_no - 1].cells, keyword)
+            fr.pages[page_no - 1].cells, keyword,
+            fr.pages[page_no - 1].line_boxes)
         self.keyword_page.inspection.setVisible(True)
 
     def _on_inspection_value_edited(self, file_index, page_no, keyword, new_value):

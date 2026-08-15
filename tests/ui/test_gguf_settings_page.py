@@ -91,8 +91,14 @@ class TestGgufSettingsForm:
         patch = form.get_config_patch()
         patch_gguf = patch["ocr"]["gguf"]
         expected = _make_config()["ocr"]["gguf"]
+        # 字段匹配滑块已移除（仅模板批量 FieldMatcher 消费，GGUF 流程无此概念），
+        # config 键保留兼容但不进 patch
+        expected.pop("match_iou_threshold", None)
+        expected.pop("match_neighbor_radius", None)
         for key, value in expected.items():
             assert patch_gguf[key] == value, key
+        assert "match_iou_threshold" not in patch_gguf
+        assert "match_neighbor_radius" not in patch_gguf
         assert patch["pdf"]["render_dpi"] == 200
         assert patch["batch"]["max_workers"] == 2
         assert patch["batch"]["retry_times"] == 2
@@ -131,6 +137,22 @@ class TestGgufSettingsForm:
         patch = form.get_config_patch()["ocr"]["gguf"]
         assert "idle_unload_seconds" not in patch
         assert patch["timeout_seconds"] == 120
+        _destroy(form)
+
+    def test_matcher_sliders_removed(self, qapp):
+        """字段匹配滑块已移除（仅模板批量 FieldMatcher 消费，GGUF 流程无此概念）"""
+        form = GgufSettingsForm(_make_config())
+        assert not hasattr(form, 'slider_iou')
+        assert not hasattr(form, 'slider_neighbor')
+        _destroy(form)
+
+    def test_dead_code_removed(self, qapp):
+        """表单死代码已清理：settings_applied 信号 / _original_config / apply_animations"""
+        from app.ui.widgets.gguf_settings_page import GgufSettingsForm as Cls
+        assert not hasattr(Cls, 'settings_applied')
+        form = Cls(_make_config())
+        assert not hasattr(form, '_original_config')
+        assert not hasattr(form, 'apply_animations')
         _destroy(form)
 
     def test_animations_switch_applies_immediately(self, qapp, monkeypatch):
@@ -196,8 +218,6 @@ class TestGgufSettingsForm:
         form.sw_mmproj_offload.setChecked(False)
         form._set_slider_value(form.slider_min_pixels, 100000)
         form._set_slider_value(form.slider_max_pixels, 5000000)
-        form._set_slider_value(form.slider_iou, 0.9)
-        form._set_slider_value(form.slider_neighbor, 5)
         form.ed_render_dpi.setText("150")
         form.ed_max_workers.setText("1")
         form.ed_retry_times.setText("0")
@@ -215,8 +235,6 @@ class TestGgufSettingsForm:
         assert form.sw_mmproj_offload.isChecked() is True
         assert form._get_slider_value(form.slider_min_pixels) == 112896
         assert form._get_slider_value(form.slider_max_pixels) == 1003520
-        assert form._get_slider_value(form.slider_iou) == 0.5
-        assert form._get_slider_value(form.slider_neighbor) == 50
         assert form.ed_render_dpi.text() == "200"
         assert form.ed_max_workers.text() == "4"
         assert form.ed_retry_times.text() == "2"
@@ -255,8 +273,6 @@ class TestGgufSettingsForm:
             form.slider_confidence["line_edit"].toolTip(),
             form.slider_min_pixels["line_edit"].toolTip(),
             form.slider_max_pixels["line_edit"].toolTip(),
-            form.slider_iou["line_edit"].toolTip(),
-            form.slider_neighbor["line_edit"].toolTip(),
         ]
         for tip in numeric_tips:
             assert "默认" in tip and "调大" in tip and "调小" in tip, tip
@@ -433,6 +449,12 @@ class TestWindowHandlers:
         window._on_settings_save({"ocr": {"gguf": {"port": 9999}}})
         assert window.config["ocr"]["gguf"]["port"] == 9999
         assert len(calls) == 1
+
+    def test_window_disables_dwm_material(self, window):
+        """防截图变白：禁用 Mica 与导航 acrylic（DWM 合成材质在
+        系统截图工具下会失效，透明背景回退白色）"""
+        assert window.isMicaEffectEnabled() is False
+        assert window.navigationInterface.isAcrylicEnabled() is False
 
     def test_restart_device_change_uses_program_restart(self, window, monkeypatch):
         restarts = []

@@ -296,6 +296,13 @@ class LoadingOverlay(QWidget):
                 "1. 重新安装应用程序\n2. 检查安装目录是否完整\n3. 联系技术支持获取模型文件",
                 None
             ),
+            # 依赖包缺失（必须在 "onnx" 之前：rapidocr 包缺失的报错
+            # 文本常含 "onnx"，否则会误导为 VC++ 运行库问题）
+            "no module named": (
+                "Python 依赖包缺失",
+                "1. 在项目目录执行 pip install -r requirements.txt\n2. 重启应用程序",
+                None
+            ),
             # 运行时错误
             "onnx runtime error": (
                 "OCR运行环境异常",

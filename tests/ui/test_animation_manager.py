@@ -5,7 +5,7 @@ from PyQt6.QtCore import QAbstractAnimation
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QWidget
 
-from app.ui.animation_manager import AnimationManager
+from app.ui.animation_manager import AnimationManager, apply_config_animation_setting
 
 # 模块加载时的初始状态（反映系统 reduced-motion 检测结果），作为默认值断言基准
 _INITIAL_ENABLED = AnimationManager.is_enabled()
@@ -117,3 +117,24 @@ class TestAnimationManager:
         assert anim is not None
         assert anim.state() == QAbstractAnimation.State.Running
         assert widget.minimumWidth() == 300  # 动画尚未运行，属性保持禁用时设置的最终值
+
+
+class TestApplyConfigAnimationSetting:
+    def test_explicit_key_applied(self, qapp):
+        """config 显式含 animations_enabled 时应用并返回 True"""
+        assert apply_config_animation_setting(
+            {"appearance": {"animations_enabled": False}}) is True
+        assert AnimationManager.is_enabled() is False
+        assert apply_config_animation_setting(
+            {"appearance": {"animations_enabled": True}}) is True
+        assert AnimationManager.is_enabled() is True
+
+    def test_missing_key_keeps_system_detection(self, qapp):
+        """config 无该键（旧配置）时不覆盖，返回 False"""
+        AnimationManager.set_enabled(False)
+        assert apply_config_animation_setting({}) is False
+        assert apply_config_animation_setting({"appearance": {}}) is False
+        assert AnimationManager.is_enabled() is False  # 未被覆盖
+        AnimationManager.set_enabled(True)
+        assert apply_config_animation_setting(None) is False
+        assert AnimationManager.is_enabled() is True

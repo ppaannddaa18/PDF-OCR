@@ -19,7 +19,7 @@ MRO 契约（硬性，详见 base_window.py 顶部注释）：
 """
 import logging
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QDialog,
 )
@@ -93,6 +93,8 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
 
     WINDOW_TITLE = "PDF OCR — 文档工作台"
     WINDOW_ICON = 'fa5s.file-pdf'
+    # 试识别结果回调（后台线程 → 主线程，信号 QueuedConnection 自动投递）
+    _try_ocr_done = pyqtSignal(object, object, str)  # (result, error, pdf_path)
 
     def __init__(self, config):
         # 固定 rapid 路径：config 引擎强制 rapidocr（构造期直接
@@ -104,6 +106,7 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         logging.getLogger("PDFOCR").info(
             f"Session start | engine={self.engine_type} | design={self.design} | window=RapidMainWindow")
         self._post_init_base()  # post-super：UI 部件（页面/导航/引擎异步初始化）
+        self._try_ocr_done.connect(self._on_try_ocr_done)
         self._connect_signals()
         self._connect_focus_tracking()
         self._setup_shortcuts()
@@ -729,8 +732,21 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
                 )
             return
 
-        template = self.field_panel.build_template()
-        current_pdf = self.file_panel.current_file()
+        try:
+            template = self.field_panel.build_template()
+            current_pdf = self.file_panel.current_file()
+        except Exception as e:
+            # 主线程内构建模板/取当前文件，异常直接反馈而非炸 Qt 槽
+            InfoBar.error(
+                title="模板构建失败",
+                content=str(e),
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self
+            )
+            return
         if not current_pdf or not template.regions:
             InfoBar.warning(
                 title="提示",
@@ -748,27 +764,60 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         def _do_try_ocr():
             try:
                 result = self.processor.process_one(current_pdf, template)
-                def _on_done():
-                    self.field_panel.show_preview_result(result)
-                    self._current_preview_result = result
-                    self._pdf_preview_results[current_pdf] = result
-                    self.status_label.setText(f"试识别完成 - 共 {len(template.regions)} 个字段")
-                QTimer.singleShot(0, _on_done)
+                error = None
             except Exception as e:
-                def _on_error():
-                    InfoBar.error(
-                        title="试识别失败",
-                        content=str(e),
-                        orient=Qt.Orientation.Horizontal,
-                        isClosable=True,
-                        position=InfoBarPosition.TOP,
-                        duration=5000,
-                        parent=self
-                    )
-                    self.status_label.setText("试识别失败")
-                QTimer.singleShot(0, _on_error)
+                result = None
+                error = str(e)
+            # 跨线程回调必须走信号（QueuedConnection 自动投递到主线程）：
+            # PyQt6 的 QTimer.singleShot(0, 闭包) 从后台线程调用不执行
+            self._try_ocr_done.emit(result, error, current_pdf)
 
         threading.Thread(target=_do_try_ocr, daemon=True, name="TryOCR").start()
+
+    def _on_try_ocr_done(self, result, error: str, pdf_path: str):
+        """试识别结果回调（后台线程经信号投递到主线程）"""
+        if error:
+            self.status_label.setText("试识别失败")
+            InfoBar.error(
+                title="试识别失败",
+                content=error,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self
+            )
+            return
+        self.field_panel.show_preview_result(result)
+        self._current_preview_result = result
+        self._pdf_preview_results[pdf_path] = result
+        if not result.success:
+            # process_one 吞异常转失败 FileResult（error_msg 携带原因）
+            self.status_label.setText("试识别失败")
+            InfoBar.error(
+                title="试识别失败",
+                content=result.error_msg or "未知错误",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self
+            )
+        elif not result.fields:
+            # 引擎正常但未识别出任何字段（区域空白/无文字），
+            # 与"识别失败"区分开，不再伪装成成功
+            self.status_label.setText("试识别完成 - 未识别到内容")
+            InfoBar.warning(
+                title="未识别到内容",
+                content="引擎已就绪但未识别出文字，请检查框选区域是否空白或查看日志",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=4000,
+                parent=self
+            )
+        else:
+            self.status_label.setText(f"试识别完成 - 共 {len(result.fields)} 个字段")
 
     def on_batch_run(self):
         # 防止重复点击启动多个 Worker
@@ -1008,15 +1057,32 @@ class RapidMainWindow(AppBaseWindowMixin, MSFluentWindow):
         self._pdf_preview_results.clear()
         self._current_preview_result = None
 
-        InfoBar.success(
-            title="完成",
-            content=f"共处理 {len(results)} 个文件，成功 {success} 个",
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self
-        )
+        if fail > 0:
+            # 失败文件的原因在结果表格中仅体现为失败行，这里给出可见提示
+            first_err = next(
+                (r.error_msg for r in results if not r.success and r.error_msg), "")
+            content = f"共处理 {len(results)} 个文件，失败 {fail} 个"
+            if first_err:
+                content += f"（示例: {first_err[:80]}）"
+            InfoBar.warning(
+                title="部分文件识别失败",
+                content=content,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=6000,
+                parent=self
+            )
+        else:
+            InfoBar.success(
+                title="完成",
+                content=f"共处理 {len(results)} 个文件，成功 {success} 个",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self
+            )
 
     # ── 模板保存/加载/字段操作（P3b 机械迁移） ───────────────────
 

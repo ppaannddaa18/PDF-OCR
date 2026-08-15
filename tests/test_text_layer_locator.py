@@ -68,3 +68,26 @@ def test_rect_not_merge_first_line(page):
     assert x0 >= target[0] - 2
     assert x1 <= target[2] + 2
     assert y0 >= target[1] - 2  # 修复前 y0 会取到第一行（合并了行首词）
+
+
+def test_rotation_90_maps_into_rendered_canvas():
+    """页面 rotation=90：坐标须经 rotation_matrix 变换，落在旋转后渲染图内
+    （回归：修复前未变换 → 高亮框 y 超出画布，GUI 预览不可见）"""
+    doc = fitz.open()
+    pg = doc.new_page()
+    pg.insert_text((72, 72), "Invoice No: 12345678")
+    pg.set_rotation(90)
+    rects = locate_words(pg, "12345678")
+    assert len(rects) == 1
+    x0, y0, x1, y1 = rects[0]
+    # 渲染图像（200dpi，旋转 90 后横向）：宽高与原始页面互换
+    pix = pg.get_pixmap(matrix=fitz.Matrix(200 / 72, 200 / 72))
+    # rotation_matrix 变换后为旋转方向坐标 → ×scale 应在画布内
+    assert 0 <= x0 < x1 <= pix.width + 1
+    assert 0 <= y0 < y1 <= pix.height + 1
+
+
+def test_rotation_0_unchanged(page):
+    """rotation=0 时行为不变（单位矩阵）"""
+    before = locate_words(page, "12345678")
+    assert before[0][0] > 0

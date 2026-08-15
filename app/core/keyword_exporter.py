@@ -1,4 +1,7 @@
-"""关键字汇总导出 — Excel/CSV：每页一行（文件名|页号|kw|kw_状态|…|文件状态）"""
+"""关键字汇总导出 — Excel/CSV：每页一行（文件名|页号|kw|kw_状态|…|文件状态）
+
+include_confidence 可选置信度列（设置页 export.include_confidence 接线点）。
+"""
 import pandas as pd
 from typing import Dict, List
 
@@ -11,7 +14,8 @@ _STATUS_WORDS = {"confirmed": "已确认", "pending": "待确认",
 class KeywordExporter:
 
     def _build_rows(self, results: List[FileKeywordResult],
-                    include_status: bool = True) -> List[Dict]:
+                    include_status: bool = True,
+                    include_confidence: bool = False) -> List[Dict]:
         keywords: List[str] = []
         for fr in results:
             for pg in fr.pages:
@@ -30,6 +34,8 @@ class KeywordExporter:
                         if include_status:
                             row[f"{kw}_状态"] = (
                                 _STATUS_WORDS.get(cell.status, "") if cell else "未找到")
+                        if include_confidence:
+                            row[f"{kw}_置信度"] = cell.confidence if cell else 0.0
                     rows.append(row)
             else:
                 rows.append({"源文件": fr.source_file, "页号": "",
@@ -37,11 +43,11 @@ class KeywordExporter:
         return rows
 
     def to_excel(self, results: List[FileKeywordResult], output_path: str,
-                 include_status: bool = True):
-        pd.DataFrame(self._build_rows(results, include_status)).to_excel(
+                 include_status: bool = True, include_confidence: bool = False):
+        pd.DataFrame(self._build_rows(results, include_status, include_confidence)).to_excel(
             output_path, index=False, engine="openpyxl")
 
     def to_csv(self, results: List[FileKeywordResult], output_path: str,
-               include_status: bool = True):
-        pd.DataFrame(self._build_rows(results, include_status)).to_csv(
+               include_status: bool = True, include_confidence: bool = False):
+        pd.DataFrame(self._build_rows(results, include_status, include_confidence)).to_csv(
             output_path, index=False, encoding="utf-8-sig")

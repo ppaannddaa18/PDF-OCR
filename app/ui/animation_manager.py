@@ -129,3 +129,17 @@ class AnimationManager(QObject):
                 cls._animations.remove(anim)
             except ValueError:
                 pass  # stop() 同步触发 stateChanged 清理时已被移除
+
+
+def apply_config_animation_setting(config: dict) -> bool:
+    """应用 config 的动画设置（appearance.animations_enabled）
+
+    仅当 config 显式包含该键时应用并返回 True（覆盖系统 reduced-motion
+    检测）；无键（旧配置）时保持系统检测并返回 False。修复 Rapid 设置
+    对话框保存后下次启动不恢复的问题（main.py 启动时调用）。
+    """
+    appearance = (config or {}).get("appearance", {})
+    if "animations_enabled" not in appearance:
+        return False
+    AnimationManager.set_enabled(bool(appearance["animations_enabled"]))
+    return True

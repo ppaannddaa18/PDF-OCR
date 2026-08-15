@@ -21,7 +21,7 @@ import pytest
 from PyQt6 import sip
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
-from qfluentwidgets import Theme
+from qfluentwidgets import InfoBar, Theme
 
 import app.ui.windows.base_window as base_window_module
 from app.ui.windows.rapid_main_window import RapidMainWindow
@@ -90,6 +90,13 @@ class TestRapidWindowShell:
         assert (w.size().width(), w.size().height()) == (w_, h_)
         assert w.stackedWidget is not None
         assert w.navigationInterface is not None
+
+    def test_disables_dwm_material(self, rapid_window):
+        """防截图变白：禁用 Mica（DWM 合成材质在系统截图工具下会失效，
+        透明背景回退白色）。Rapid 顶部导航为 NavigationBar，无 acrylic API"""
+        w = rapid_window
+        assert w.isMicaEffectEnabled() is False
+        assert not hasattr(w.navigationInterface, 'isAcrylicEnabled')
 
     def test_result_and_history_pages_present(self, rapid_window):
         """结果页/历史页已迁入（含统计卡片/筛选工具栏/表格/面板）"""
@@ -242,6 +249,72 @@ class TestRapidWindowWorkspace:
         w.on_try_ocr()
         w.on_batch_run()
         assert w.worker is None
+
+    def test_try_ocr_failure_shows_error(self, rapid_window, monkeypatch):
+        """process_one 返回失败 FileResult → InfoBar.error + 状态栏"试识别失败"
+
+        回归：失败曾被伪装成"试识别完成"（_on_done 不检查 success），
+        用户看到表格空白却无任何报错。
+        """
+        import time
+        from app.models.region import Region
+        from app.models.template import Template
+        from app.models.ocr_result import FileResult
+
+        w = rapid_window
+        w.show()  # InfoBar 挂在窗口上，窗口需显示才会可见
+        QTest.qWait(20)
+        w.file_panel.add_files(['a.pdf'])
+        template = Template(name="t", regions=[
+            Region(id="r1", field_name="金额", x=0.1, y=0.1, w=0.3, h=0.2)])
+        monkeypatch.setattr(w.field_panel, "build_template", lambda: template)
+
+        class FakeProcessor:
+            def process_one(self, pdf, template):
+                return FileResult(
+                    source_file=pdf, fields={}, success=False,
+                    error_msg="onnxruntime dll load failed")
+
+        w.processor = FakeProcessor()
+        w.on_try_ocr()
+
+        deadline = time.monotonic() + 2
+        while w.status_label.text() != "试识别失败" and time.monotonic() < deadline:
+            QTest.qWait(20)
+        assert w.status_label.text() == "试识别失败"
+        QTest.qWait(300)  # 等 InfoBar 完成 show（与状态栏同槽，事件处理有时序差）
+        bars = [b for b in w.findChildren(InfoBar) if b.isVisible()]
+        assert any("dll load failed" in b.contentLabel.text() for b in bars)
+
+    def test_try_ocr_empty_fields_warns(self, rapid_window, monkeypatch):
+        """成功但无字段 → warning「未识别到内容」（区分空结果与失败）"""
+        import time
+        from app.models.region import Region
+        from app.models.template import Template
+        from app.models.ocr_result import FileResult
+
+        w = rapid_window
+        w.show()  # InfoBar 挂在窗口上，窗口需显示才会可见
+        QTest.qWait(20)
+        w.file_panel.add_files(['a.pdf'])
+        template = Template(name="t", regions=[
+            Region(id="r1", field_name="金额", x=0.1, y=0.1, w=0.3, h=0.2)])
+        monkeypatch.setattr(w.field_panel, "build_template", lambda: template)
+
+        class FakeProcessor:
+            def process_one(self, pdf, template):
+                return FileResult(source_file=pdf, fields={}, success=True)
+
+        w.processor = FakeProcessor()
+        w.on_try_ocr()
+
+        deadline = time.monotonic() + 2
+        while "未识别到内容" not in w.status_label.text() and time.monotonic() < deadline:
+            QTest.qWait(20)
+        assert w.status_label.text() == "试识别完成 - 未识别到内容"
+        QTest.qWait(300)  # 等 InfoBar 完成 show
+        bars = [b for b in w.findChildren(InfoBar) if b.isVisible()]
+        assert any("未识别到内容" in b.titleLabel.text() for b in bars)
 
     def test_upload_adds_files_and_status(self, rapid_window, monkeypatch, tmp_path):
         """on_upload 走文件对话框（monkeypatch）→ 文件面板加载 + 状态栏提示"""

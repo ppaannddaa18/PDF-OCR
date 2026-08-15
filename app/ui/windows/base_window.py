@@ -406,6 +406,16 @@ class AppBaseWindowMixin:
         setTheme(self.FLUENT_THEME)
         setThemeColor(self.ACCENT_COLOR)
         ThemeManager.set_design(self.DESIGN)
+        # Win11 Mica/acrylic 是 DWM 合成材质（窗口背景为透明 + 系统云母层）。
+        # 系统截图工具（Win+Shift+S）经 BitBlt 截屏时会破坏/无法合成该材质，
+        # 透明区域回退为白色 → 深色界面"截图后变白"（自绘 QSS 部件不受影响）。
+        # 禁用 DWM 材质：窗口背景改为自绘纯色，截图工具无法破坏。
+        self.setMicaEffectEnabled(False)
+        # 侧边导航（FluentWindow）用 NavigationInterface 支持 acrylic；
+        # 顶部导航（MSFluentWindow）是 NavigationBar，无此 API
+        if hasattr(self, 'navigationInterface') and hasattr(
+                self.navigationInterface, 'setAcrylicEnabled'):
+            self.navigationInterface.setAcrylicEnabled(False)
 
     def apply_theme(self):
         """重建窗口自身内嵌 QSS（ThemeManager.set_theme/set_design 后经
@@ -741,8 +751,10 @@ class AppBaseWindowMixin:
             except Exception as e:
                 _logger.error(f"[Shutdown] 清理过程异常: {e}")
             finally:
-                # 确保在主线程中调用quit
-                QTimer.singleShot(0, _on_cleanup_done)
+                # QApplication.quit() 线程安全，可直接在后台线程调用；
+                # 原 QTimer.singleShot(0, 闭包) 从后台线程调用不执行，
+                # 会导致清理完成后应用无法退出
+                _on_cleanup_done()
 
         import threading
         self._shutdown_cleanup_thread = threading.Thread(

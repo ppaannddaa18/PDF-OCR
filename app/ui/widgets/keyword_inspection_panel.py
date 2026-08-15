@@ -49,8 +49,14 @@ class KeywordInspectionPanel(QWidget):
         ThemeManager.register_refresh_callback(self.apply_theme)
 
     def show_inspection(self, file_path: str, page_no: int, loader, dpi: int,
-                        cells: dict, focus_keyword: str = None):
-        """渲染该页、高亮焦点单元格（值优先，值未找到退而定位关键字）、填表"""
+                        cells: dict, focus_keyword: str = None,
+                        line_boxes: list = None):
+        """渲染该页、高亮焦点单元格（值优先，值未找到退而定位关键字）、填表
+
+        高亮优先级：PDF 文本层定位（精确）→ OCR 检测层行盒兜底
+        （line_boxes：引擎检测出的行级 Block，bbox 为图像像素坐标，
+        扫描件无文本层时的唯一坐标源）。
+        """
         self._page_no = page_no
         self._cells = cells
         self.title_label.setText(f"{file_path}  ·  第 {page_no} 页")
@@ -62,12 +68,49 @@ class KeywordInspectionPanel(QWidget):
             focus = cells[focus_keyword].value or focus_keyword
         elif focus_keyword:
             focus = focus_keyword
+        hit = False
         if focus:
             # 值优先；文本层未命中（OCR 值与文本层格式差异）→ 退而定位关键字本身
-            if not self._highlight_on_text_layer(file_path, page_no, focus, dpi) \
-                    and focus_keyword:
-                self._highlight_on_text_layer(file_path, page_no, focus_keyword, dpi)
+            hit = self._highlight_on_text_layer(file_path, page_no, focus, dpi)
+            if not hit and focus_keyword:
+                hit = self._highlight_on_text_layer(file_path, page_no, focus_keyword, dpi)
+        if not hit:
+            # 文本层无命中（扫描件无文本层等）→ OCR 检测层行盒兜底
+            self._highlight_on_ocr_boxes(line_boxes or [], focus, focus_keyword)
         self._fill_table()
+
+    def _highlight_on_ocr_boxes(self, line_boxes: list, focus: str = None,
+                                 focus_keyword: str = None) -> bool:
+        """OCR 检测层行盒高亮 — 命中行（值/关键字任一）主题色，其余淡色
+
+        行盒 Block.bbox 为图像像素坐标（与画布场景坐标一致，直接画）。
+        返回是否画了任何框。
+        """
+        if not line_boxes:
+            return False
+        needles = []
+        for n in (focus, focus_keyword):
+            n = (n or "").replace(" ", "")
+            if n and n not in needles:
+                needles.append(n)
+        matched_rows = set()
+        for i, b in enumerate(line_boxes):
+            content = (getattr(b, "content", "") or "").replace(" ", "")
+            for n in needles:
+                if n and n in content:
+                    matched_rows.add(i)
+                    break
+        for i, b in enumerate(line_boxes):
+            bbox = getattr(b, "bbox", None)
+            if not bbox or len(bbox) != 4:
+                continue
+            if i in matched_rows:
+                self.canvas.highlight_bbox(bbox)  # 主题色 primary
+            else:
+                # 淡色：未命中行 / 无 focus 时兜底展示识别版面
+                self.canvas.highlight_bbox(
+                    bbox, color=ThemeManager.get_color('text_disabled'))
+        return True
 
     def _highlight_on_text_layer(self, file_path: str, page_no: int, text: str,
                                  dpi: int) -> bool:
