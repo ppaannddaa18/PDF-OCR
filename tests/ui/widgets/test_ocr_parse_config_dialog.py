@@ -86,3 +86,51 @@ def test_patch_excludes_disabled_keys(qapp):
     pv = dlg.get_config_patch()["ocr"]["paddle_vl"]
     assert "use_doc_orientation_classify" not in pv
     assert "use_doc_unwarping" not in pv
+
+
+def test_cancel_button_rejects(qapp):
+    """T11：取消按钮存在且点击后弹窗 Rejected"""
+    from PyQt6.QtWidgets import QDialog, QPushButton
+    dlg = OcrParseConfigDialog({})
+    btns = [b for b in dlg.findChildren(QPushButton)]
+    cancel = next(b for b in btns if b.text() == "取消")
+    cancel.click()
+    assert dlg.result() == QDialog.DialogCode.Rejected
+
+
+def test_rep_spin_decimals_one(qapp):
+    """T11：重复抑制强度显示 1 位小数（1.1 而非 1.10）"""
+    dlg = OcrParseConfigDialog({})
+    assert dlg._rep_spin.decimals() == 1
+    assert dlg._rep_spin.textFromValue(1.1) == "1.1"
+
+
+def test_reset_matches_defaults(qapp):
+    """T11：reset_to_defaults 复用 defaults()——重置后表单值 == defaults()"""
+    from app.ui.widgets.ocr_parse_config_dialog import _AUX_ITEMS
+    dlg = OcrParseConfigDialog({"ocr": {"paddle_vl": {
+        "use_layout_detection": True,
+        "use_chart_recognition": False,
+        "repetition_penalty": 1.7,
+        "spotting_min_pixels": 100,
+        "spotting_max_pixels": 999,
+        "markdown_ignore_labels": ["number"],
+    }}})
+    dlg.reset_to_defaults()
+    d = dlg.defaults()
+    for label, _, _ in _AUX_ITEMS:
+        assert dlg._aux_checks[label].isChecked() == \
+            (label not in d["markdown_ignore_labels"])
+    assert dlg._rep_spin.value() == d["repetition_penalty"] == 1.1
+    assert dlg._min_px.value() == d["spotting_min_pixels"] == 0
+    assert dlg._max_px.value() == d["spotting_max_pixels"] == 1048576
+    assert dlg._model_switches["use_layout_detection"].isChecked() is False
+    assert dlg._model_switches["use_chart_recognition"].isChecked() is True
+
+
+def test_aux_group_hint_text(qapp):
+    """T11：辅助内容组灰色小字提示逐块模式生效条件"""
+    from PyQt6.QtWidgets import QLabel
+    dlg = OcrParseConfigDialog({})
+    texts = [lbl.text() for lbl in dlg.findChildren(QLabel)]
+    assert any("仅开启版面分析" in t for t in texts)

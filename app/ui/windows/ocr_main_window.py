@@ -121,6 +121,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         self.file_panel.setFixedWidth(240)
         self.file_panel.file_selected.connect(self._on_file_selected)
         self.file_panel.clear_requested.connect(self._on_files_cleared)
+        self.file_panel.file_remove_requested.connect(self._on_file_remove_requested)
         body.addWidget(self.file_panel)
 
         right = QVBoxLayout()
@@ -244,6 +245,16 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
                 self._set_status("已加入队列（当前批次结束后处理）")
             else:
                 self.processor.start()
+
+    def _on_file_remove_requested(self, path):
+        """删除单个文件：只清该文件缓存 + 失效其渲染图。
+
+        简化取舍：队列中未处理的条目保留处理（不从 _queue 摘除），避免
+        队列/运行快照语义复杂化——已处理的文件删除后不再展示，未处理的
+        仍会在队列中完成（用户清空队列可整批中断）。
+        """
+        self.processor.clear_cache(path)
+        self._render_cache.pop(path, None)
 
     def _on_files_cleared(self):
         if self.processor.is_running():
@@ -493,7 +504,9 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         for entry in self._load_history():
             try:
                 if os.path.exists(entry["path"]):
-                    self.file_panel.add_file(entry["path"])
+                    fid = self.file_panel.add_file(entry["path"])
+                    # 历史恢复：未自动入队，提示点击后重新解析（T8 点击即入队）
+                    self.file_panel.set_status(fid, "queued", "点击重新解析")
             except Exception as e:
                 logger.warning(f"历史记录条目损坏，跳过: {e}")
 
@@ -548,6 +561,10 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         cancelled 到达时无从定位），统一在 cancelled/all_done 收尾清空。
         """
         self._set_status("已取消")
+        # 取消前的 file_done 已把进行中文件的部分页写入缓存——清空确认/关闭
+        # 等取消路径下这些孤儿缓存不应再被展示，统一清除（重试路径会重新
+        # 入队并重新写入完整结果，不受影响）
+        self.processor.clear_cache()
         if self._processing_path:
             fid = self.file_panel.file_id_by_path(self._processing_path)
             if fid:

@@ -59,6 +59,11 @@ class OcrParseConfigDialog(QDialog):
             chk.setChecked(label not in ignore)
             self._aux_checks[label] = chk
             form.addRow(chk)
+        # 灰色小字提示：辅助内容过滤仅逐块模式（开启版面分析）生效，
+        # 整页模式输出整页 markdown 无布局标签，该组配置不参与过滤
+        aux_hint = QLabel("仅开启版面分析（逐块模式）时生效")
+        aux_hint.setStyleSheet("color: gray; font-size: 11px;")
+        form.addRow(aux_hint)
         # 模型参数组（开关）
         self._model_switches = {}
         model_group = QGroupBox("模型参数设置")
@@ -86,6 +91,7 @@ class OcrParseConfigDialog(QDialog):
         self._rep_spin = QDoubleSpinBox()
         self._rep_spin.setRange(0.0, 2.0)
         self._rep_spin.setSingleStep(0.1)
+        self._rep_spin.setDecimals(1)  # 显示 1.1 而非 1.10
         self._rep_spin.setValue(float(pv.get("repetition_penalty", 1.1) or 0))
         self._min_px = QSpinBox()
         self._min_px.setRange(0, 100_000_000)
@@ -98,13 +104,16 @@ class OcrParseConfigDialog(QDialog):
         sform.addRow("重复抑制强度", self._rep_spin)
         sform.addRow("图像最小总像素数", self._min_px)
         sform.addRow("图像最大总像素数", self._max_px)
-        # 按钮
+        # 按钮：取消 / 重置 / 应用
         apply_btn = QPushButton("应用")
         reset_btn = QPushButton("重置")
+        cancel_btn = QPushButton("取消")
         apply_btn.clicked.connect(self._on_apply)
         reset_btn.clicked.connect(self.reset_to_defaults)
+        cancel_btn.clicked.connect(self.reject)
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+        btn_row.addWidget(cancel_btn)
         btn_row.addWidget(reset_btn)
         btn_row.addWidget(apply_btn)
         # 组装
@@ -133,13 +142,16 @@ class OcrParseConfigDialog(QDialog):
         return {"ocr": {"paddle_vl": pv}}
 
     def reset_to_defaults(self):
-        for label, _, default in _AUX_ITEMS:
-            self._aux_checks[label].setChecked(default)
-        for key, _, default in _MODEL_SWITCHES:
-            self._model_switches[key].setChecked(default)
-        self._rep_spin.setValue(1.1)
-        self._min_px.setValue(0)
-        self._max_px.setValue(1048576)
+        """恢复默认：统一复用 defaults() 字段值（消除与重置逻辑重复的死代码）"""
+        d = self.defaults()
+        for label, _, _ in _AUX_ITEMS:
+            self._aux_checks[label].setChecked(
+                label not in d["markdown_ignore_labels"])
+        for key, _ in self._model_switches.items():
+            self._model_switches[key].setChecked(bool(d.get(key, False)))
+        self._rep_spin.setValue(d["repetition_penalty"])
+        self._min_px.setValue(d["spotting_min_pixels"])
+        self._max_px.setValue(d["spotting_max_pixels"])
 
     @staticmethod
     def defaults() -> dict:

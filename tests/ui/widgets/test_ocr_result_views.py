@@ -11,7 +11,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.models.page_result import PageResult, Block
-from app.ui.widgets.ocr_result_views import OcrDocView, OcrJsonView
+from app.ui.widgets.ocr_result_views import OcrDocView, OcrJsonView, _render_markdown
 
 
 def _page():
@@ -88,3 +88,74 @@ def test_json_view_scalar_leaves_keep_keys(qapp):
     assert "block_label: paragraph" in all_text    # 嵌套标量键值同显
     assert "block_content: Hello" in all_text
     assert "score: 0.97" in all_text
+
+
+def test_doc_view_empty_result_placeholder(qapp):
+    """T11：无 markdown 无 blocks → 灰色占位文案，不渲染空视图"""
+    view = OcrDocView()
+    view.show_page(PageResult(blocks=[], markdown="", image_size=(10, 10)),
+                   Image.new("RGB", (10, 10)))
+    assert "无可解析内容" in view.text()
+    # 有内容时占位不出现
+    view.show_page(PageResult(blocks=[], markdown="Hello", image_size=(10, 10)),
+                   Image.new("RGB", (10, 10)))
+    assert "无可解析内容" not in view.text()
+
+
+def test_json_view_empty_placeholder(qapp):
+    """T11：空 dict → 占位行（无 JSON 数据）"""
+    view = OcrJsonView()
+    view.show_result({})
+    assert view.topLevelItemCount() == 1
+    assert "（无 JSON 数据）" in view.topLevelItem(0).text(0)
+
+
+def test_json_view_scalar_root_single_row(qapp):
+    """T11：非 dict 标量根值单行显示（不逐字符展开）"""
+    view = OcrJsonView()
+    view.show_result(42)
+    assert view.topLevelItemCount() == 1
+    assert view.topLevelItem(0).text(0) == "42"
+    view.show_result("hello")
+    assert view.topLevelItemCount() == 1
+    assert view.topLevelItem(0).text(0) == "hello"
+
+
+def test_json_view_list_root_expands(qapp):
+    """T11：list 根值按索引铺开（标量叶子键值同显）"""
+    view = OcrJsonView()
+    view.show_result(["a", 1])
+    assert view.topLevelItemCount() == 2
+    assert view.topLevelItem(0).text(0) == "[0]: a"
+    assert view.topLevelItem(1).text(0) == "[1]: 1"
+    assert view.topLevelItem(0).text(1) == "str"
+
+
+def test_json_view_ndarray_marker_single_line(qapp):
+    """T11：__ndarray__ 降级标记 → 单行 shape/dtype 显示，不展开 shape 列表"""
+    view = OcrJsonView()
+    view.show_result({"output_img": {"__ndarray__": [1, 3, 1920, 1080],
+                                     "dtype": "float32"}})
+    item = view.topLevelItem(0)
+    assert item.childCount() == 0                     # 不展开子节点
+    assert "（数组已降级）" in item.text(0)
+    assert "shape=[1, 3, 1920, 1080]" in item.text(0)
+    assert "dtype=float32" in item.text(0)
+
+
+def test_render_markdown_heading_requires_space(qapp):
+    """T11：标题要求 # 后随空白——"#Title"、"###" 不渲染为标题"""
+    html = _render_markdown("#Title\n###\n# Real\n")
+    assert "<h2>Real</h2>" in html
+    assert "<h2>Title</h2>" not in html
+    assert "<h2></h2>" not in html
+    assert "<p>#Title</p>" in html                    # 无空格 # 按段落渲染
+
+
+def test_render_markdown_table_requires_both_pipes(qapp):
+    """T11：表格行要求两侧 |——"| a | b |" 等宽，"中|间" 按段落"""
+    html = _render_markdown("| a | b |\nmid|dle\nno|pipe\n")
+    assert "<pre>| a | b |</pre>" in html
+    assert "<pre>mid|dle</pre>" not in html
+    assert "<p>mid|dle</p>" in html
+    assert "<p>no|pipe</p>" in html

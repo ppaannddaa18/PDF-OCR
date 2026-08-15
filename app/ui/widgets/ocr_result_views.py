@@ -1,4 +1,5 @@
 """结果视图：文档解析（左图右文 + 检测框高亮）与 JSON 树"""
+import re
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QSplitter, QVBoxLayout, QHBoxLayout,
                              QTextBrowser, QTreeWidget, QTreeWidgetItem,
@@ -88,7 +89,11 @@ class OcrDocView(QWidget):
         """markdown/块内容 → HTML：标题/段落、table 等宽、行内 <br>
 
         markdown 为整页结构化文本（优先）；markdown 为空时回退到 blocks 逐块渲染。
+        两者皆空 → 灰色占位文案（无可解析内容）。
         """
+        if not result.markdown and not result.blocks:
+            return "<html><body style='font-family:sans-serif'>" \
+                   "<p style='color:gray'>无可解析内容</p></body></html>"
         if result.markdown:
             return _render_markdown(result.markdown)
         parts = []
@@ -103,16 +108,20 @@ class OcrDocView(QWidget):
 
 
 def _render_markdown(md: str) -> str:
-    """极简 Markdown → HTML：标题、段落、表格行转 <pre>"""
+    r"""极简 Markdown → HTML：标题、段落、表格行转 <pre>
+
+    标题要求 `#` 后随空白（`^#{1,6}\s`，避免 "###" 无空格文本与 "#1 章节"
+    等误判）；表格行要求两侧 `|`（`^\|.*\|$`）才按等宽渲染。
+    """
     parts = []
     for line in md.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("#"):
+        if re.match(r"^#{1,6}\s", stripped):
             text = stripped.lstrip("#").strip()
             parts.append(f"<h2>{text}</h2>")
-        elif "|" in stripped:
+        elif re.match(r"^\|.*\|$", stripped):
             parts.append(f"<pre>{stripped}</pre>")
         else:
             parts.append(f"<p>{stripped}</p>")
@@ -129,9 +138,11 @@ class OcrJsonView(QTreeWidget):
         self.setColumnCount(2)
         self.setHeaderLabels(["键 / 值", "类型"])
 
-    def show_result(self, raw_json: dict):
+    def show_result(self, raw_json):
         self.clear()
         if not raw_json:
+            # 空 dict/None/空列表：占位行，不渲染空树
+            self.addTopLevelItem(QTreeWidgetItem(["（无 JSON 数据）", ""]))
             return
         if isinstance(raw_json, dict):
             for k, v in raw_json.items():
@@ -140,17 +151,30 @@ class OcrJsonView(QTreeWidget):
                 self.addTopLevelItem(item)
                 self._fill(item, v)
                 item.setExpanded(True)
-        else:
-            # 非 dict（如列表）按索引铺开
+        elif isinstance(raw_json, (list, tuple)):
+            # list/tuple 根值按索引铺开
             for i, v in enumerate(raw_json):
                 item = QTreeWidgetItem(
                     [f"[{i}]", "object" if isinstance(v, (dict, list)) else type(v).__name__])
                 self.addTopLevelItem(item)
                 self._fill(item, v)
                 item.setExpanded(True)
+        else:
+            # 标量根值（str/int/float/bool）：单行显示，不逐字符展开
+            self.addTopLevelItem(QTreeWidgetItem(
+                [str(raw_json), type(raw_json).__name__]))
 
     def _fill(self, parent: QTreeWidgetItem, obj):
         if isinstance(obj, dict):
+            # 大数组降级标记 {"__ndarray__": [shape...], "dtype": ...}：
+            # 单行紧凑显示 shape/dtype，不把 shape 列表展开成节点
+            if "__ndarray__" in obj:
+                shape = obj["__ndarray__"]
+                dtype = obj.get("dtype", "?")
+                parent.setText(0, f"{parent.text(0)}: （数组已降级）"
+                                  f"shape={shape} dtype={dtype}")
+                parent.setText(1, "ndarray")
+                return
             for k, v in obj.items():
                 item = QTreeWidgetItem([str(k), "object" if isinstance(v, (dict, list)) else type(v).__name__])
                 parent.addChild(item)

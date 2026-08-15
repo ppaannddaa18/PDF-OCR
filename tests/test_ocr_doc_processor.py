@@ -111,6 +111,46 @@ def test_is_image_file():
     assert not is_image_file("a.pdf")
 
 
+def test_single_frame_image_single_page(qapp, tmp_path):
+    """单帧图片行为不变：恒 1 页"""
+    from PIL import Image
+    png = tmp_path / "single.png"
+    Image.new("RGB", (10, 10), (255, 0, 0)).save(str(png))
+    engine = _FakeEngine([PageResult(blocks=[], markdown="p1")])
+    loader = PdfLoader(dpi=100)
+    proc = OcrDocProcessor(loader, engine, {})
+    results = {}
+    proc.file_done.connect(lambda p, r: results.update({p: r}))
+    proc.add_files([str(png)])
+    _run_until_done(proc)
+    assert len(results[str(png)]) == 1
+    assert len(engine.calls) == 1
+    loader.shutdown()
+
+
+def test_multi_frame_tiff_each_frame_is_page(qapp, tmp_path):
+    """T11：多帧 TIFF 逐帧识别——页数 == 帧数，每帧顺序一页"""
+    from PIL import Image
+    tiff = tmp_path / "multi.tiff"
+    frames = [Image.new("RGB", (8, 8), c)
+              for c in ((255, 0, 0), (0, 255, 0), (0, 0, 255))]
+    frames[0].save(str(tiff), save_all=True, append_images=frames[1:])
+    engine = _FakeEngine([PageResult(blocks=[], markdown="f1"),
+                          PageResult(blocks=[], markdown="f2"),
+                          PageResult(blocks=[], markdown="f3")])
+    loader = PdfLoader(dpi=100)
+    proc = OcrDocProcessor(loader, engine, {})
+    results = {}
+    proc.file_done.connect(lambda p, r: results.update({p: r}))
+    proc.add_files([str(tiff)])
+    _run_until_done(proc)
+    pages = results[str(tiff)]
+    assert len(pages) == 3                    # 页数 == 帧数
+    assert [p.markdown for p in pages] == ["f1", "f2", "f3"]
+    assert len(engine.calls) == 3
+    loader.shutdown()
+
+
 def test_process_pdf_in_order(qapp, tmp_path):
     pdf_path = _make_2page_pdf(tmp_path)
     engine = _FakeEngine([PageResult(blocks=[], markdown="p1"),

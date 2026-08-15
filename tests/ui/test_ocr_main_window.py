@@ -490,3 +490,54 @@ def test_copy_warns_when_view_disconnected(qapp, tmp_path, monkeypatch):
     win._on_copy()
     assert warns and "a.pdf" in warns[0]["content"]  # 脱节提示含视图来源文件名
     assert QApplication.clipboard().text() == "内容 A"  # 复制的是视图文本
+
+
+def test_remove_file_clears_cache(qapp, tmp_path, monkeypatch):
+    """T11：删除单个文件 → file_remove_requested → 窗口清该文件缓存"""
+    engine = _FakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    pdf = _make_2page_pdf(tmp_path)
+    win.add_files([pdf])
+    _wait_cached(win, pdf)
+    assert win.processor.get_cache(pdf) is not None
+
+    fid = win.file_panel.file_id_by_path(pdf)
+    win.file_panel.remove_file(fid)
+    assert pdf not in win.file_panel.paths()
+    assert win.processor.get_cache(pdf) is None   # 缓存已清
+    assert pdf not in win._render_cache           # 渲染图一并失效
+
+
+def test_restore_history_marks_click_to_reparse(qapp, tmp_path, monkeypatch):
+    """T11：历史恢复的文件带"点击重新解析"提示（未自动入队）"""
+    import json
+    engine = _FakeEngine()
+    pdf = _make_2page_pdf(tmp_path)
+    (tmp_path / "hist.json").write_text(
+        json.dumps([{"path": pdf, "time": "2026-01-01T00:00:00"}]),
+        encoding="utf-8")
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)  # 历史指向 hist.json
+    fid = win.file_panel.file_id_by_path(pdf)
+    assert fid is not None
+    assert "点击重新解析" in win.file_panel.status_text(fid)
+    assert pdf not in win.processor.pending_items()  # 未入队，点击才解析
+
+
+def test_cancel_during_run_clears_partial_cache(qapp, tmp_path, monkeypatch):
+    """T11：取消路径清理部分页孤儿缓存——file_done 先行写入的部分页在
+    cancelled 到达后从缓存清除（清空确认/关闭路径不留孤儿缓存）"""
+    engine = _SlowFakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    pdf = _make_2page_pdf(tmp_path)
+    win.add_files([pdf])
+    _wait_signal(win.processor, "file_started")
+    assert win.processor.is_running()
+
+    win.processor.cancel()
+    _wait_signal(win.processor, "cancelled", timeout_ms=5000)
+    assert win.processor.get_cache(pdf) is None  # 部分页孤儿缓存已清
+
+    deadline = time.monotonic() + 5
+    while win.processor.is_running() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not win.processor.is_running()

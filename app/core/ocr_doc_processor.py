@@ -4,7 +4,7 @@ import os
 import threading
 import time
 from typing import List, Optional, Dict
-from PIL import Image
+from PIL import Image, ImageSequence
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from app.core.pdf_loader import PdfLoader
@@ -56,9 +56,16 @@ class _ProcessThread(QThread):
 
     def _process_file(self, path: str) -> List[PageResult]:
         if is_image_file(path):
+            pages: List[PageResult] = []
+            # 多帧 TIFF：逐帧识别，每帧一页（单帧图片行为不变，恒 1 页）
             with Image.open(path) as im:
-                page = self._engine.recognize_page_auto(im.convert("RGB"))
-            return [page]
+                for frame in ImageSequence.Iterator(im):
+                    if self._cancel_flag.is_set():
+                        return pages
+                    page = self._engine.recognize_page_auto(
+                        frame.convert("RGB"))
+                    pages.append(page)
+            return pages
         count = self._loader.page_count(path)
         if count == 0:
             # 损坏/加密/空 PDF：page_count 吞异常返回 0，空循环会伪装成"完成 0 页"，

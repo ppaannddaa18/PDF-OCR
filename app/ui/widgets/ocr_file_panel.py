@@ -5,8 +5,9 @@ from datetime import datetime
 from typing import List
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
-                             QListWidgetItem, QLabel, QPushButton)
+                             QListWidgetItem, QLabel, QPushButton, QMenu)
 
 from app.ui.theme_manager import ThemeManager
 
@@ -53,6 +54,9 @@ class OcrFilePanel(QWidget):
         layout.addLayout(head)
         self.list = QListWidget()
         self.list.itemClicked.connect(self._on_item_clicked)
+        # 右键菜单：删除单个文件
+        self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self.list, 1)
 
     def add_file(self, path: str) -> str:
@@ -67,7 +71,10 @@ class OcrFilePanel(QWidget):
         return fid
 
     def select_file(self, fid: str) -> None:
-        item, _ = self._items[fid]
+        entry = self._items.get(fid)
+        if entry is None:
+            return
+        item, _ = entry
         self.list.setCurrentItem(item)
         self._on_item_clicked(item)
 
@@ -75,6 +82,9 @@ class OcrFilePanel(QWidget):
         self._status[fid] = (status, detail)
         item, meta = self._items[fid]
         item.setText(f"{os.path.basename(meta['path'])}\n{self.status_text(fid)}")
+        # 徽章颜色：状态 → ThemeManager 角色 → 前景色（setText 不受影响）
+        role = _STATUS_COLOR.get(status, "text_secondary")
+        item.setForeground(QColor(ThemeManager.get_color(role)))
 
     def status_text(self, fid: str) -> str:
         status, detail = self._status.get(fid, ("queued", ""))
@@ -82,7 +92,10 @@ class OcrFilePanel(QWidget):
         return f"{text}" + (f" · {detail}" if detail else "")
 
     def remove_file(self, fid: str) -> None:
-        item, meta = self._items.pop(fid)
+        entry = self._items.pop(fid, None)
+        if entry is None:
+            return
+        item, meta = entry
         self._status.pop(fid, None)
         self.list.takeItem(self.list.row(item))
         self.file_remove_requested.emit(meta["path"])
@@ -108,3 +121,23 @@ class OcrFilePanel(QWidget):
 
     def _on_item_clicked(self, item):
         self.file_selected.emit(item.data(Qt.ItemDataRole.UserRole))
+
+    def _on_context_menu(self, pos):
+        """右键菜单：删除该文件（item 为 None 不弹菜单）"""
+        item = self.list.itemAt(pos)
+        if item is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("删除该文件", lambda: self._remove_item(item))
+        menu.exec(self.list.mapToGlobal(pos))
+
+    def _remove_item(self, item):
+        fid = self._fid_by_item(item)
+        if fid is not None:
+            self.remove_file(fid)
+
+    def _fid_by_item(self, item):
+        for fid, (it, _) in self._items.items():
+            if it is item:
+                return fid
+        return None
