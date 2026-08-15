@@ -50,7 +50,10 @@ class OcrParseConfigDialog(QDialog):
     # —— 构建 ——
     def _build_ui(self, pv: dict):
         # 辅助内容过滤组：check = 恢复解析（不忽略）
-        ignore = set(pv.get("markdown_ignore_labels", []))
+        # 空配置（键缺失）回退默认忽略集（与 defaults() 一致：仅页码默认恢复）
+        ignore = set(pv.get(
+            "markdown_ignore_labels",
+            [label for label, _, default in _AUX_ITEMS if not default]))
         self._aux_checks = {}
         aux_group = QGroupBox("辅助内容解析")
         form = QFormLayout(aux_group)

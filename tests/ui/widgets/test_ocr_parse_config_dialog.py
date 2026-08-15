@@ -28,6 +28,12 @@ def test_defaults_patch(qapp):
     # 双键兼容：use_layout_detection 与 block_spotting 等价，patch 同时输出且同值
     assert pv["block_spotting"] is False
     assert pv["block_spotting"] == pv["use_layout_detection"]
+    # 空配置回退默认忽略集（与 defaults() 一致：仅页码默认恢复解析）
+    ignore = pv["markdown_ignore_labels"]
+    assert "number" not in ignore
+    for label in ("header", "header_image", "footer", "footer_image",
+                  "footnote", "aside_text"):
+        assert label in ignore
 
 
 def test_roundtrip(qapp):
