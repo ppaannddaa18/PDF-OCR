@@ -119,8 +119,25 @@ class OcrDocProcessor(QObject):
     def get_cache(self, path: str) -> Optional[List[PageResult]]:
         return self._cache.get(path)
 
-    def clear_cache(self) -> None:
-        self._cache.clear()
+    def clear_cache(self, path: Optional[str] = None) -> None:
+        """清除结果缓存：path 为 None 清全部；指定 path 只清该文件"""
+        if path is None:
+            self._cache.clear()
+        else:
+            self._cache.pop(path, None)
+
+    def pending_items(self) -> List[str]:
+        """当前待处理文件：本次运行快照中未完成（尚无缓存）的条目 +
+        队列中全部条目——语义：取消后仍应处理的文件列表。
+
+        运行中重试时把全部 pending 重新入队（add_files 逐项 discard 出本次
+        运行快照），_clear_run_queue 清快照时不再误删队列中的其余文件。
+        """
+        result = list(self._queue)
+        for p in list(self._run_items):
+            if p not in self._cache and p not in result:
+                result.append(p)
+        return result
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.isRunning()

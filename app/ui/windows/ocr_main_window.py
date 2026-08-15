@@ -304,12 +304,18 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         path = self.file_panel.selected_path()
         if not path:
             return
-        self.processor.clear_cache()
+        self.processor.clear_cache(path)   # 只清目标缓存
         if self.processor.is_running():
-            # 运行中：取消当前批次并把目标重新入队；取消后 processor 续跑机制
-            # 自动重跑（add_files 会把它从本次运行快照摘除，不被清出）
-            self.processor.cancel()
+            # 运行中：把未处理文件全部重新入队（保目标在内），再取消续跑。
+            # add_files 的去重基于 _queue；_run_items 中的项不在 _queue，
+            # add_files(others) 会加入并 discard 出本次运行快照；目标 path
+            # 若在 _run_items 中，add_files([path]) 同样加入。cancel 后
+            # _clear_run_queue 只清快照（运行中文件的已解析页经 file_done
+            # 写缓存——既有语义），_queue 保留全部重入队项 → 续跑重跑整个队列。
+            others = [p for p in self.processor.pending_items() if p != path]
+            self.processor.add_files(others)   # 未处理项先回队列（目标已在 _queue 或由 add_files 加入）
             self.processor.add_files([path])
+            self.processor.cancel()            # 续跑机制会重跑整个队列
         else:
             self.processor.add_files([path])
             self.processor.start()

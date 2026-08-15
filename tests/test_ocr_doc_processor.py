@@ -219,6 +219,60 @@ def test_corrupted_pdf_fails_file(qapp, tmp_path):
     loader.shutdown()
 
 
+def test_clear_cache_scoped(qapp, tmp_path):
+    """clear_cache(path) 只清指定文件缓存；clear_cache() 清全部"""
+    pdf1 = _make_2page_pdf(tmp_path, "a.pdf")
+    pdf2 = _make_2page_pdf(tmp_path, "b.pdf")
+    engine = _FakeEngine([PageResult(blocks=[], markdown="p1"),
+                          PageResult(blocks=[], markdown="p2"),
+                          PageResult(blocks=[], markdown="p3"),
+                          PageResult(blocks=[], markdown="p4")])
+    loader = PdfLoader(dpi=100)
+    proc = OcrDocProcessor(loader, engine, {})
+    proc.add_files([pdf1, pdf2])
+    _run_until_done(proc)
+    assert proc.get_cache(pdf1) is not None
+    assert proc.get_cache(pdf2) is not None
+
+    proc.clear_cache(pdf1)
+    assert proc.get_cache(pdf1) is None    # 目标缓存被清
+    assert proc.get_cache(pdf2) is not None  # 其他文件缓存保留
+
+    proc.clear_cache()
+    assert proc.get_cache(pdf2) is None    # 无参清全部
+    loader.shutdown()
+
+
+def test_pending_items_during_run(qapp, tmp_path):
+    """运行中 pending_items() 返回取消后仍应处理的全部文件（含未完成项与
+    队列全部条目）；按 _on_retry 序列重入队 + 取消后这些文件都被处理完成"""
+    pdfs = [_make_2page_pdf(tmp_path, f"doc{i}.pdf") for i in range(3)]
+    engine = _SlowEngine()
+    loader = PdfLoader(dpi=100)
+    proc = OcrDocProcessor(loader, engine, {})
+    done = []
+    proc.file_done.connect(lambda p, r: done.append(p))
+    proc.add_files(pdfs)
+
+    proc.start()
+    assert _wait_until(proc, "file_started"), "file_started 未触发"
+    assert set(proc.pending_items()) == set(pdfs)  # 运行中全部条目均为待处理
+
+    # 与窗口 _on_retry 运行分支相同的序列：pending 全部重入队（目标在内）再取消
+    target = pdfs[0]
+    proc.clear_cache(target)
+    others = [p for p in proc.pending_items() if p != target]
+    proc.add_files(others)
+    proc.add_files([target])
+    proc.cancel()
+
+    # 首轮进行中文件部分页 file_done 1 次 + 续跑 3 次 = 4 次
+    assert _wait_until_events_done(proc, done, expected=4), "续跑未完成"
+    assert set(done) == set(pdfs)                 # 其余文件未被丢弃
+    assert all(proc.get_cache(p) is not None for p in pdfs)
+    loader.shutdown()
+
+
 def test_retry_during_run_restarts_target(qapp, tmp_path):
     """运行中重试（cancel + add_files 同一文件）：取消后自动续跑重新完整处理"""
     pdf_path = _make_2page_pdf(tmp_path)

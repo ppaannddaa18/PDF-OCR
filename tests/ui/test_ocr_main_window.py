@@ -159,15 +159,39 @@ def _patch_quit_and_dialog(monkeypatch):
     return qt_widgets
 
 
-def _make_2page_pdf(tmp_path):
+def _make_2page_pdf(tmp_path, name="doc.pdf"):
     import fitz
-    pdf = tmp_path / "doc.pdf"
+    pdf = tmp_path / name
     doc = fitz.open()
     doc.new_page()
     doc.new_page()
     doc.save(str(pdf))
     doc.close()
     return str(pdf)
+
+
+def test_retry_during_run_keeps_others_queued(qapp, tmp_path, monkeypatch):
+    """C2：运行中重试只清目标缓存并重跑目标；其余未处理文件保留在队列，
+    续跑完成后全部 3 个文件均完成（不再永久"等待"）"""
+    engine = _SlowFakeEngine()
+    win = _make_window(monkeypatch, engine)
+    pdfs = [_make_2page_pdf(tmp_path, f"doc{i}.pdf") for i in range(3)]
+    done = []
+    win.processor.file_done.connect(lambda p, r: done.append(p))
+    win.add_files(pdfs)
+    _wait_signal(win.processor, "file_started")  # 首文件开始处理
+    target = pdfs[0]
+    win.file_panel.select_file(win.file_panel.file_id_by_path(target))
+    win._on_retry()  # 运行中重试：pending 全部重入队 + cancel → 续跑重跑整个队列
+
+    _wait_signal(win.processor, "all_done", timeout_ms=15000)
+    assert set(done) == set(pdfs)      # 其余文件未被 _clear_run_queue 丢弃
+    assert done.count(target) >= 2     # 目标重新处理：首轮部分页 + 续跑完整
+    assert 6 <= engine.calls <= 7      # 首轮 0-1 页 + 续跑 6 页（目标重跑在内）
+    assert len(win.processor.get_cache(target)) == 2  # 目标缓存为续跑完整结果
+    for p in pdfs:
+        fid = win.file_panel.file_id_by_path(p)
+        assert fid is not None and "完成" in win.file_panel.status_text(fid)
 
 
 def test_close_event_cancels_processor(qapp, tmp_path, monkeypatch):
