@@ -37,6 +37,31 @@ ocr:
   det_db_box_thresh: 0.5
   drop_score: 0.5
   engine: rapidocr
+  paddle_vl:
+    # 官方管线（paddlex native）整页 Spotting 参数
+    # 生成上限：native 无重复惩罚，greedy 可能重复循环跑满上限（10000 → ~315s/页）；
+    # 4096 足够 138 行输出（~1200 token），最坏 ~129s/页
+    max_new_tokens: 4096
+    # 重复惩罚：直接注入 generation_config 打破重复循环（0 = 禁用，官方 greedy）
+    repetition_penalty: 1.1
+    # 视觉注意力 SDPA（flash）：Windows 官方默认禁用 → 全量注意力物化
+    # fp32 矩阵（峰值 6.4GB）；启用后峰值 4.2GB、质量无损（0 = 禁用回 eager）
+    vision_sdpa: 1
+    # 8GB 显存适配：官方上限 1605632（~2090 patches）会 OOM；
+    # 设为 1605632 可回官方默认（需 >8GB 显存）
+    spotting_max_pixels: 1048576
+    # 逐块 Spotting（布局切块 + 每块坐标偏移映射）：默认关闭（整页模式）。
+    # 纯文本文档可省 ~25% 时间；表格文档收益有限（表格是单一大块）
+    block_spotting: false
+    # 版面预处理与后处理开关（独立识别程序默认）
+    use_doc_orientation_classify: false
+    use_doc_unwarping: false
+    use_chart_recognition: true
+    use_seal_recognition: true
+    use_ocr_for_image_block: true
+    merge_layout_blocks: true
+    spotting_min_pixels: 0
+    markdown_ignore_labels: ["header", "header_image", "footer", "footer_image", "footnote", "aside_text"]
   gguf:
     auxiliary_parsing:
       footer: false

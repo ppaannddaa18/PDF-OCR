@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 from qfluentwidgets import (
-    InfoBar, InfoBarPosition, PrimaryPushButton, Theme, setTheme,
+    InfoBar, InfoBarPosition, PushButton, Theme, setTheme,
 )
 
 from app.ui.theme_manager import ThemeManager
@@ -46,6 +46,7 @@ def _palette_colors(design: str, palette_key: str) -> dict:
         "teal": p.get("accent_alt", p["primary_hover"]),
         "text": p["text_primary"],
         "muted": p["text_secondary"],
+        "border": p["border"],
         "hover_border": p["border_focus"],
         "ok": p["success"],
         "warn": p.get("warning_text", p["warning"]),
@@ -63,7 +64,8 @@ _CARD_SPECS = {
         "tagline": "本地大模型版面识别，版面理解最强",
         "features": ["VLM 版面分析", "图表 / 印章 / 跨页表格", "关键字语义提取"],
         "perf": "约 2 秒/页，需 6GB 显存",
-        "tooltip": "GGUF 是 llama.cpp 模型格式；VLM（视觉语言模型）能理解整页版面，适合复杂文档。",
+        "tooltip": "GGUF 是 llama.cpp 模型格式；VLM（视觉语言模型）能理解整页版面，适合复杂文档。"
+                  "注意：llama.cpp 路径不产出文本框坐标，扫描件预览无高亮。",
         "colors": GGUF_COLORS,
     },
     "rapid": {
@@ -100,29 +102,26 @@ class _EngineCard(QFrame):
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         self._radio = QLabel()
-        self._radio.setFixedSize(18, 18)
+        self._radio.setObjectName("radioCircle")
+        self._radio.setFixedSize(20, 20)
         self._radio.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._radio.setStyleSheet(
-            f"border: 2px solid {self._colors['muted']};"
-            f"border-radius: 9px; background: transparent; color: transparent;"
-        )
         title_row.addWidget(self._radio, 0, Qt.AlignmentFlag.AlignTop)
 
         self._title = QLabel(_CARD_SPECS[engine_key]["title"])
         self._title.setToolTip(_CARD_SPECS[engine_key]["tooltip"])
         self._title.setStyleSheet(
-            f"color: {self._colors['accent']}; font-size: 18px; font-weight: 600;"
+            f"color: {self._colors['accent']}; font-size: 20px; font-weight: 600;"
         )
         title_row.addWidget(self._title)
         title_row.addStretch(1)
 
         self._session_tag = QLabel("本会话")
         self._session_tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._session_tag.setFixedHeight(22)
+        self._session_tag.setFixedHeight(24)
         self._session_tag.setStyleSheet(
             f"background-color: {self._colors['accent']};"
             f"color: {self._colors['on_accent']};"
-            f"border-radius: 11px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 12px; font-size: 12px; font-weight: 600;"
             f"padding: 0 10px;"
         )
         self._session_tag.setVisible(False)
@@ -134,22 +133,22 @@ class _EngineCard(QFrame):
         status_row.setSpacing(4)
         self._status_dot = QLabel("●")
         self._status_dot.setStyleSheet(
-            f"color: {self._colors['ok']}; font-size: 11px;"
+            f"color: {self._colors['ok']}; font-size: 12px;"
         )
         status_row.addWidget(self._status_dot)
         self._badge = QLabel()
         self._badge.setStyleSheet(
-            f"color: {self._colors['ok']}; font-size: 11px; font-weight: 600;"
+            f"color: {self._colors['ok']}; font-size: 12px; font-weight: 600;"
         )
         status_row.addWidget(self._badge)
         status_row.addStretch(1)
         layout.addLayout(status_row)
 
-        # 一句话定位（teal 点缀）
+        # 一句话定位（text_secondary，不参与品牌色混搭）
         tagline = QLabel(_CARD_SPECS[engine_key]["tagline"])
         tagline.setWordWrap(True)
         tagline.setStyleSheet(
-            f"color: {self._colors['teal']}; font-size: 13px;"
+            f"color: {self._colors['muted']}; font-size: 14px;"
         )
         layout.addWidget(tagline)
 
@@ -159,30 +158,31 @@ class _EngineCard(QFrame):
         )
         features.setWordWrap(True)
         features.setStyleSheet(
-            f"color: {self._colors['text']}; font-size: 13px; line-height: 22px;"
+            f"color: {self._colors['text']}; font-size: 14px; line-height: 24px;"
         )
         layout.addWidget(features)
+
+        # 弹性区：性能标签与缺项文本贴底，两卡空白在中间对称分布
+        layout.addStretch(1)
 
         # 性能标签（accent 描边小标签，非全宽胶囊）
         perf = QLabel(_CARD_SPECS[engine_key]["perf"])
         perf.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        perf.setFixedHeight(22)
+        perf.setFixedHeight(24)
         perf.setStyleSheet(
             f"border: 1px solid {self._colors['accent']};"
             f"color: {self._colors['accent']};"
-            f"border-radius: 10px; padding: 2px 10px;"
-            f"font-size: 11px; font-weight: 600;"
+            f"border-radius: 12px; padding: 2px 10px;"
+            f"font-size: 12px; font-weight: 600;"
         )
         layout.addWidget(perf)
-
-        layout.addStretch(1)
 
         # 缺项文本
         self._issues_label = QLabel()
         self._issues_label.setWordWrap(True)
         self._issues_label.setStyleSheet(
-            f"color: {self._colors['muted']}; font-size: 11px;"
+            f"color: {self._colors['muted']}; font-size: 12px;"
         )
         layout.addWidget(self._issues_label)
 
@@ -238,39 +238,45 @@ class _EngineCard(QFrame):
     # ---- 内部 ----
 
     def _apply_style(self):
-        border = self._colors["accent"] if self._selected else "transparent"
+        # 未选中 1px 中性描边（深色卡在浅底上轮廓清晰），选中 2px accent
+        width = 2 if self._selected else 1
+        border = self._colors["accent"] if self._selected else self._colors["border"]
         panel = self._colors["selected_bg"] if self._selected else self._colors["panel"]
-        if self._selected:
-            self._radio.setStyleSheet(
-                f"border: 2px solid {self._colors['accent']};"
-                f"border-radius: 9px;"
-                f"background-color: {self._colors['accent']};"
-                f"color: {self._colors['on_accent']};"
-                f"font-size: 11px; font-weight: 700;"
-            )
-            self._radio.setText("✓")
-        else:
-            self._radio.setStyleSheet(
-                f"border: 2px solid {self._colors['muted']};"
-                f"border-radius: 9px; background: transparent; color: transparent;"
-            )
-            self._radio.setText("")
+        # radio 圆圈样式全部由类级 QSS 控制（hover 反馈 + 选中填充），不再内联
+        self._radio.setText("✓" if self._selected else "")
+        self._radio.setStyleSheet("")
         self.setProperty("selected", "true" if self._selected else "false")
         self.setStyleSheet(
             f"#{self.objectName()} {{"
             f"  background-color: {panel};"
-            f"  border: 2px solid {border};"
+            f"  border: {width}px solid {border};"
             f"  border-radius: 12px;"
             f"}}"
+            # 键盘焦点：中性色虚线（与选中金框区分，避免"未选中却金框"混淆）
+            f"#{self.objectName()}:focus {{"
+            f"  border: 2px dashed {self._colors['border']};"
+            f"}}"
+            # 鼠标悬停：品牌色实线（后写覆盖 focus，鼠标交互优先）
             f"#{self.objectName()}:hover {{"
             f"  border: 2px solid {self._colors['hover_border']};"
             f"}}"
-            f"#{self.objectName()}:focus {{"
-            f"  border: 2px solid {self._colors['hover_border']};"
+            f"#{self.objectName()} #radioCircle {{"
+            f"  border: 2px solid {self._colors['muted']};"
+            f"  border-radius: 10px;"
+            f"  background: transparent; color: transparent;"
             f"}}"
-            # 选中态优先于聚焦/悬停（同特异性，后写生效）
+            f"#{self.objectName()}:hover #radioCircle {{"
+            f"  border-color: {self._colors['hover_border']};"
+            f"}}"
+            # 选中态优先于聚焦/悬停（最后写，最高优先级）
             f"#{self.objectName()}[selected='true'] {{"
             f"  border: 2px solid {self._colors['accent']};"
+            f"}}"
+            f"#{self.objectName()}[selected='true'] #radioCircle {{"
+            f"  border-color: {self._colors['accent']};"
+            f"  background-color: {self._colors['accent']};"
+            f"  color: {self._colors['on_accent']};"
+            f"  font-size: 12px; font-weight: 700;"
             f"}}"
         )
 
@@ -333,16 +339,20 @@ class EngineSelectDialog(QDialog):
         )
         root.addWidget(subtitle)
 
-        # 卡片区（60/40 非对称：GGUF 左主、Rapid 右辅）
+        # 卡片区（GGUF 主、Rapid 辅，非对称布局）
         cards_row = QHBoxLayout()
         cards_row.setSpacing(20)
         self.gguf_card = _EngineCard("gguf", self)
         self.rapid_card = _EngineCard("rapid", self)
-        self.gguf_card.setMinimumWidth(460)
-        self.rapid_card.setMinimumWidth(300)
+        self._cards = [self.gguf_card, self.rapid_card]
+        self.gguf_card.setMinimumWidth(300)
+        self.rapid_card.setMinimumWidth(280)
         cards_row.addWidget(self.gguf_card, 3)
         cards_row.addWidget(self.rapid_card, 2)
         root.addLayout(cards_row)
+        # 卡片阴影（浅阴影提升层次，rapid 窗口面板同款）
+        ThemeManager.apply_card_shadow(self.gguf_card)
+        ThemeManager.apply_card_shadow(self.rapid_card)
 
         root.addStretch(1)
 
@@ -350,15 +360,33 @@ class EngineSelectDialog(QDialog):
         bottom = QHBoxLayout()
         hint = QLabel("本次会话使用，每次启动重新选择")
         hint.setStyleSheet(
-            f"color: {ThemeManager.get_color('text_secondary')}; font-size: 12px;"
+            f"color: {ThemeManager.get_color('text_secondary')};"
+            f"font-size: 12px; font-weight: 500;"
         )
         bottom.addWidget(hint)
         bottom.addStretch(1)
-        self.enter_btn = PrimaryPushButton("进入", self)
+        # 中性深色按钮：启用近黑实心白字、禁用浅灰；不绑定任何引擎品牌色
+        light_palette = ThemeManager.COLORS["rapid"]["light"]
+        self.enter_btn = PushButton("进入", self)
+        self.enter_btn.setObjectName("enterBtn")
         self.enter_btn.setEnabled(False)
         self.enter_btn.setFixedWidth(140)
         self.enter_btn.setFixedHeight(36)
         self.enter_btn.clicked.connect(self._confirm)
+        self.enter_btn.setStyleSheet(
+            f"#enterBtn {{"
+            f"  background-color: {light_palette['text_primary']};"
+            f"  color: {light_palette['white']};"
+            f"  border: none; border-radius: 8px;"
+            f"  font-size: 13px; font-weight: 500;"
+            f"}}"
+            f"#enterBtn:hover {{ background-color: #2B2F36; }}"
+            f"#enterBtn:pressed {{ background-color: #1A1D21; }}"
+            f"#enterBtn:disabled {{"
+            f"  background-color: {light_palette['bg_hover']};"
+            f"  color: {light_palette['text_disabled']};"
+            f"}}"
+        )
         bottom.addWidget(self.enter_btn)
         root.addLayout(bottom)
 
@@ -372,7 +400,7 @@ class EngineSelectDialog(QDialog):
         """设置引擎检查结果（check_engine_availability 返回值），更新卡片徽章
 
         Args:
-            availability: {'gguf': {'available', 'issues'}, 'rapidocr': {...}}
+            availability: {'gguf': ..., 'rapidocr': ...}
         """
         self._availability = {
             "gguf": availability.get("gguf", {"available": True, "issues": []}),
@@ -392,7 +420,7 @@ class EngineSelectDialog(QDialog):
     def _select_card(self, engine_key: str):
         """选中一张卡片：高亮描边 + 「本会话」标签 + 启用进入按钮"""
         self._selected = engine_key
-        for card in (self.gguf_card, self.rapid_card):
+        for card in self._cards:
             card.set_selected(card.engine_key == engine_key)
         self.enter_btn.setEnabled(True)
 

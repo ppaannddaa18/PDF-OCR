@@ -108,10 +108,68 @@ class TestRapidOcr:
         assert "rapidocr_onnxruntime" in result["issues"][0]
 
     def test_package_present(self, monkeypatch):
-        """包可导入 → available=True、无 issue"""
+        """包可导入且构造成功 → available=True、无 issue"""
         class _FakeSpec:
             pass
         monkeypatch.setattr(engine_checker, "_find_spec", lambda name: _FakeSpec())
         result = engine_checker.check_engine_availability({})["rapidocr"]
         assert result["available"] is True
         assert result["issues"] == []
+
+    def test_constructor_failure(self, monkeypatch):
+        """包可导入但构造失败（运行库损坏）→ available=False + 原因"""
+        class _FakeSpec:
+            pass
+        monkeypatch.setattr(engine_checker, "_find_spec", lambda name: _FakeSpec())
+
+        def _boom(*a, **k):
+            raise RuntimeError("onnxruntime dll load failed")
+
+        monkeypatch.setattr("rapidocr_onnxruntime.RapidOCR", _boom)
+        result = engine_checker.check_engine_availability({})["rapidocr"]
+        assert result["available"] is False
+        assert "初始化失败" in result["issues"][0]
+        assert "dll load failed" in result["issues"][0]
+
+
+class TestPaddleVl:
+    """官方管线检查（_check_paddle_vl 保留，供独立识别程序测试引用）：
+    paddleocr/paddle 可导入 + 模型目录存在"""
+
+    def test_package_missing(self, monkeypatch):
+        """paddleocr 不可导入 → available=False"""
+        monkeypatch.setattr(engine_checker, "_find_spec", lambda name: None)
+        result = engine_checker._check_paddle_vl({})
+        assert result["available"] is False
+        assert "paddleocr" in result["issues"][0]
+
+    def test_model_dir_missing(self, monkeypatch, tmp_path):
+        """包可导入但配置的 model_dir 不存在 → available=False"""
+        class _FakeSpec:
+            pass
+        monkeypatch.setattr(engine_checker, "_find_spec", lambda name: _FakeSpec())
+        result = engine_checker._check_paddle_vl(
+            {"model_dir": str(tmp_path / "nope")}
+        )
+        assert result["available"] is False
+        assert "模型目录不存在" in result["issues"][0]
+
+    def test_model_dir_ok(self, monkeypatch, tmp_path):
+        """包可导入 + model_dir 存在 → available=True 无 issue"""
+        class _FakeSpec:
+            pass
+        monkeypatch.setattr(engine_checker, "_find_spec", lambda name: _FakeSpec())
+        (tmp_path / "model").mkdir()
+        result = engine_checker._check_paddle_vl(
+            {"model_dir": str(tmp_path / "model")}
+        )
+        assert result["available"] is True
+        assert result["issues"] == []
+
+
+def test_availability_no_paddle_vl():
+    """check_engine_availability 返回值不再含 paddle_vl（主程序移除卡片）"""
+    from app.utils.engine_checker import check_engine_availability
+    result = check_engine_availability({"ocr": {"gguf": {}, "paddle_vl": {}}})
+    assert "paddle_vl" not in result
+    assert set(result.keys()) == {"gguf", "rapidocr"}

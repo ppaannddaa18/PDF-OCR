@@ -95,6 +95,11 @@ def main():
     engine = choose_engine(config)
     logger.info("Session start | engine=%s", engine)
 
+    # 应用配置的动画设置（config 显式含键时覆盖系统检测；
+    # 修复设置页保存动画开关后下次启动不恢复的问题）
+    from app.ui.animation_manager import apply_config_animation_setting
+    apply_config_animation_setting(config)
+
     # 选 GGUF 才执行 llama-b9969 PATH 注入（CUDA DLL）
     if engine == "gguf":
         llama_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama-b9969")
@@ -105,7 +110,7 @@ def main():
                 os.environ["PATH"] = llama_dir + os.pathsep + current_path
                 print(f"[GGUF] Added {llama_dir} to PATH")
 
-    # 阶段4：按引擎构造对应窗口（P4 起新双界面；旧 MainWindow 保留至 P7 供回滚）
+    # 阶段4：按引擎构造对应窗口（GGUF → GgufMainWindow，其余 → RapidMainWindow）
     if engine == "gguf":
         from app.ui.windows.gguf_main_window import GgufMainWindow
         window = GgufMainWindow(config)

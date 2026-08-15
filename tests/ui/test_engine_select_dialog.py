@@ -42,6 +42,40 @@ class TestEngineSelectDialog:
         dialog = EngineSelectDialog({})
         assert dialog.gguf_card.minimumWidth() > dialog.rapid_card.minimumWidth()
 
+    def test_cards_equal_height(self, qapp):
+        """两卡最小高度一致（等高对齐，消除右侧下方空白）"""
+        dialog = EngineSelectDialog({})
+        assert dialog.gguf_card.minimumHeight() == dialog.rapid_card.minimumHeight()
+        assert dialog.gguf_card.minimumHeight() >= 360
+
+    def test_unselected_card_has_neutral_border(self, qapp):
+        """未选中卡片有 1px 中性描边（深色卡在浅底上轮廓清晰）"""
+        dialog = EngineSelectDialog({})
+        border = ThemeManager.COLORS["gguf"]["dark"]["border"]
+        assert f"border: 1px solid {border}" in dialog.gguf_card.styleSheet()
+
+    def test_enter_button_neutral_dark_style(self, qapp):
+        """进入按钮：启用近黑实心白字、禁用浅灰（不绑定引擎品牌色）"""
+        dialog = EngineSelectDialog({})
+        light = ThemeManager.COLORS["rapid"]["light"]
+        sheet = dialog.enter_btn.styleSheet()
+        assert light["text_primary"] in sheet  # 启用底色（近黑）
+        assert light["white"] in sheet          # 白字
+        assert light["text_disabled"] in sheet  # 禁用文字色
+        assert light["bg_hover"] in sheet       # 禁用底色
+
+    def test_radio_hover_style_in_card_qss(self, qapp):
+        """radio 圆圈样式走卡片类级 QSS：未选中 muted、hover 变色、选中 accent 填充"""
+        dialog = EngineSelectDialog({})
+        sheet = dialog.gguf_card.styleSheet()
+        muted = dialog.gguf_card._colors["muted"]
+        hover = dialog.gguf_card._colors["hover_border"]
+        accent = dialog.gguf_card._colors["accent"]
+        assert f"#radioCircle" in sheet
+        assert muted in sheet  # 未选中外圈
+        assert hover in sheet  # hover 外圈
+        assert accent in sheet  # 选中填充
+
     def test_session_tag_on_selection(self, qapp):
         """选中卡片显示「本会话」标签，切换后标签跟随"""
         dialog = EngineSelectDialog({})
@@ -167,6 +201,12 @@ class TestEngineSelectDialog:
             "rapid": {"available": True, "issues": []},
         }
 
+    def test_cards_only_gguf_rapid(self, qapp):
+        """paddle_vl 卡片已移除，只剩 gguf/rapid"""
+        dialog = EngineSelectDialog({"ocr": {"gguf": {}, "rapidocr": {}}})
+        keys = [card.engine_key for card in dialog._cards]
+        assert keys == ["gguf", "rapid"]
+
     def test_warning_shown_once_on_confirm(self, qapp):
         """依赖不完整时确认：第一次弹 warning 不进入，第二次才进入且不重复弹"""
         dialog = EngineSelectDialog({})
@@ -207,14 +247,17 @@ class TestEngineSelectDialog:
         assert dialog.result() == QDialog.DialogCode.Accepted
 
     def test_focus_border_uses_hover_color_not_accent(self, qapp):
-        """未选中卡片聚焦描边为 hover_border 色，与选中态 accent 区分"""
+        """键盘焦点：中性色虚线（不冒充选中金框）；悬停/选中用品牌色实线"""
         dialog = EngineSelectDialog({})
         sheet = dialog.gguf_card.styleSheet()
         accent = dialog.gguf_card._colors["accent"]
         hover = dialog.gguf_card._colors["hover_border"]
+        border = dialog.gguf_card._colors["border"]
         assert "[selected='true']" in sheet  # 选中态规则存在
         focus_rule = sheet.split(":focus")[1].split("[selected")[0]
-        assert hover in focus_rule  # 聚焦未选中 → hover_border
+        assert "dashed" in focus_rule          # 焦点虚线（键盘态）
+        assert border in focus_rule.split(":hover")[0]  # focus 用中性 border 色
+        assert hover in focus_rule             # :hover 规则仍用品牌色
         selected_rule = sheet.split("[selected='true']")[1]
         assert accent in selected_rule  # 选中 → accent（覆盖聚焦/悬停）
 

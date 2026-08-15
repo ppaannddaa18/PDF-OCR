@@ -93,10 +93,43 @@ def _find_spec(name: str):
 
 
 def _check_rapidocr() -> dict:
-    """RapidOCR 引擎检查：rapidocr_onnxruntime 包是否可导入"""
+    """RapidOCR 引擎检查：包可导入 + 构造可成功（构造不加载模型，速度快）"""
     if _find_spec("rapidocr_onnxruntime") is None:
         return {"available": False, "issues": ["未安装 rapidocr_onnxruntime 包"]}
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        RapidOCR()
+    except Exception as e:
+        return {"available": False, "issues": [f"RapidOCR 初始化失败: {e}"]}
     return {"available": True, "issues": []}
+
+
+def _check_paddle_vl(paddle_vl_cfg: dict) -> dict:
+    """PaddleOCR-VL 引擎检查：paddleocr 官方管线可安装（隐含 paddle/paddlex）+ 模型目录存在"""
+    issues = []
+    if _find_spec("paddleocr") is None:
+        issues.append("未安装 paddleocr 包（官方管线：pip install paddleocr paddlex）")
+    if _find_spec("paddle") is None:
+        issues.append("未安装 paddle（paddleocr 推理依赖，需 GPU 版）")
+    if issues:
+        return {"available": False, "issues": issues}
+
+    # 模型目录：配置 → 默认探测路径（与 ocr_engine_paddle_vl._default_model_dir 一致）
+    model_dir = str(paddle_vl_cfg.get("model_dir", "") or "")
+    if model_dir:
+        if not Path(model_dir).is_dir():
+            return {"available": False,
+                    "issues": [f"模型目录不存在: {model_dir}"]}
+    else:
+        home = Path.home()
+        default_dir = home / ".paddlex" / "official_models" / "PaddleOCR-VL-1.6"
+        if not default_dir.is_dir():
+            return {"available": False,
+                    "issues": [
+                        "未找到模型目录（默认 "
+                        f"{default_dir}），请下载 PaddleOCR-VL-1.6 官方权重"
+                        "或到『模型设置』页配置 model_dir"]}
+    return {"available": True, "issues": issues}
 
 
 def check_engine_availability(config: dict) -> dict:
