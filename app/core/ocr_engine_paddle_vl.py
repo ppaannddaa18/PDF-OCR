@@ -28,6 +28,16 @@ Spotting 任务（行级文本 + 坐标）：
   min 官方 112896 → 配置值（默认 0 → 回退 112896）；min/max 每次调用从
   引擎实例读取（apply_config 热生效）。
 
+方向/扭曲矫正（构造期参数，T13）：
+- ``use_doc_orientation_classify`` / ``use_doc_unwarping`` 在
+  ``PaddleOCRVL(...)`` 构造时按配置传给官方（开启 → 加载 DocPreprocessor
+  子管线，额外显存占用）；运行时热改属性不影响已构造管线（开启且管线未
+  加载会触发官方 check_model_settings_valid 失败 → predict 返回 error dict，
+  _predict_once 已转抛异常防静默空结果）；
+- ``apply_config`` 检测到该两键变化且引擎已初始化 → 返回 True（需卸载重载
+  管线生效，窗口层据此重启引擎）；构造成功后记录
+  ``_constructed_doc_params`` 快照供比对。
+
 线程安全：native 生成非线程安全，推理加锁（多 worker 并行时排队）。
 """
 import logging
@@ -157,6 +167,9 @@ class PaddleOCRVLEngine(OCREngineBase):
             self._markdown_ignore_labels = list(cfg.get("markdown_ignore_labels", []) or [])
             self._pipe = None
             self._initialized = False
+            # 构造期参数快照（initialize 成功后记录）：方向/扭曲矫正开关是
+            # PaddleOCRVL 构造参数，apply_config 据此判定是否需要重启管线
+            self._constructed_doc_params: Optional[Tuple[bool, bool]] = None
             self._init_error: Optional[str] = None
             self._infer_lock = threading.RLock()
             self._matcher = FieldMatcher(self._config)
@@ -179,9 +192,12 @@ class PaddleOCRVLEngine(OCREngineBase):
                 paddle.set_default_dtype("bfloat16")
                 from paddleocr import PaddleOCRVL
                 t0 = time.monotonic()
+                # 方向/扭曲矫正是构造期参数：按配置传给官方（开启 → 加载
+                # DocPreprocessor 子管线，额外显存占用）；热改属性不重建管线
                 self._pipe = PaddleOCRVL(
                     pipeline_version="v1.6", vl_rec_backend="native",
-                    use_doc_orientation_classify=False, use_doc_unwarping=False)
+                    use_doc_orientation_classify=self._use_doc_orientation_classify,
+                    use_doc_unwarping=self._use_doc_unwarping)
                 # 8GB 卡整页 spotting 显存适配：fp32 参数转 bf16 + 像素上限降低
                 self._cast_params_to_bf16(paddle)
                 self._patch_spotting_max_pixels()
@@ -189,6 +205,11 @@ class PaddleOCRVLEngine(OCREngineBase):
                 self._patch_vision_sdpa()
                 paddle.device.cuda.empty_cache()
                 self._initialized = True
+                # 记录构造时使用的矫正参数（apply_config 比对用；unload/
+                # _hard_reset 无需清理——重新 initialize 会重设）
+                self._constructed_doc_params = (
+                    self._use_doc_orientation_classify,
+                    self._use_doc_unwarping)
                 logger.info(f"PaddleOCR-VL 官方管线加载完成 "
                             f"({time.monotonic()-t0:.1f}s)")
             except Exception as e:
@@ -830,18 +851,29 @@ class PaddleOCRVLEngine(OCREngineBase):
 
     # ── 配置热生效（解析配置弹窗） ─────────────────────────────
 
-    def apply_config(self, patch: dict) -> None:
-        """解析配置弹窗热生效：更新实例属性（缺失键保持不变）。
+    def apply_config(self, patch: dict) -> bool:
+        """解析配置弹窗应用：更新实例属性（缺失键保持不变）。
+
+        返回 bool：True = 方向/扭曲矫正参数相对构造时发生变化且引擎已初始
+        化（构造期参数，需卸载重载管线生效，调用方负责重启）；False = 无
+        需重启（未初始化、参数未变，或仅热生效参数）。
 
         类型转换与 __init__ 一致（float/bool/int/list）；识别参数
         （_predict_once kwargs、_filter_ignored_blocks、_collect 闭包辅助
         过滤与 spotting 像素上下限）均从实例属性读取 → 应用后即时生效，
         无需重启管线（_collect 闭包每次调用读 engine._spotting_min_pixels
         /_spotting_max_pixels，不再使用 patch 安装时快照）。
+
+        方向/扭曲矫正（use_doc_orientation_classify/use_doc_unwarping）为
+        PaddleOCRVL 构造参数：DocPreprocessor 子管线按构造开关加载，热改
+        属性不影响已构造管线（开启且管线未加载会触发官方
+        check_model_settings_valid 失败 → predict 返回 error dict，本引擎
+        _predict_once 已转抛异常防静默空结果）→ 与构造快照不一致且已初始化
+        时返回 True。
         """
         cfg = (patch or {}).get("ocr", {}).get("paddle_vl", {})
         if not cfg:
-            return
+            return False
         if "repetition_penalty" in cfg:
             self._repetition_penalty = float(cfg.get("repetition_penalty") or 0)
         if "markdown_ignore_labels" in cfg:
@@ -863,6 +895,15 @@ class PaddleOCRVLEngine(OCREngineBase):
         if "spotting_max_pixels" in cfg:
             v = int(cfg.get("spotting_max_pixels") or 0)
             self._spotting_max_pixels = v or _DEFAULT_SPOTTING_MAX_PIXELS
+        # 构造期参数变化判定：两键相对构造时不一致且引擎已初始化 → 需重启
+        doc_params = (self._use_doc_orientation_classify,
+                      self._use_doc_unwarping)
+        needs_restart = (self._initialized
+                         and doc_params != self._constructed_doc_params)
+        if needs_restart:
+            logger.info("PaddleOCR-VL: 方向/扭曲矫正配置变更，"
+                        "需重启管线后生效")
+        return needs_restart
 
 
 def _is_oom(exc: Exception) -> bool:

@@ -394,6 +394,8 @@ def test_initialize_sets_env_and_pipeline(monkeypatch):
     assert eng._pipe.kwargs["vl_rec_backend"] == "native"
     assert eng._pipe.kwargs["use_doc_orientation_classify"] is False
     assert eng._pipe.kwargs["use_doc_unwarping"] is False
+    # 构造期参数快照与构造 kwargs 一致（apply_config 重启判定基准）
+    assert eng._constructed_doc_params == (False, False)
     # spotting 像素上限 patch 已安装（官方 1605632 → 1048576）+ 双入口 + assemble 合并
     assert hasattr(PipelineImplClass, "_paddleocr_vl_collect_page_vlm_entries_core")
     assert hasattr(PipelineImplClass, "_paddleocr_vl_collect_block_vlm_inputs")
@@ -412,6 +414,24 @@ def test_initialize_sets_env_and_pipeline(monkeypatch):
     assert fake_gen_cfg.repetition_penalty == 1.0
     # 视觉注意力 SDPA 启用（默认）
     assert fake_attn._supports_sdpa is True
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_initialize_constructs_pipeline_with_doc_params(monkeypatch):
+    """T13：initialize 按配置构造——方向/扭曲矫正开启 → PaddleOCRVL 构造
+    kwargs 透传配置值（加载 DocPreprocessor），快照记录构造时值"""
+    PaddleOCRVLEngine.reset_instance()
+    _calls, FakePaddleOCRVL, _pipeline_cls, _gc, _attn = _install_fake_env(
+        monkeypatch)
+    eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": True,
+        "use_doc_unwarping": True}}})
+    eng.initialize()
+    assert eng.is_ready
+    assert isinstance(eng._pipe, FakePaddleOCRVL)
+    assert eng._pipe.kwargs["use_doc_orientation_classify"] is True
+    assert eng._pipe.kwargs["use_doc_unwarping"] is True
+    assert eng._constructed_doc_params == (True, True)
     PaddleOCRVLEngine.reset_instance()
 
 
@@ -791,6 +811,64 @@ def test_apply_config_empty_patch_noop():
     eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {"repetition_penalty": 1.1}}})
     eng.apply_config({})
     assert eng._repetition_penalty == 1.1
+    PaddleOCRVLEngine.reset_instance()
+
+
+# ── apply_config 返回值（T13：矫正键为构造期参数，变化需重启管线） ──
+
+def test_apply_config_returns_false_when_not_initialized():
+    """T13：未初始化时矫正键变化 → 返回 False（无已构造管线可重启）；
+    属性仍更新（下次 initialize 按新值构造）"""
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({})
+    ret = eng.apply_config({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": True, "use_doc_unwarping": True}}})
+    assert ret is False
+    assert eng._use_doc_orientation_classify is True
+    assert eng._use_doc_unwarping is True
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_apply_config_returns_true_on_doc_param_change(monkeypatch):
+    """T13：已初始化引擎矫正键相对构造时变化 → 返回 True（需重启管线）；
+    属性已更新但 _constructed_doc_params 保持构造时值"""
+    PaddleOCRVLEngine.reset_instance()
+    _install_fake_env(monkeypatch)
+    eng = PaddleOCRVLEngine({})
+    eng.initialize()
+    assert eng._constructed_doc_params == (False, False)
+    ret = eng.apply_config({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": True, "use_doc_unwarping": False}}})
+    assert ret is True
+    assert eng._use_doc_orientation_classify is True
+    assert eng._constructed_doc_params == (False, False)  # 构造时值不变
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_apply_config_returns_false_when_doc_params_unchanged(monkeypatch):
+    """T13：矫正键未变（缺失或与构造一致）→ 返回 False（热生效路径）"""
+    PaddleOCRVLEngine.reset_instance()
+    _install_fake_env(monkeypatch)
+    eng = PaddleOCRVLEngine({})
+    eng.initialize()
+    # 仅热生效键 → False
+    assert eng.apply_config({"ocr": {"paddle_vl": {
+        "repetition_penalty": 1.5}}}) is False
+    # 与构造一致（False/False）→ False
+    assert eng.apply_config({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": False,
+        "use_doc_unwarping": False}}}) is False
+    PaddleOCRVLEngine.reset_instance()
+    # 构造为 True/True 的引擎：改回 False → True；保持 True → False
+    _install_fake_env(monkeypatch)
+    eng2 = PaddleOCRVLEngine({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": True,
+        "use_doc_unwarping": True}}})
+    eng2.initialize()
+    assert eng2.apply_config({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": True}}}) is False
+    assert eng2.apply_config({"ocr": {"paddle_vl": {
+        "use_doc_unwarping": False}}}) is True
     PaddleOCRVLEngine.reset_instance()
 
 

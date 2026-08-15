@@ -4,14 +4,19 @@ Task 9：单页窗口 —— 左侧解析队列 + 右侧源文件面板/双视�
 MRO：OcrMainWindow → AppBaseWindowMixin → FluentWindow → ... → QWidget。
 构造协议：_init_app_base(config)（pre-super）→ super().__init__() →
 _post_init_base()（post-super）。
+
+T13：方向/扭曲矫正是引擎构造期参数 —— 解析配置弹窗改动后引擎 apply_config
+返回 True → 本窗口后台 unload + initialize 重启管线（_engine_reinit_done
+信号回主线程收尾）。
 """
 import json
 import os
 import logging
+import threading
 from collections import OrderedDict
 from datetime import datetime
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSpinBox,
                              QFileDialog, QFrame, QApplication, QMessageBox)
 from qfluentwidgets import (FluentWindow, InfoBar, PushButton, BodyLabel,
@@ -40,6 +45,8 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
     FLUENT_THEME = Theme.LIGHT
     # 渲染缓存上限：总页数超过该值按文件淘汰最旧（200 DPI 单页约 6~13MB）
     _RENDER_CACHE_MAX_PAGES = 50
+    # 矫正模块重启管线收尾信号（后台线程 emit → 主线程执行 handler）
+    _engine_reinit_done = pyqtSignal(bool, str)
 
     def __init__(self, config):
         self._init_app_base(config)   # 必须在 super().__init__() 之前
@@ -57,6 +64,8 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         self._rendered_path = None
         self._create_processor()
         self._restore_history()
+        # 矫正模块重启收尾（后台线程 emit → 主线程收尾，QThread 语义）
+        self._engine_reinit_done.connect(self._on_engine_reinit_done)
 
     def _check_pending_task(self):
         pass  # 文档识别程序无待恢复任务
@@ -374,22 +383,79 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         dlg.exec()
 
     def _on_config_apply(self, patch):
-        """保存配置 + 热生效（引擎 apply_config 即时更新解析参数；无需重启管线）"""
+        """保存配置 + 应用：热生效参数即时更新；方向/扭曲矫正为构造期参数，
+        引擎 apply_config 返回 True 时后台卸载重载管线（需重启生效）"""
         self._merge_config_patch(self.config, patch)
         from app.utils.config_loader import save_config
         try:
             save_config(self.config)
         except Exception as e:
             logger.warning(f"配置保存失败: {e}")
-        # 热生效：引擎实例属性即时更新（fake/无此方法的引擎跳过）
+        # 热生效：引擎实例属性即时更新（fake/无此方法的引擎跳过）；
+        # 返回 True = 构造期参数（方向/扭曲矫正）变化，需重启管线
+        needs_restart = False
         apply = getattr(self.ocr_engine, "apply_config", None)
         if apply is not None:
             try:
-                apply(patch)
+                needs_restart = bool(apply(patch))
             except Exception as e:
                 logger.warning(f"引擎配置热生效失败: {e}")
+        if needs_restart:
+            self._restart_engine_for_config()
+            return
         InfoBar.success(title="配置已应用", content="解析参数已更新",
                         parent=self, duration=2000)
+
+    def _restart_engine_for_config(self):
+        """矫正模块为构造期参数：卸载 + 后台重载管线（参考 GGUF 窗口
+        _reinit_engine_in_process 线程模式；完成后经信号回主线程收尾）。
+
+        保守策略：任务进行中不重启（引擎 unload 会与推理争 _infer_lock、
+        中断任务），提示稍后重试——配置已保存，下次启动按新配置构造。
+        """
+        if getattr(self, "processor", None) is not None \
+                and self.processor.is_running():
+            InfoBar.warning(title="配置未完全生效",
+                            content="任务进行中，请完成或取消后再应用需要重启的配置",
+                            parent=self, duration=4000)
+            return
+        engine = self.ocr_engine
+        overlay = getattr(self, "loading_overlay", None)
+        if overlay is not None:
+            overlay.setGeometry(0, 0, self.width(), self.height())
+            overlay.show_loading()
+            overlay.show()
+            overlay.raise_()
+
+        def _reinit():
+            ok, err = False, ""
+            try:
+                unload = getattr(engine, "unload", None)
+                if unload is not None:
+                    unload()
+                engine.initialize()
+                ok = bool(getattr(engine, "is_ready", False))
+                err = getattr(engine, "init_error", "") or ""
+            except Exception as e:
+                ok, err = False, str(e)
+            self._engine_reinit_done.emit(ok, err)
+
+        threading.Thread(target=_reinit, daemon=True,
+                         name="OCR-Restart").start()
+
+    def _on_engine_reinit_done(self, ok: bool, err: str):
+        """重启收尾（后台线程 emit 的信号在主线程投递）：隐藏遮罩 + 结果提示"""
+        overlay = getattr(self, "loading_overlay", None)
+        if overlay is not None:
+            overlay.hide_overlay()
+        if ok:
+            InfoBar.success(title="引擎已重启",
+                            content="矫正模块生效，解析参数已更新",
+                            parent=self, duration=3000)
+        else:
+            InfoBar.error(title="引擎重启失败",
+                          content=f"矫正模块未生效: {err or '未知错误'}",
+                          parent=self, duration=5000)
 
     def _on_retry(self):
         path = self.file_panel.selected_path()

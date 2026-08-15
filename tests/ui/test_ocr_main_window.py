@@ -46,6 +46,37 @@ class _SlowFakeEngine(_FakeEngine):
         return PageResult(blocks=[], markdown=f"p{self.calls}")
 
 
+class _RestartFakeEngine(_FakeEngine):
+    """apply_config 返回 True（矫正键变化需重启）+ 记录 unload/initialize"""
+
+    def __init__(self):
+        super().__init__()
+        self.unload_calls = 0
+        self.reinit_calls = 0
+
+    def apply_config(self, patch):
+        return True
+
+    def unload(self):
+        self.unload_calls += 1
+
+    def initialize(self):
+        # 窗口构造时 base _start_ocr_init 也会调一次 initialize；仅统计
+        # unload 之后的调用（重启触发），unload_calls 由重启路径独占
+        if self.unload_calls:
+            self.reinit_calls += 1
+
+
+class _RestartSlowEngine(_SlowFakeEngine):
+    """慢引擎 + apply_config 返回 True（运行中需重启场景）"""
+
+    def apply_config(self, patch):
+        return True
+
+    def unload(self):
+        self.unload_calls = getattr(self, "unload_calls", 0) + 1
+
+
 # 注意：不在此处定义本地 qapp fixture —— tests/ui/conftest.py 提供 session
 # 级 qapp；本地函数级 fixture 会遮蔽它，导致测试结束时 QApplication 被 GC、
 # qfluentwidgets 全局 qconfig（QApplication 之前创建的 QObject）随之销毁，
@@ -541,3 +572,90 @@ def test_cancel_during_run_clears_partial_cache(qapp, tmp_path, monkeypatch):
     while win.processor.is_running() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert not win.processor.is_running()
+
+
+# ── T13：配置应用——矫正键（构造期参数）变更自动重启引擎 ─────────
+
+def _patch_save_config(monkeypatch):
+    """_on_config_apply 写盘保护：重定向到 no-op（save_config 在函数体内
+    import，patch config_loader 模块属性即可拦截）"""
+    import app.utils.config_loader as cfg_mod
+    monkeypatch.setattr(cfg_mod, "save_config", lambda cfg: None)
+
+
+def _pump_events_until(cond, timeout_ms=3000):
+    """泵事件直到条件满足（后台线程信号投递到主线程的收尾等待）"""
+    from PyQt6.QtCore import QCoreApplication
+    deadline = time.monotonic() + timeout_ms / 1000
+    while not cond() and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(0.01)
+    return cond()
+
+
+def test_config_apply_restarts_engine_when_needed(qapp, tmp_path, monkeypatch):
+    """T13：apply_config 返回 True → 遮罩 + 后台 unload/initialize →
+    完成后信号回主线程 InfoBar 成功提示"""
+    _patch_save_config(monkeypatch)
+    from qfluentwidgets import InfoBar
+    succ = []
+    monkeypatch.setattr(InfoBar, "success", lambda *a, **k: succ.append(k))
+    engine = _RestartFakeEngine()
+    win = _make_window(monkeypatch, engine)
+    # 等窗口构造时的初始初始化（后台 OCR-Init 线程）完成，避免其 initialize
+    # 与重启路径的 reinit 计数竞态（unload 后才计数的判定会误判）
+    assert _pump_events_until(lambda: win._ready_gen == win._init_gen)
+    win._on_config_apply({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": True}}})
+    # 重启在后台线程执行 → 泵事件等待 unload + reinit + 收尾信号
+    ok = _pump_events_until(
+        lambda: engine.unload_calls >= 1 and engine.reinit_calls >= 1
+        and any("引擎已重启" in s.get("title", "") for s in succ))
+    assert ok, f"重启未完成: unload={engine.unload_calls} " \
+               f"reinit={engine.reinit_calls} succ={succ}"
+    assert engine.unload_calls == 1
+    assert engine.reinit_calls == 1
+    assert any("引擎已重启" in s.get("title", "") for s in succ)
+
+
+def test_config_apply_running_skips_restart(qapp, tmp_path, monkeypatch):
+    """T13：任务进行中且需重启 → InfoBar.warning 提示稍后重试，跳过重启
+    （不 unload——不中断任务）"""
+    _patch_save_config(monkeypatch)
+    from qfluentwidgets import InfoBar
+    warns = []
+    monkeypatch.setattr(InfoBar, "warning", lambda *a, **k: warns.append(k))
+    engine = _RestartSlowEngine()
+    win = _make_window(monkeypatch, engine)
+    win.add_files([_make_2page_pdf(tmp_path)])
+    _wait_signal(win.processor, "file_started")
+    assert win.processor.is_running()
+
+    win._on_config_apply({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": True}}})
+    assert warns and "任务进行中" in warns[0]["content"]
+    assert getattr(engine, "unload_calls", 0) == 0  # 未触发重启
+
+    _wait_signal(win.processor, "all_done", timeout_ms=8000)
+    deadline = time.monotonic() + 5
+    while win.processor.is_running() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not win.processor.is_running()
+
+
+def test_config_apply_no_restart_hot_path(qapp, tmp_path, monkeypatch):
+    """T13：apply_config 返回 False → 热生效路径（成功提示，无重启）"""
+    _patch_save_config(monkeypatch)
+    from qfluentwidgets import InfoBar
+    succ = []
+    monkeypatch.setattr(InfoBar, "success", lambda *a, **k: succ.append(k))
+
+    class _NoRestartEngine(_FakeEngine):
+        def apply_config(self, patch):
+            return False
+
+    engine = _NoRestartEngine()
+    win = _make_window(monkeypatch, engine)
+    win._on_config_apply({"ocr": {"paddle_vl": {
+        "repetition_penalty": 1.5}}})
+    assert succ and "配置已应用" in succ[0]["title"]

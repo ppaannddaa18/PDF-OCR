@@ -1,16 +1,15 @@
-"""解析配置弹窗（参考 AI Studio 解析配置：辅助内容过滤 + 模型参数 + 采样参数）"""
+"""解析配置弹窗（参考 AI Studio 解析配置：辅助内容过滤 + 模型参数 + 采样参数）
+
+方向/扭曲矫正是 PaddleOCRVL 构造期参数：开启会加载 DocPreprocessor 子
+管线（额外显存占用），修改后需重启引擎生效（窗口层 apply_config 返回
+True 时自动重启）。"""
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QFormLayout, QCheckBox, QDoubleSpinBox, QSpinBox,
                              QPushButton, QLabel)
 
-# 禁用开关：引擎管线未加载 DocPreprocessor（use_doc_preprocessor=False），
-# 开启会触发官方 check_model_settings_valid 失败 → predict 返回 error dict
-# （不抛异常）→ 每页静默空结果。故方向/扭曲矫正禁用且不再输出配置键，
-# 引擎保持默认 False。
-_DISABLED_KEYS = frozenset({"use_doc_orientation_classify", "use_doc_unwarping"})
 # 模型参数组内提示（灰色小字）
-_UNSUPPORTED_HINT = "当前版本不支持（识别管线未加载文档预处理模块）"
+_UNSUPPORTED_HINT = "开启将加载文档预处理模块（额外显存占用）；修改后需重启引擎生效"
 
 # 辅助内容标签 → (显示名, 默认恢复解析?)
 _AUX_ITEMS = [
@@ -79,11 +78,6 @@ class OcrParseConfigDialog(QDialog):
             # 避免用户在设置页开启后本弹窗应用时静默写回关闭
             if key == "use_layout_detection":
                 checked = checked or bool(pv.get("block_spotting", False))
-            if key in _DISABLED_KEYS:
-                # 方向/扭曲矫正：管线未加载文档预处理模块 → 禁用 + 强制默认
-                # False（patch 不输出该键，引擎保持默认 False）
-                chk.setEnabled(False)
-                checked = False
             chk.setChecked(checked)
             self._model_switches[key] = chk
             mform.addRow(chk)
@@ -134,8 +128,6 @@ class OcrParseConfigDialog(QDialog):
                   if not self._aux_checks[label].isChecked()]
         pv["markdown_ignore_labels"] = ignore
         for key, chk in self._model_switches.items():
-            if key in _DISABLED_KEYS:
-                continue  # 方向/扭曲矫正：不支持，不输出（引擎保持默认 False）
             pv[key] = chk.isChecked()
         # 引擎兼容：use_layout_detection 与既有 block_spotting 等价，双键并存
         pv["block_spotting"] = pv["use_layout_detection"]
