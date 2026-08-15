@@ -36,7 +36,7 @@ def _make_config() -> dict:
                 "max_new_tokens": 5120,
                 "repetition_penalty": 1.2,
                 "vision_sdpa": 1,
-                "spotting_max_pixels": 1048576,
+                "spotting_max_pixels": 1605632,
             },
         },
     }
@@ -62,14 +62,14 @@ class TestPaddleVlSettingsForm:
         _destroy(form)
 
     def test_defaults_when_config_missing(self, qapp):
-        """config 无 paddle_vl 段 → 默认值（开关关、4096/1.1/1/1048576）"""
+        """config 无 paddle_vl 段 → 默认值（开关关、4096/1.1/1/1605632）"""
         form = PaddleVlSettingsForm({"ocr": {"engine": "paddle_vl"}})
         patch = form.get_config_patch()["ocr"]["paddle_vl"]
         assert patch["block_spotting"] == 0
         assert patch["max_new_tokens"] == 4096
         assert patch["repetition_penalty"] == 1.1
         assert patch["vision_sdpa"] == 1
-        assert patch["spotting_max_pixels"] == 1048576
+        assert patch["spotting_max_pixels"] == 1605632
         _destroy(form)
 
     def test_toggle_and_edit_reflected(self, qapp):
@@ -102,7 +102,7 @@ class TestPaddleVlSettingsForm:
         assert patch["max_new_tokens"] == 4096
         assert patch["repetition_penalty"] == 1.1
         assert patch["vision_sdpa"] == 1
-        assert patch["spotting_max_pixels"] == 1048576
+        assert patch["spotting_max_pixels"] == 1605632
         _destroy(form)
 
 

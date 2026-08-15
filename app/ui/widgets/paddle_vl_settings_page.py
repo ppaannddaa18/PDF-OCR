@@ -20,14 +20,15 @@ TOOLTIPS = {
     "max_new_tokens": "生成上限。native 无重复惩罚，上限过大时重复循环会拖长耗时",
     "repetition_penalty": "重复抑制，注入 generation_config 打破 greedy 重复循环（0 = 禁用）",
     "vision_sdpa": "视觉注意力 SDPA（flash）：显存峰值 6.4→4.2GB，质量无损",
-    "spotting_max_pixels": "图像像素上限。官方 1605632 在 8GB 卡会 OOM；1048576 为默认适配值",
+    "spotting_max_pixels": "图像像素上限（默认官方 1605632，坐标精度优先；"
+                          "8GB 卡显存紧张时可降低，代价是坐标精度下降）",
 }
 
 _DEFAULTS = {
     "max_new_tokens": 4096,
     "repetition_penalty": 1.1,
     "vision_sdpa": 1,
-    "spotting_max_pixels": 1048576,
+    "spotting_max_pixels": 1605632,
     "block_spotting": 0,
 }
 
@@ -112,7 +113,7 @@ class PaddleVlSettingsForm(QWidget):
         self.sw_vision_sdpa = sw["switch"]
         gen_grid.addLayout(sw["layout"], 2, 0, 1, 3)
 
-        self.ed_spotting_max_pixels = self._make_value_edit("1048576")
+        self.ed_spotting_max_pixels = self._make_value_edit("1605632")
         self._add_value_row(gen_grid, 3, "图像像素上限 (spotting_max_pixels)",
                             self.ed_spotting_max_pixels,
                             TOOLTIPS["spotting_max_pixels"])
@@ -185,7 +186,7 @@ class PaddleVlSettingsForm(QWidget):
             str(cfg.get("repetition_penalty", 1.1)))
         self.sw_vision_sdpa.setChecked(bool(cfg.get("vision_sdpa", 1)))
         self.ed_spotting_max_pixels.setText(
-            str(cfg.get("spotting_max_pixels", 1048576)))
+            str(cfg.get("spotting_max_pixels", 1605632)))
 
     def get_config_patch(self) -> dict:
         """获取配置补丁（用于合并到主配置）"""
@@ -197,7 +198,7 @@ class PaddleVlSettingsForm(QWidget):
                     self.ed_repetition_penalty.text(), 1.1),
                 "vision_sdpa": 1 if self.sw_vision_sdpa.isChecked() else 0,
                 "spotting_max_pixels": self._parse_int(
-                    self.ed_spotting_max_pixels.text(), 1048576),
+                    self.ed_spotting_max_pixels.text(), 1605632),
             }},
         }
         return patch
