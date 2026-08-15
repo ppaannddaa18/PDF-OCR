@@ -34,6 +34,24 @@ def locate_words(page, text: str, scale: float = 1.0,
     if not words:
         return []
     needle = text.replace(" ", "")
+    # fitz 官方子串匹配优先（词内精确边界——fitz 会把相邻同字体文本合并为
+    # 一个 word，拼接匹配只能返回整词矩形，高亮框水平超宽：实测
+    # "8482910000滚子" 合并为单词，数字部分向右多 53px、中文部分向左
+    # 多 128px；search_for 返回精确子串边界，实测与文字 0 偏差）
+    try:
+        srects = page.search_for(text)
+        if srects:
+            out = []
+            for r in srects:
+                rr = r * page.rotation_matrix
+                out.append([rr.x0 * scale, rr.y0 * scale,
+                            rr.x1 * scale, rr.y1 * scale])
+                if first_only:
+                    break
+            return out
+    except Exception:
+        pass
+    # 回退：跨词拼接匹配（search_for 不支持跨词/空白差异文本时）
     # 文档坐标 → 旋转后渲染坐标（rotation=0 时 rotation_matrix 为单位矩阵）
     rects = []
     for w in words:

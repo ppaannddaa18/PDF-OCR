@@ -24,7 +24,7 @@ def test_defaults_patch(qapp):
     assert pv["use_ocr_for_image_block"] is True
     assert pv["merge_layout_blocks"] is True
     assert pv["repetition_penalty"] == 1.1
-    assert pv["spotting_max_pixels"] == 1048576
+    assert pv["spotting_max_pixels"] == 1605632
     # 双键兼容：use_layout_detection 与 block_spotting 等价，patch 同时输出且同值
     assert pv["block_spotting"] is False
     assert pv["block_spotting"] == pv["use_layout_detection"]
@@ -136,7 +136,7 @@ def test_reset_matches_defaults(qapp):
             (label not in d["markdown_ignore_labels"])
     assert dlg._rep_spin.value() == d["repetition_penalty"] == 1.1
     assert dlg._min_px.value() == d["spotting_min_pixels"] == 0
-    assert dlg._max_px.value() == d["spotting_max_pixels"] == 1048576
+    assert dlg._max_px.value() == d["spotting_max_pixels"] == 1605632
     assert dlg._model_switches["use_layout_detection"].isChecked() is False
     assert dlg._model_switches["use_chart_recognition"].isChecked() is True
 

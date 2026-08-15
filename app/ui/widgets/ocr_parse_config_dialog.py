@@ -95,7 +95,7 @@ class OcrParseConfigDialog(QDialog):
         self._min_px.setValue(int(pv.get("spotting_min_pixels", 0) or 0))
         self._max_px = QSpinBox()
         self._max_px.setRange(0, 100_000_000)
-        self._max_px.setValue(int(pv.get("spotting_max_pixels", 1048576) or 1048576))
+        self._max_px.setValue(int(pv.get("spotting_max_pixels", 1605632) or 1605632))
         sample_group = QGroupBox("文本检测与识别")
         sform = QFormLayout(sample_group)
         sform.addRow("重复抑制强度", self._rep_spin)
@@ -164,7 +164,7 @@ class OcrParseConfigDialog(QDialog):
             "merge_layout_blocks": True,
             "repetition_penalty": 1.1,
             "spotting_min_pixels": 0,
-            "spotting_max_pixels": 1048576,
+            "spotting_max_pixels": 1605632,
         }
 
     def _on_apply(self):

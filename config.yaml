@@ -47,9 +47,11 @@ ocr:
     # 视觉注意力 SDPA（flash）：Windows 官方默认禁用 → 全量注意力物化
     # fp32 矩阵（峰值 6.4GB）；启用后峰值 4.2GB、质量无损（0 = 禁用回 eager）
     vision_sdpa: 1
-    # 8GB 显存适配：官方上限 1605632（~2090 patches）会 OOM；
-    # 设为 1605632 可回官方默认（需 >8GB 显存）
-    spotting_max_pixels: 1048576
+    # spotting 像素上限（官方默认 1605632，坐标精度优先）：降低上限省显存
+    # （1048576 实测 138 行/38.9s/峰值 6.8GB），但 VLM smart_resize 缩放
+    # 失真放大 → 预览高亮坐标偏移（实测 200dpi 垂直 +6.6~+9.6px、水平
+    # -9~-11px）；官方值仅 -1.6~-2px（本机 8GB 卡实测 1.6M 无 OOM）
+    spotting_max_pixels: 1605632
     # 逐块 Spotting（布局切块 + 每块坐标偏移映射）：默认关闭（整页模式）。
     # 纯文本文档可省 ~25% 时间；表格文档收益有限（表格是单一大块）
     block_spotting: false

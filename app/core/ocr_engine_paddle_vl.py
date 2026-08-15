@@ -23,8 +23,10 @@ Spotting 任务（行级文本 + 坐标）：
 - 加载后 ``paddle.device.cuda.empty_cache()`` 释放显存池预分配；
 - 459/570 个 fp32 参数（paddlex keep_in_fp32 精度保护）→ bf16 原地转换省 ~1GB
   （逆用官方 dtype 切换手法 _share_data_with，model_utils.py:1349-1353）；
-- 官方 spotting 像素上限 1605632（~2090 patches → 全序列 logits 大块分配
-  ~3.9GB OOM）→ 运行时替换为配置值（默认 1M，实测 138 行/38.9s/峰值 6.8GB）；
+- spotting 像素上限默认官方 1605632（T14：预览高亮坐标精度优先——降低上限
+  会放大 VLM smart_resize 缩放失真，实测 200dpi 下垂直偏移 +6.6~+9.6px、
+  水平 -9~-11px；1.6M 本机 8GB 卡实测无 OOM）；显存紧张时可配置降低
+  （1048576 实测 138 行/38.9s/峰值 6.8GB，但坐标精度下降）；
   min 官方 112896 → 配置值（默认 0 → 回退 112896）；min/max 每次调用从
   引擎实例读取（apply_config 热生效）。
 
@@ -55,9 +57,11 @@ from app.models.page_result import PageResult, Block
 
 logger = logging.getLogger("PDFOCR")
 
-# 8GB 卡适配：官方 spotting 像素上限 1605632（~2090 patches → 全序列 logits
-# 大块分配 ~3.9GB OOM）；1M 实测 138 行/38.9s/峰值 6.8GB 正常
-_DEFAULT_SPOTTING_MAX_PIXELS = 1048576
+# spotting 像素上限默认官方 1605632（T14 预览高亮偏移修复：降低上限 → VLM
+# smart_resize 缩放失真放大 → 坐标偏移，实测 200dpi 垂直 +6.6~+9.6px、
+# 水平 -9~-11px；官方值仅 -1.6~-2px，本机 8GB 卡实测 1.6M 无 OOM）；
+# 显存紧张可配置降低（如 1048576），但坐标精度下降
+_DEFAULT_SPOTTING_MAX_PIXELS = 1605632
 # 官方 spotting 像素上限（paddlex 3.7.2 pipeline.py:339 写死）
 _OFFICIAL_SPOTTING_MAX_PIXELS = 1605632
 # 图片类布局标签（官方 IMAGE_LABELS + PP-DocLayoutV3 实际产出的 "figure"）：
@@ -291,10 +295,12 @@ class PaddleOCRVLEngine(OCREngineBase):
           seal 标签）改写 "spotting" → 行级文本 + 坐标路径（assemble 合并版
           靠标签命中坐标解析与偏移映射）；assemble 阶段表格等非 spotting 块
           保留原标签走官方分支（表格 HTML 转换等）；
-        - 官方 spotting 分支写死 ``blk_max_pixels = 1605632``（~8192 patches
-          → 视觉注意力 fp32 矩阵大块分配 ~3.9GB，8GB 卡 OOM）与
-          ``blk_min_pixels = 112896`` → 均为配置驱动（spotting_max_pixels
-          默认 1M / spotting_min_pixels 默认 0 → 回退官方 112896），且
+        - 官方 spotting 分支写死 ``blk_max_pixels = 1605632``（~2090 patches
+          → 全序列 logits 大块分配，显存紧张时 OOM）与 ``blk_min_pixels =
+          112896`` → 均为配置驱动（spotting_max_pixels 默认官方 1605632
+          —— T14 预览高亮坐标精度优先，降低上限省显存但 VLM smart_resize
+          缩放失真放大、坐标偏移增大；spotting_min_pixels 默认 0 → 回退
+          官方 112896），且
           **每次调用从引擎实例读取**（与 ignore 集同模式，apply_config
           热生效，无需重装 patch）；其余分派沿用官方 per-label 像素配置
           （layout_prep_cfg 键，缺失回退 _DEFAULT_MIN/MAX_PIXELS）；
@@ -418,7 +424,8 @@ class PaddleOCRVLEngine(OCREngineBase):
             _collect)
         if self._spotting_max_pixels != _OFFICIAL_SPOTTING_MAX_PIXELS:
             logger.info(f"PaddleOCR-VL: spotting max_pixels → "
-                        f"{self._spotting_max_pixels}（8GB 显存适配，热生效）")
+                        f"{self._spotting_max_pixels}（非官方默认；降低省显存"
+                        "但坐标精度下降，热生效）")
 
     def _patch_assemble_spotting_merge(self) -> None:
         """assemble 合并版：逐块 spotting 坐标偏移映射 + 页级累积。

@@ -256,19 +256,19 @@ def test_engine_name_and_config_defaults():
     assert eng.engine_name == "paddle_vl"
     assert eng._max_new_tokens == 4096  # 生成上限（防重复循环跑满）
     assert eng._repetition_penalty == 1.1  # 默认注入重复惩罚
-    assert eng._spotting_max_pixels == 1048576  # 8GB 卡适配默认
+    assert eng._spotting_max_pixels == 1605632  # 默认官方值（T14：坐标精度优先）
     assert not eng.is_ready
     PaddleOCRVLEngine.reset_instance()
 
 
 def test_spotting_max_pixels_config():
-    """配置：1605632 → 官方默认不 patch；0 → 默认适配值"""
+    """配置：1605632 显式/0 → 官方默认 1605632（T14 默认回官方，坐标精度优先）"""
     PaddleOCRVLEngine.reset_instance()
     eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {"spotting_max_pixels": 1605632}}})
     assert eng._spotting_max_pixels == 1605632
     PaddleOCRVLEngine.reset_instance()
     eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {"spotting_max_pixels": 0}}})
-    assert eng._spotting_max_pixels == 1048576
+    assert eng._spotting_max_pixels == 1605632
     PaddleOCRVLEngine.reset_instance()
 
 
@@ -396,11 +396,11 @@ def test_initialize_sets_env_and_pipeline(monkeypatch):
     assert eng._pipe.kwargs["use_doc_unwarping"] is False
     # 构造期参数快照与构造 kwargs 一致（apply_config 重启判定基准）
     assert eng._constructed_doc_params == (False, False)
-    # spotting 像素上限 patch 已安装（官方 1605632 → 1048576）+ 双入口 + assemble 合并
+    # spotting 像素上限 patch 已安装（默认保持官方 1605632）+ 双入口 + assemble 合并
     assert hasattr(PipelineImplClass, "_paddleocr_vl_collect_page_vlm_entries_core")
     assert hasattr(PipelineImplClass, "_paddleocr_vl_collect_block_vlm_inputs")
     assert hasattr(PipelineImplClass, "_paddleocr_vl_assemble_parsing_results")
-    # 统一 collect：非 image 块 → spotting + 默认像素 1048576
+    # 统一 collect：非 image 块 → spotting + 默认像素 1605632
     collect = PipelineImplClass._paddleocr_vl_collect_page_vlm_entries_core
     blocks = [{"img": np.zeros((100, 100, 3), dtype=np.uint8),
                "label": "text", "box": [0, 0, 100, 100]}]
@@ -408,7 +408,7 @@ def test_initialize_sets_env_and_pipeline(monkeypatch):
                                         {"image_labels": ["image"]})
     assert has_spot is True
     assert entries[0][3] == "Spotting:"
-    assert entries[0][4] == (112896, 1048576)
+    assert entries[0][4] == (112896, 1605632)
     # 重复抑制已改为 predict 前注入：initialize 不再写 generation_config
     # （保持官方 1.0，注入行为由 test_predict_once_injects_* 覆盖）
     assert fake_gen_cfg.repetition_penalty == 1.0
@@ -791,14 +791,14 @@ def test_apply_config_updates_parse_attributes():
 
 
 def test_apply_config_missing_keys_unchanged():
-    """I1：缺失键保持不变；spotting_max_pixels=0 → 默认适配值（同 __init__）"""
+    """I1：缺失键保持不变；spotting_max_pixels=0 → 默认官方值（同 __init__）"""
     PaddleOCRVLEngine.reset_instance()
     eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": {
         "repetition_penalty": 1.1, "block_spotting": True}}})
     eng.apply_config({"ocr": {"paddle_vl": {
         "repetition_penalty": 0.0, "spotting_max_pixels": 0}}})
     assert eng._repetition_penalty == 0.0
-    assert eng._spotting_max_pixels == 1048576
+    assert eng._spotting_max_pixels == 1605632
     assert eng._block_spotting is True          # 缺失键不变
     assert eng._use_doc_orientation_classify is False
     assert eng._markdown_ignore_labels == []
@@ -966,7 +966,7 @@ def test_collect_dispatches_official_labels(monkeypatch):
     by_j = {e[1]: e for e in entries}
     # 文本类块 → spotting（改写 label）+ 像素上限适配
     assert by_j[0][3] == "Spotting:"
-    assert by_j[0][4] == (112896, 1048576)
+    assert by_j[0][4] == (112896, 1605632)
     assert blocks[0]["label"] == "spotting"
     # table → Table Recognition + table 像素 + label 保留（assemble 靠标签
     # 走表格 HTML 分支）
@@ -984,7 +984,7 @@ def test_collect_dispatches_official_labels(monkeypatch):
     assert by_j[4][4] == (500000, 500500)
     # 整页假盒 label 已是 spotting → 原样走 spotting 分支（像素上限适配）
     assert by_j[5][3] == "Spotting:"
-    assert by_j[5][4] == (112896, 1048576)
+    assert by_j[5][4] == (112896, 1605632)
     assert blocks[5]["label"] == "spotting"
     # image 在 image_labels 中 → 跳过（不进 vlm_entries）
     assert 6 not in by_j
@@ -1017,22 +1017,22 @@ def test_collect_spotting_pixels_hot_reload(monkeypatch):
         ]
 
     cfg = {"image_labels": ["image"]}
-    # 默认值：min 0 → 回退官方 112896；max → 8GB 适配默认 1048576
+    # 默认值：min 0 → 回退官方 112896；max → 默认官方 1605632（T14）
     entries, _hs, _dr = collect(None, 0, _blocks(), [[]], cfg)
-    assert entries[0][4] == (112896, 1048576)
-    assert entries[1][4] == (112896, 1048576)
+    assert entries[0][4] == (112896, 1605632)
+    assert entries[1][4] == (112896, 1605632)
     # 热生效：apply_config 修改 min/max → 再次 collect 反映新值（无需重装 patch）
     eng.apply_config({"ocr": {"paddle_vl": {
         "spotting_min_pixels": 256, "spotting_max_pixels": 1605632}}})
     entries2, _hs2, _dr2 = collect(None, 0, _blocks(), [[]], cfg)
     assert entries2[0][4] == (256, 1605632)
     assert entries2[1][4] == (256, 1605632)
-    # min=0 → 回退官方 112896；max=0 → 回退默认 1048576（同 __init__ 语义）
+    # min=0 → 回退官方 112896；max=0 → 回退默认 1605632（同 __init__ 语义）
     eng.apply_config({"ocr": {"paddle_vl": {
         "spotting_min_pixels": 0, "spotting_max_pixels": 0}}})
     entries3, _hs3, _dr3 = collect(None, 0, _blocks(), [[]], cfg)
-    assert entries3[0][4] == (112896, 1048576)
-    assert entries3[1][4] == (112896, 1048576)
+    assert entries3[0][4] == (112896, 1605632)
+    assert entries3[1][4] == (112896, 1605632)
     PaddleOCRVLEngine.reset_instance()
 
 

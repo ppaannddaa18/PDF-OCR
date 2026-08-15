@@ -91,3 +91,38 @@ def test_rotation_0_unchanged(page):
     """rotation=0 时行为不变（单位矩阵）"""
     before = locate_words(page, "12345678")
     assert before[0][0] > 0
+
+
+def test_search_for_exact_substring_in_word():
+    """T14：fitz 把相邻同字体文本合并为一个 word（"ABC123DEF"）——search_for
+    优先路径返回词内子串"123"的精确边界（x0 在 123 起始、x1 在 123 结束，
+    不含 ABC/DEF 段）；修复前拼接匹配返回整词矩形、水平超宽"""
+    doc = fitz.open()
+    pg = doc.new_page()
+    pg.insert_text((72, 72), "ABC123DEF")
+    word = next(w for w in pg.get_text("words") if w[4] == "ABC123DEF")
+    rects = locate_words(pg, "123")
+    assert len(rects) == 1
+    x0, _y0, x1, _y1 = rects[0]
+    assert x0 > word[0] + 1    # 不含 ABC 段（修复前 x0 取整词起点）
+    assert x1 < word[2] - 1    # 不含 DEF 段（修复前 x1 取整词终点）
+    # 与 search_for 直接结果 0 偏差（未旋转页 rotation_matrix 为单位矩阵）
+    srect = pg.search_for("123")[0]
+    assert x0 == pytest.approx(srect.x0)
+    assert x1 == pytest.approx(srect.x1)
+
+
+def test_cross_word_text_matches_or_falls_back(page):
+    """T14：跨词文本（含空白）——search_for 能精确匹配则同样精确，否则回退
+    跨词拼接；两路径矩形都覆盖两词完整区间（回归：高亮不丢失/不超宽）"""
+    words = {w[4]: w for w in page.get_text("words")}
+    rects = locate_words(page, "Total: 99.50")
+    assert len(rects) == 1
+    x0, _y0, x1, _y1 = rects[0]
+    assert x0 <= words["Total:"][0] + 2   # 起始不晚于 Total: 词起点
+    assert x1 >= words["99.50"][2] - 2    # 结束不早于 99.50 词终点
+    # 精确路径（search_for 命中）时与直接结果一致
+    srects = page.search_for("Total: 99.50")
+    if srects:
+        assert x0 == pytest.approx(srects[0].x0)
+        assert x1 == pytest.approx(srects[0].x1)
