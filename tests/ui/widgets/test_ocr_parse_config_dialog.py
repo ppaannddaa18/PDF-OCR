@@ -14,9 +14,10 @@ def test_defaults_patch(qapp):
     dlg = OcrParseConfigDialog({})
     patch = dlg.get_config_patch()
     pv = patch["ocr"]["paddle_vl"]
-    # 默认：方向/扭曲/版面分析关，图表/印章/图片文字/跨页合并开
-    assert pv["use_doc_orientation_classify"] is False
-    assert pv["use_doc_unwarping"] is False
+    # 方向/扭曲矫正：不支持（管线未加载 DocPreprocessor）→ patch 不输出，
+    # 引擎保持默认 False；版面分析关，图表/印章/图片文字/跨页合并开
+    assert "use_doc_orientation_classify" not in pv
+    assert "use_doc_unwarping" not in pv
     assert pv["use_layout_detection"] is False
     assert pv["use_chart_recognition"] is True
     assert pv["use_seal_recognition"] is True
@@ -37,7 +38,8 @@ def test_roundtrip(qapp):
     }}})
     patch = dlg.get_config_patch()
     pv = patch["ocr"]["paddle_vl"]
-    assert pv["use_doc_orientation_classify"] is True
+    # 方向矫正：配置曾为 True 也不输出（禁用键不参与 patch）
+    assert "use_doc_orientation_classify" not in pv
     assert pv["repetition_penalty"] == 1.3
     # markdown_ignore_labels 语义：header 未勾选（恢复解析）→ 忽略集含 header；
     # number 默认勾选 → 忽略集不含 number（真实 PP-DocLayoutV3 标签）
@@ -60,4 +62,27 @@ def test_reset_restores_defaults(qapp):
         "use_doc_orientation_classify": True}}})
     dlg.reset_to_defaults()
     patch = dlg.get_config_patch()
-    assert patch["ocr"]["paddle_vl"]["use_doc_orientation_classify"] is False
+    # 重置后矫正键仍不输出（默认 False 由引擎侧保持）
+    assert "use_doc_orientation_classify" not in patch["ocr"]["paddle_vl"]
+
+
+def test_correction_checkboxes_disabled(qapp):
+    """方向/扭曲矫正复选框禁用 + 组内灰色提示文案；其余开关仍可用"""
+    from PyQt6.QtWidgets import QLabel
+    dlg = OcrParseConfigDialog({})
+    assert dlg._model_switches["use_doc_orientation_classify"].isEnabled() is False
+    assert dlg._model_switches["use_doc_unwarping"].isEnabled() is False
+    assert dlg._model_switches["use_layout_detection"].isEnabled() is True
+    assert dlg._model_switches["use_chart_recognition"].isEnabled() is True
+    # 模型参数组内存在灰色小字提示（QLabel 文案命中）
+    texts = [lbl.text() for lbl in dlg.findChildren(QLabel)]
+    assert any("当前版本不支持" in t for t in texts)
+
+
+def test_patch_excludes_disabled_keys(qapp):
+    """get_config_patch 不输出方向/扭曲矫正两键（引擎保持默认 False）"""
+    dlg = OcrParseConfigDialog({"ocr": {"paddle_vl": {
+        "use_doc_orientation_classify": True, "use_doc_unwarping": True}}})
+    pv = dlg.get_config_patch()["ocr"]["paddle_vl"]
+    assert "use_doc_orientation_classify" not in pv
+    assert "use_doc_unwarping" not in pv

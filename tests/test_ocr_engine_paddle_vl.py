@@ -189,6 +189,44 @@ def test_recognize_page_auto_predict_error_propagates():
         eng.recognize_page_auto(Image.new("RGB", (100, 100), "white"))
 
 
+def test_predict_once_error_dict_raises(monkeypatch):
+    """官方 check_model_settings_valid 失败（如管线未加载 DocPreprocessor 却开启
+    方向/扭曲矫正）→ predict_iter 仅 yield error dict 不抛异常 → 引擎转抛
+    RuntimeError（防每页静默空结果）"""
+    _install_fake_env(monkeypatch)
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({})
+    eng._pipe = _FakePipe(
+        [{"error": "the input params for model settings are invalid!"}])
+    eng._initialized = True
+    with pytest.raises(RuntimeError,
+                       match=r"PaddleOCR-VL 推理失败: the input params"):
+        eng._predict_once(Image.new("RGB", (100, 100), "white"), "spotting", None)
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_recognize_page_auto_error_dict_raises():
+    """error dict 沿 recognize_page_auto 上抛 → 调用方转失败页占位（非空结果）"""
+    pipe = _FakePipe([{"error": "the input params for model settings are invalid!"}])
+    eng = _make_engine(pipe)
+    with pytest.raises(RuntimeError, match="PaddleOCR-VL 推理失败"):
+        eng.recognize_page_auto(Image.new("RGB", (100, 100), "white"))
+
+
+def test_predict_once_error_dict_in_list_raises():
+    """error dict 出现在结果列表（非首个）同样被检出；首个错误即上抛"""
+    PaddleOCRVLEngine.reset_instance()
+    eng = PaddleOCRVLEngine({})
+    eng._pipe = _FakePipe([
+        {"error": "model settings invalid"},
+        {"spotting_res": {"rec_texts": ["ok"], "rec_polys": []}},
+    ])
+    eng._initialized = True
+    with pytest.raises(RuntimeError, match="model settings invalid"):
+        eng._predict_once(Image.new("RGB", (100, 100), "white"), "spotting", None)
+    PaddleOCRVLEngine.reset_instance()
+
+
 # ── recognize：单图（Region 裁剪） ───────────────────────────
 
 def test_recognize_ocr_mode():

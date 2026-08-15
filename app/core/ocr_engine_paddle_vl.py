@@ -655,7 +655,14 @@ class PaddleOCRVLEngine(OCREngineBase):
         )
         if not results:
             raise RuntimeError("PaddleOCR-VL 无输出（模型推理失败）")
-        return results[0]
+        first = results[0]
+        # 官方错误路径：check_model_settings_valid 失败（如管线未加载
+        # DocPreprocessor 却开启方向/扭曲矫正）时 predict_iter 仅 yield
+        # error dict 而不抛异常 → 每页静默空结果。此处转抛异常（调用方
+        # 转失败页占位，防静默空结果）。
+        if isinstance(first, dict) and first.get("error"):
+            raise RuntimeError(f"PaddleOCR-VL 推理失败: {first['error']}")
+        return first
 
     def _hard_reset(self) -> None:
         """OOM 自愈：完整释放管线（参数张量销毁 → 池回收）并重新加载"""
