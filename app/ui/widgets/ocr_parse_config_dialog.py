@@ -57,7 +57,13 @@ class OcrParseConfigDialog(QDialog):
         mform = QFormLayout(model_group)
         for key, name, default in _MODEL_SWITCHES:
             chk = QCheckBox(name)
-            chk.setChecked(bool(pv.get(key, default)))
+            checked = bool(pv.get(key, default))
+            # 兼容读点：既有设置页（paddle_vl_settings_page）与引擎读写的是
+            # block_spotting（与 use_layout_detection 等价），任一开启即勾选，
+            # 避免用户在设置页开启后本弹窗应用时静默写回关闭
+            if key == "use_layout_detection":
+                checked = checked or bool(pv.get("block_spotting", False))
+            chk.setChecked(checked)
             self._model_switches[key] = chk
             mform.addRow(chk)
         # 采样参数组

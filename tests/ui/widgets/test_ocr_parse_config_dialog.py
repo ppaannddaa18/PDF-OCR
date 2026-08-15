@@ -24,6 +24,9 @@ def test_defaults_patch(qapp):
     assert pv["merge_layout_blocks"] is True
     assert pv["repetition_penalty"] == 1.1
     assert pv["spotting_max_pixels"] == 1048576
+    # 双键兼容：use_layout_detection 与 block_spotting 等价，patch 同时输出且同值
+    assert pv["block_spotting"] is False
+    assert pv["block_spotting"] == pv["use_layout_detection"]
 
 
 def test_roundtrip(qapp):
@@ -33,8 +36,23 @@ def test_roundtrip(qapp):
         "markdown_ignore_labels": ["header"],
     }}})
     patch = dlg.get_config_patch()
-    assert patch["ocr"]["paddle_vl"]["use_doc_orientation_classify"] is True
-    assert patch["ocr"]["paddle_vl"]["repetition_penalty"] == 1.3
+    pv = patch["ocr"]["paddle_vl"]
+    assert pv["use_doc_orientation_classify"] is True
+    assert pv["repetition_penalty"] == 1.3
+    # markdown_ignore_labels 语义：header 未勾选（恢复解析）→ 忽略集含 header；
+    # page number 默认勾选 → 忽略集不含 page number
+    assert "header" in pv["markdown_ignore_labels"]
+    assert "page number" not in pv["markdown_ignore_labels"]
+
+
+def test_block_spotting_seed_layout_checkbox(qapp):
+    """既有设置页读写 block_spotting：仅配该键时版面分析复选框应勾选（I1 回归）"""
+    dlg = OcrParseConfigDialog({"ocr": {"paddle_vl": {"block_spotting": True}}})
+    assert dlg._model_switches["use_layout_detection"].isChecked() is True
+    pv = dlg.get_config_patch()["ocr"]["paddle_vl"]
+    # 开启态双键同值输出（开）
+    assert pv["use_layout_detection"] is True
+    assert pv["block_spotting"] is True
 
 
 def test_reset_restores_defaults(qapp):
