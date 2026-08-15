@@ -60,6 +60,10 @@ class _ProcessThread(QThread):
                 page = self._engine.recognize_page_auto(im.convert("RGB"))
             return [page]
         count = self._loader.page_count(path)
+        if count == 0:
+            # 损坏/加密/空 PDF：page_count 吞异常返回 0，空循环会伪装成"完成 0 页"，
+            # 改为抛异常走 file_failed 失败路径（面板标记失败而非完成）
+            raise RuntimeError("PDF 无有效页（可能已损坏或加密）")
         pages: List[PageResult] = []
         for i in range(count):
             if self._cancel_flag.is_set():

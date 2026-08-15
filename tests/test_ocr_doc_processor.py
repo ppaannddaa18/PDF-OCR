@@ -196,6 +196,29 @@ def test_add_during_run_auto_continues(qapp, tmp_path):
     loader.shutdown()
 
 
+def test_corrupted_pdf_fails_file(qapp, tmp_path):
+    """损坏 PDF：page_count 吞异常返回 0 → 抛 RuntimeError → file_failed，file_done 不触发"""
+    bad_pdf = tmp_path / "broken.pdf"
+    bad_pdf.write_bytes(b"this is definitely not a pdf" * 8)  # 垃圾字节 .pdf
+    engine = _FakeEngine([PageResult(blocks=[], markdown="p1")])
+    loader = PdfLoader(dpi=100)
+    proc = OcrDocProcessor(loader, engine, {})
+    failed = []
+    done = []
+    proc.file_failed.connect(lambda p, e: failed.append((p, e)))
+    proc.file_done.connect(lambda p, r: done.append((p, r)))
+    proc.add_files([str(bad_pdf)])
+    _run_until_done(proc)
+
+    assert len(failed) == 1
+    assert failed[0][0] == str(bad_pdf)
+    assert "无有效页" in failed[0][1]
+    assert not done                # 不再伪装成"完成 0 页"
+    assert engine.calls == []      # 损坏文件不触发任何识别
+    assert proc.get_cache(str(bad_pdf)) is None
+    loader.shutdown()
+
+
 def test_retry_during_run_restarts_target(qapp, tmp_path):
     """运行中重试（cancel + add_files 同一文件）：取消后自动续跑重新完整处理"""
     pdf_path = _make_2page_pdf(tmp_path)
