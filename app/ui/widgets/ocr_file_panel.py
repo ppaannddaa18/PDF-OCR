@@ -21,7 +21,7 @@ _STATUS_COLOR = {
     "queued": "text_secondary",
     "processing": "primary",
     "done": "success",
-    "failed": "danger",
+    "failed": "error",
     "cancelled": "text_secondary",
 }
 
@@ -60,9 +60,10 @@ class OcrFilePanel(QWidget):
         item = QListWidgetItem(os.path.basename(path))
         item.setData(Qt.ItemDataRole.UserRole, path)
         item.setToolTip(path)
-        self.list.addItem(item)
         self._items[fid] = (item, {"path": path, "time": datetime.now()})
         self._status[fid] = ("queued", "")
+        item.setText(f"{os.path.basename(path)}\n{self.status_text(fid)}")
+        self.list.addItem(item)
         return fid
 
     def select_file(self, fid: str) -> None:
