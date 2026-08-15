@@ -11,6 +11,14 @@ Spotting 任务（行级文本 + 坐标）：
   ``post_process_for_spotting`` 以整页尺寸还原 → ``rec_polys`` 为整页像素四点坐标
   （与预览面板坐标系一致），坐标还原由官方实现，本引擎不解析 LOC token。
 
+逐块模式（block_spotting）label 分派（_patch_spotting_max_pixels 重构，T3）：
+- 保留官方分派：table → ``Table Recognition:``（表格 HTML）、chart → ``Chart
+  Recognition:``、formula → ``Formula Recognition:``、seal → ``Seal
+  Recognition:``、image 家族 → ``OCR:``/跳过（image_labels 配置）；
+- 仅文本类块（text/title/list/table_caption/figure_caption/number/footnote/
+  header/footer/aside_text 等非 image/table/chart/formula/seal 标签）改写
+  "spotting" → 行级文本 + 坐标（assemble 合并版偏移映射回整页）。
+
 显存（8GB 卡整页 spotting 实测适配）：
 - 加载后 ``paddle.device.cuda.empty_cache()`` 释放显存池预分配；
 - 459/570 个 fp32 参数（paddlex keep_in_fp32 精度保护）→ bf16 原地转换省 ~1GB
@@ -40,6 +48,13 @@ logger = logging.getLogger("PDFOCR")
 _DEFAULT_SPOTTING_MAX_PIXELS = 1048576
 # 官方 spotting 像素上限（paddlex 3.7.2 pipeline.py:339 写死）
 _OFFICIAL_SPOTTING_MAX_PIXELS = 1605632
+# 图片类布局标签（官方 IMAGE_LABELS + PP-DocLayoutV3 实际产出的 "figure"）：
+# 逐块分派时保持官方 ``OCR:``/跳过路径，不做 spotting 改写
+_IMAGE_FAMILY_LABELS = ("image", "header_image", "footer_image", "figure")
+# 官方逐块分派保底像素（layout_prep_cfg 缺失键时回退，对齐官方默认
+# 112896/1003520）
+_DEFAULT_MIN_PIXELS = 112896
+_DEFAULT_MAX_PIXELS = 1003520
 # raw_json 大数组降级阈值：numpy 元素数超过则弃 tolist()（整页图像/逐块图像
 # 会展开成数百万数字 → 每页膨胀数百 MB），spotting 坐标数组在阈值内保留
 _JSON_SAFE_MAX_NDARRAY_ELEMS = 5000
@@ -238,13 +253,28 @@ class PaddleOCRVLEngine(OCREngineBase):
             logger.info(f"PaddleOCR-VL: {n} 个 fp32 参数已转 bf16（8GB 显存适配）")
 
     def _patch_spotting_max_pixels(self) -> None:
-        """统一 collect：布局块/整页假盒全部走 Spotting + 像素上限适配。
+        """统一 collect：官方 label 分派 + 文本类块改写 Spotting + 像素上限适配。
 
-        - 官方写死 ``blk_max_pixels = 1605632``（~8192 patches → 视觉注意力
-          fp32 矩阵大块分配 ~3.9GB，8GB 卡 OOM）→ 降为配置值（默认 1M）；
-        - 整页假盒（use_layout_detection=False）label 已是 "spotting"；
-          布局模式（block_spotting）非 image 块 label 改写 "spotting"
-          （assemble 靠标签命中坐标解析）→ 统一函数两模式通用；
+        - 官方分派（paddlex 3.7.2 pipeline.py:289-358 原函数体）保留：
+          table → ``Table Recognition:``（含 tokenize_figure_of_table 表格
+          内嵌图 token 化）、chart → ``Chart Recognition:``、formula →
+          ``Formula Recognition:``（含 crop_margin）、seal → ``Seal
+          Recognition:``；image 家族（image/header_image/footer_image/
+          figure）按官方逻辑：image_labels 配置命中（use_ocr_for_image_block
+          /use_chart_recognition/use_seal_recognition=False 时入集）→ 跳过，
+          未入集 → ``OCR:``；
+        - 仅文本类块（text/title/list/table_caption/figure_caption/number/
+          footnote/header/footer/aside_text 等非 image/table/chart/formula/
+          seal 标签）改写 "spotting" → 行级文本 + 坐标路径（assemble 合并版
+          靠标签命中坐标解析与偏移映射）；assemble 阶段表格等非 spotting 块
+          保留原标签走官方分支（表格 HTML 转换等）；
+        - 官方 spotting 分支写死 ``blk_max_pixels = 1605632``（~8192 patches
+          → 视觉注意力 fp32 矩阵大块分配 ~3.9GB，8GB 卡 OOM）→ 降为配置值
+          （默认 1M）；其余分派沿用官方 per-label 像素配置
+          （layout_prep_cfg 键，缺失回退 _DEFAULT_MIN/MAX_PIXELS）；
+        - 整页假盒（use_layout_detection=False）label 已是 "spotting" → 直接
+          走 spotting 分支；布局模式（block_spotting）文本类块改写后同分支，
+          两模式统一函数；
         - **双入口替换**：布局单页走 benchmark 装饰的
           ``_paddleocr_vl_collect_block_vlm_inputs``（装饰时已捕获官方原
           函数，只替换 core 不生效——实验实证），须一并替换。
@@ -264,9 +294,9 @@ class PaddleOCRVLEngine(OCREngineBase):
             page_has_spotting = False
             page_drop_figures = set()
             # 辅助内容过滤（识别前）：布局模式原标签命中忽略集 → 不送 VLM。
-            # 必须在 label 改写**之前**过滤 —— assemble 阶段标签已被改写为
-            # "spotting"，_filter_ignored_blocks（按原标签）永不命中。每次
-            # 调用从引擎实例读取（apply_config 热生效，无需重装 patch）；
+            # 必须在 label 改写**之前**过滤 —— assemble 阶段文本类块标签已
+            # 改写为 "spotting"，_filter_ignored_blocks（按原标签）永不命中。
+            # 每次调用从引擎实例读取（apply_config 热生效，无需重装 patch）；
             # 整页假盒 label "spotting" 不在忽略集，不受影响。
             ignore_labels = set(engine._markdown_ignore_labels)
             for j, block in enumerate(blocks_for_img):
@@ -276,11 +306,77 @@ class PaddleOCRVLEngine(OCREngineBase):
                     continue
                 if (block_label not in layout_prep_cfg["image_labels"]
                         and block_img is not None):
-                    block["label"] = "spotting"  # 布局块改写；假盒本身已是
-                    page_has_spotting = True
+                    # 官方默认分派：image 家族（use_ocr_for_image_block=True
+                    # 时未入 image_labels）与未知标签 → OCR:
+                    figure_token_map = {}
+                    text_prompt = "OCR:"
+                    blk_min_pixels = layout_prep_cfg.get(
+                        "ocr_min_pixels", _DEFAULT_MIN_PIXELS)
+                    blk_max_pixels = layout_prep_cfg.get(
+                        "ocr_max_pixels", _DEFAULT_MAX_PIXELS)
+                    drop_figures = []
+                    if block_label == "table":
+                        text_prompt = "Table Recognition:"
+                        block_img, figure_token_map, drop_figures = (
+                            _vlp.tokenize_figure_of_table(
+                                block_img, block["box"], imgs_in_doc_for_img))
+                        blk_min_pixels = layout_prep_cfg.get(
+                            "table_min_pixels", _DEFAULT_MIN_PIXELS)
+                        blk_max_pixels = layout_prep_cfg.get(
+                            "table_max_pixels", _DEFAULT_MAX_PIXELS)
+                    elif (block_label == "chart"
+                          and layout_prep_cfg.get(
+                              "use_chart_recognition", False)):
+                        text_prompt = "Chart Recognition:"
+                        blk_min_pixels = layout_prep_cfg.get(
+                            "chart_min_pixels", _DEFAULT_MIN_PIXELS)
+                        blk_max_pixels = layout_prep_cfg.get(
+                            "chart_max_pixels", _DEFAULT_MAX_PIXELS)
+                    elif ("formula" in block_label
+                          and block_label != "formula_number"):
+                        text_prompt = "Formula Recognition:"
+                        crop_img = _vlp.crop_margin(block_img)
+                        w, h, _ = crop_img.shape
+                        if w > 2 and h > 2:
+                            block_img = crop_img
+                        blk_min_pixels = layout_prep_cfg.get(
+                            "formula_min_pixels", _DEFAULT_MIN_PIXELS)
+                        blk_max_pixels = layout_prep_cfg.get(
+                            "formula_max_pixels", _DEFAULT_MAX_PIXELS)
+                    elif block_label == "spotting":
+                        # 整页假盒（label 已是 spotting）/布局原生 spotting 块
+                        text_prompt = "Spotting:"
+                        page_has_spotting = True
+                        blk_min_pixels = 112896
+                        blk_max_pixels = max_pixels
+                        block_img = _vlp.pre_process_for_spotting(block_img)
+                    elif (block_label == "seal"
+                          and layout_prep_cfg.get(
+                              "use_seal_recognition", False)):
+                        text_prompt = "Seal Recognition:"
+                        blk_min_pixels = layout_prep_cfg.get(
+                            "seal_min_pixels", _DEFAULT_MIN_PIXELS)
+                        blk_max_pixels = layout_prep_cfg.get(
+                            "seal_max_pixels", _DEFAULT_MAX_PIXELS)
+                    elif block_label in _IMAGE_FAMILY_LABELS:
+                        # image 家族保留官方 OCR: 路径（不改写 spotting）
+                        pass
+                    else:
+                        # 文本类块（非 image/table/chart/formula/seal/spotting）
+                        # → 改写 spotting：行级文本 + 坐标路径（assemble
+                        # 合并版靠标签命中坐标解析与偏移映射）
+                        block["label"] = "spotting"
+                        text_prompt = "Spotting:"
+                        page_has_spotting = True
+                        blk_min_pixels = 112896
+                        blk_max_pixels = max_pixels
+                        block_img = _vlp.pre_process_for_spotting(block_img)
+
                     page_vlm_entries.append(
-                        (page_idx, j, _vlp.pre_process_for_spotting(block_img),
-                         "Spotting:", (112896, max_pixels), {}))
+                        (page_idx, j, block_img, text_prompt,
+                         (blk_min_pixels, blk_max_pixels), figure_token_map))
+                    page_drop_figures.update(drop_figures)
+
             return page_vlm_entries, page_has_spotting, page_drop_figures
 
         _vlp._PaddleOCRVLPipeline._paddleocr_vl_collect_page_vlm_entries_core = (
@@ -555,7 +651,20 @@ class PaddleOCRVLEngine(OCREngineBase):
             except (TypeError, ValueError, IndexError):
                 # 单行坐标解析失败不影响其余行
                 continue
-        markdown = "\n".join(str(t) for t in texts) if texts else self._result_text(res)
+        # markdown：spotting 行 + parsing_res_list 非 spotting 块内容（逐块
+        # 模式下表格/图表/公式/印章/image OCR 走官方分派落在 parsing_res_list，
+        # 需并入防内容丢失；spotting 标签块内容与 spotting 行同源，跳过防重复；
+        # 整页模式 parsing_res_list 仅假盒 spotting 块 → 行为不变）
+        parts = [str(t) for t in texts]
+        if parts:
+            for b in (res.get("parsing_res_list") or []):
+                if (getattr(b, "label", None)
+                        or getattr(b, "block_label", None)) == "spotting":
+                    continue
+                content = getattr(b, "content", "") or ""
+                if content:
+                    parts.append(str(content))
+        markdown = "\n".join(parts) if parts else self._result_text(res)
         logger.info(f"PaddleOCR-VL 页面解析完成: {len(blocks)} lines, "
                     f"{elapsed:.0f}ms")
         # raw_json 副本必须先于 del res 构造（res 持有整页 output_img 等大对象，

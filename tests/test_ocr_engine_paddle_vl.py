@@ -839,6 +839,189 @@ def test_collect_filters_ignored_labels_before_vlm(monkeypatch):
     PaddleOCRVLEngine.reset_instance()
 
 
+# ── _collect 官方 label 分派（T3：表格/图表/公式/印章独立识别） ──
+
+def _full_layout_cfg():
+    """完整 layout_prep_cfg（官方 get_layout_parsing_results 构造的键全集）"""
+    return {
+        "image_labels": ["image", "header_image", "footer_image"],
+        "use_chart_recognition": True,
+        "use_seal_recognition": True,
+        "ocr_min_pixels": 100000, "ocr_max_pixels": 900000,
+        "table_min_pixels": 200000, "table_max_pixels": 800000,
+        "chart_min_pixels": 300000, "chart_max_pixels": 700000,
+        "formula_min_pixels": 400000, "formula_max_pixels": 600000,
+        "seal_min_pixels": 500000, "seal_max_pixels": 500500,
+    }
+
+
+def test_collect_dispatches_official_labels(monkeypatch):
+    """T3：逐块分派保留官方 label —— table/chart/formula/seal 各自 prompt 与
+    per-label 像素；仅文本类块改写 spotting；image 在 image_labels 中跳过"""
+    PaddleOCRVLEngine.reset_instance()
+    _install_fake_env(monkeypatch)
+    eng = PaddleOCRVLEngine({})
+    eng._patch_spotting_max_pixels()
+    import paddlex.inference.pipelines.paddleocr_vl.pipeline as _vlp
+    collect = _vlp._PaddleOCRVLPipeline._paddleocr_vl_collect_page_vlm_entries_core
+
+    blocks = [
+        {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+         "label": "text", "box": [0, 0, 80, 80]},
+        {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+         "label": "table", "box": [0, 80, 80, 160]},
+        {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+         "label": "chart", "box": [0, 160, 80, 240]},
+        {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+         "label": "formula", "box": [0, 240, 80, 320]},
+        {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+         "label": "seal", "box": [0, 320, 80, 400]},
+        {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+         "label": "spotting", "box": [0, 400, 80, 480]},
+        {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+         "label": "image", "box": [0, 480, 80, 560]},
+        {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+         "label": "formula_number", "box": [0, 560, 80, 640]},
+    ]
+    entries, has_spot, drops = collect(None, 0, blocks, [[]],
+                                       _full_layout_cfg())
+    by_j = {e[1]: e for e in entries}
+    # 文本类块 → spotting（改写 label）+ 像素上限适配
+    assert by_j[0][3] == "Spotting:"
+    assert by_j[0][4] == (112896, 1048576)
+    assert blocks[0]["label"] == "spotting"
+    # table → Table Recognition + table 像素 + label 保留（assemble 靠标签
+    # 走表格 HTML 分支）
+    assert by_j[1][3] == "Table Recognition:"
+    assert by_j[1][4] == (200000, 800000)
+    assert blocks[1]["label"] == "table"
+    # chart → Chart Recognition + chart 像素
+    assert by_j[2][3] == "Chart Recognition:"
+    assert by_j[2][4] == (300000, 700000)
+    # formula → Formula Recognition + formula 像素
+    assert by_j[3][3] == "Formula Recognition:"
+    assert by_j[3][4] == (400000, 600000)
+    # seal → Seal Recognition + seal 像素
+    assert by_j[4][3] == "Seal Recognition:"
+    assert by_j[4][4] == (500000, 500500)
+    # 整页假盒 label 已是 spotting → 原样走 spotting 分支（像素上限适配）
+    assert by_j[5][3] == "Spotting:"
+    assert by_j[5][4] == (112896, 1048576)
+    assert blocks[5]["label"] == "spotting"
+    # image 在 image_labels 中 → 跳过（不进 vlm_entries）
+    assert 6 not in by_j
+    # formula_number（文本类，非 formula）→ 改写 spotting
+    assert by_j[7][3] == "Spotting:"
+    assert blocks[7]["label"] == "spotting"
+    assert has_spot is True
+    assert drops == set()
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_collect_image_family_official_ocr_path(monkeypatch):
+    """T3：image 家族（image/figure）保留官方路径 —— use_ocr_for_image_block
+    （image_labels 空集）→ OCR:；入 image_labels → 跳过；figure 恒 OCR:"""
+    PaddleOCRVLEngine.reset_instance()
+    _install_fake_env(monkeypatch)
+    eng = PaddleOCRVLEngine({})
+    eng._patch_spotting_max_pixels()
+    import paddlex.inference.pipelines.paddleocr_vl.pipeline as _vlp
+    collect = _vlp._PaddleOCRVLPipeline._paddleocr_vl_collect_page_vlm_entries_core
+
+    def _blk(label):
+        return {"img": np.zeros((80, 80, 3), dtype=np.uint8),
+                "label": label, "box": [0, 0, 80, 80]}
+
+    # use_ocr_for_image_block=True → image_labels=[] → image 块走官方 OCR:
+    blocks = [_blk("image"), _blk("figure"), _blk("text")]
+    entries, has_spot, _drops = collect(
+        None, 0, blocks, [[]],
+        {"image_labels": [], "use_chart_recognition": True,
+         "use_seal_recognition": True})
+    by_j = {e[1]: e for e in entries}
+    assert by_j[0][3] == "OCR:"          # image 未入 image_labels → OCR:
+    assert by_j[1][3] == "OCR:"          # figure 官方恒走 OCR:（非 IMAGE_LABELS）
+    assert blocks[0]["label"] == "image"  # 图片类不改写 spotting
+    assert blocks[1]["label"] == "figure"
+    assert by_j[2][3] == "Spotting:"     # 文本类块仍改写 spotting
+    # use_ocr_for_image_block=False + chart/seal 关闭 → 三者入 image_labels 跳过
+    blocks2 = [_blk("image"), _blk("chart"), _blk("seal"), _blk("text")]
+    entries2, _hs2, _dr2 = collect(
+        None, 0, blocks2, [[]],
+        {"image_labels": ["image", "header_image", "footer_image",
+                           "chart", "seal"],
+         "use_chart_recognition": False, "use_seal_recognition": False})
+    assert len(entries2) == 1            # 只剩 text 块
+    assert entries2[0][3] == "Spotting:"
+    assert blocks2[3]["label"] == "spotting"
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_assemble_table_branch_produces_html(monkeypatch):
+    """T3：表格块走 Table Recognition 后 assemble 的 table 分支 —— OTSL →
+    HTML 转换、label 保留（坐标偏移映射仅 spotting 块生效，表格坐标路径不被
+    破坏）；table_res_list 与官方一致恒空（表格内容在 parsing_res_list）"""
+    PaddleOCRVLEngine.reset_instance()
+    _calls, _pipe_cls, PipelineImplClass, _gc, _attn = _install_fake_env(
+        monkeypatch)
+    import paddlex.inference.pipelines.paddleocr_vl.pipeline as _vlp
+    eng = PaddleOCRVLEngine({})
+    eng._initialized = True
+    eng._pipe = object()
+    eng._patch_assemble_spotting_merge()
+    assemble = PipelineImplClass._paddleocr_vl_assemble_parsing_results
+
+    import unittest.mock as mock
+    with mock.patch.object(_vlp, "convert_otsl_to_html",
+                           lambda s: "<html>" + s + "</html>", create=True), \
+         mock.patch.object(_vlp, "untokenize_figure_of_table",
+                           lambda c, m, im: c, create=True), \
+         mock.patch.object(_vlp, "truncate_repetitive_content",
+                           lambda s, min_count=50: s, create=True), \
+         mock.patch.object(_vlp, "PaddleOCRVLBlock", types.SimpleNamespace,
+                           create=True):
+        blocks = [[{
+            "img": np.zeros((100, 100, 3), dtype=np.uint8),
+            "box": [500, 300, 600, 400],
+            "label": "table",
+        }]]
+        batch = {"px": {
+            "vlm_block_ids": [(0, 0)], "curr_vlm_block_idx": 0,
+            "images": [None], "figure_token_maps": [{}],
+            "vlm_results": [{"result": "OTSL 表格输出"}],
+        }}
+        id2px = {(0, 0): "px"}
+        parsing_lists, table_lists, spot_list = assemble(
+            None, blocks, batch, id2px, set(), ["image"])
+    assert parsing_lists[0][0].content == "<html>OTSL 表格输出</html>"
+    assert parsing_lists[0][0].label == "table"
+    assert spot_list[0] == {}       # 表格不进入 spotting 坐标路径（无偏移映射）
+    assert table_lists[0] == []     # 官方 table_res_list 恒空（表格在 parsing）
+    PaddleOCRVLEngine.reset_instance()
+
+
+def test_recognize_page_auto_markdown_merges_dispatch_blocks():
+    """T3：逐块分派后表格/图表等块落在 parsing_res_list → 并入 markdown；
+    spotting 标签块与 spotting 行同源不重复"""
+    spot_block = _FakeBlockReal("spotting", "文本行 A\n\n文本行 B")
+    table_block = _FakeBlockReal("table", "<table><tr><td>金额</td></tr></table>")
+    chart_block = _FakeBlockReal("chart", "图表描述文字")
+    pipe = _FakePipe([{
+        "spotting_res": _spot_res([
+            ("文本行 A", (0, 0, 10, 10)),
+            ("文本行 B", (0, 20, 10, 30)),
+        ]),
+        "parsing_res_list": [spot_block, table_block, chart_block],
+    }])
+    eng = _make_engine(pipe)
+    result = eng.recognize_page_auto(Image.new("RGB", (100, 100), "white"))
+    assert result.markdown == (
+        "文本行 A\n文本行 B\n<table><tr><td>金额</td></tr></table>\n"
+        "图表描述文字")
+    # blocks 仍仅为 spotting 行（表格不进入行级坐标块）
+    assert [b.content for b in result.blocks] == ["文本行 A", "文本行 B"]
+
+
 # ── raw_json 填充（JSON 视图/导出数据源） ─────────────────────
 
 def test_recognize_page_auto_fills_raw_json(monkeypatch):
