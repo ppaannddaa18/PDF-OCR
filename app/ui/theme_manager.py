@@ -18,8 +18,10 @@ class ThemeManager:
 
     Task P2 增强（双设计 token 管道）：
     - 新增 design 维度：'default' | 'gguf'（固定深色科技）| 'rapid'（固定浅色简洁）
+      | 'paddle_vl'（固定浅色冷蓝观片台）
     - COLORS 按 design 嵌套；design 非 default 时 get_color 忽略 _current_theme，
-      直接取该设计唯一调色板（gguf 仅 dark / rapid 仅 light）；default 行为不变
+      直接取该设计唯一调色板（gguf 仅 dark / rapid 与 paddle_vl 仅 light）；
+      default 行为不变
     - set_design 切换同样触发 _invoke_refresh_callbacks（复用弱引用注册表），
       已注册 apply_theme 的组件零代码改动自动换色
     - apply_card_shadow：Rapid 卡片阴影（QSS 不支持 box-shadow 的替代方案）
@@ -151,6 +153,40 @@ class ThemeManager:
                 'edited_bg': '#E4EEF7',           # 手动编辑（浅蓝底）
             },
         },
+        # ── paddle_vl：冷钢灰 × 深海蓝「观片台」（重设计，固定浅色） ────
+        # 设计方向：PaddleOCR-VL 是"扫描件的版面校阅"——文档页像胶片一样
+        # 在冷灰底上亮出来。与 rapid 的暖纸绿、gguf 的深绿金都拉开明度与
+        # 色相：冷钢灰画布 + 飞桨深海蓝动作色 + 冷墨文字；签名是源文件栏
+        # 的「胶片页码条」（细线显示全文阅读位置），其余保持安静。
+        'paddle_vl': {
+            'light': {
+                'bg_primary': '#E8EDF2',          # 冷钢灰（画布/窗口底）
+                'bg_surface': '#FFFFFF',          # 卡片
+                'surface_2': '#DDE4EC',           # 悬停/凹陷
+                'bg_hover': '#DDE4EC',
+                'bg_selected': '#D6E7F6',         # 冷蓝选中底
+                'primary': '#0B6FB8',             # 飞桨深海蓝
+                'primary_hover': '#095C9E',       # 压暗
+                'white': '#ffffff',
+                'on_accent': '#ffffff',
+                'success_bg': '#E1EFE8',
+                'warning_bg': '#F7ECD8',
+                'error_bg': '#F8E3E1',
+                'success': '#2E7D5B',
+                'warning': '#C77F1D',
+                'warning_text': '#9A6A1B',
+                'error': '#C2423C',
+                'text_primary': '#1E2935',        # 冷墨蓝
+                'text_secondary': '#5A6B78',
+                'text_disabled': '#94A2AE',
+                'border': '#D8E0E8',
+                'border_focus': '#0B6FB8',        # = accent
+                'accent': '#0B6FB8',              # 深海蓝
+                'accent_alt': '#2F9E8F',          # 青瓷（次级数据色）
+                'match_alt_bg': '#F3E6CF',        # 关键词兜底（暖橙浅底）
+                'edited_bg': '#E3EDF7',           # 手动编辑（浅蓝底）
+            },
+        },
     }
 
     FONTS = {
@@ -178,6 +214,7 @@ class ThemeManager:
         'default': {'sm': 4, 'md': 8, 'lg': 12, 'full': 9999},
         'gguf': {'sm': 2, 'md': 4, 'lg': 6, 'full': 9999},
         'rapid': {'sm': 4, 'md': 8, 'lg': 12, 'full': 9999},
+        'paddle_vl': {'sm': 4, 'md': 8, 'lg': 12, 'full': 9999},
     }
 
     @classmethod
@@ -185,13 +222,14 @@ class ThemeManager:
         """当前 design 生效的颜色表
 
         design 非 default 时忽略 _current_theme，直接取该设计唯一调色板
-        （gguf→dark / rapid→light，显式映射而非 next(iter())，未来某设计
-        增加第二调色板时不会静默任选）；default 时取当前主题表（与改造前一致）。
+        （gguf→dark / rapid→light / paddle_vl→light，显式映射而非
+        next(iter())，未来某设计增加第二调色板时不会静默任选）；
+        default 时取当前主题表（与改造前一致）。
         """
         design = cls._current_design
         if design == 'default':
             return cls.COLORS['default'][cls._current_theme]
-        palette_key = {'gguf': 'dark', 'rapid': 'light'}[design]
+        palette_key = {'gguf': 'dark', 'rapid': 'light', 'paddle_vl': 'light'}[design]
         return cls.COLORS[design][palette_key]
 
     @classmethod

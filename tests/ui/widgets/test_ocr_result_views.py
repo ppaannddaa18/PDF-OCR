@@ -159,3 +159,20 @@ def test_render_markdown_table_requires_both_pipes(qapp):
     assert "<pre>mid|dle</pre>" not in html
     assert "<p>mid|dle</p>" in html
     assert "<p>no|pipe</p>" in html
+
+
+def test_guide_overlay_clickable(qapp):
+    """引导卡整卡可点击：左键点击 → guide_clicked 信号"""
+    from PyQt6.QtCore import QPoint, Qt
+    from PyQt6.QtTest import QTest
+    view = OcrDocView()
+    clicks = []
+    view.guide_clicked.connect(lambda: clicks.append(1))
+    view.resize(600, 400)
+    view.show()
+    view.guide_overlay.setGeometry(0, 0, 200, 300)
+    QTest.mouseClick(view.guide_overlay, Qt.MouseButton.LeftButton,
+                     pos=QPoint(100, 150))
+    assert clicks == [1]
+    view.hide_guide()
+    assert not view.guide_overlay.isVisible()

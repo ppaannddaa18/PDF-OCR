@@ -26,3 +26,15 @@ def reset_theme():
     ThemeManager.set_design('default')  # 先复位设计，set_theme 才生效
     ThemeManager.set_theme('light')
     yield
+
+
+@pytest.fixture(autouse=True)
+def guard_save_config(monkeypatch):
+    """全库防线：测试路径一律不允许把内存配置写回真实 app/config.yaml。
+
+    个别测试显式验证保存路径时再自行打桩（monkeypatch 后设覆盖本桩），
+    不会被本防线拦截；未被显式覆盖的调用点（如窗口内部的保存逻辑漏桩）
+    会被静默吞掉，防止污染开发配置。
+    """
+    import app.utils.config_loader as cfg_mod
+    monkeypatch.setattr(cfg_mod, "save_config", lambda config: None)

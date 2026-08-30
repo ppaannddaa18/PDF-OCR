@@ -275,10 +275,10 @@ def test_close_event_no_keeps_window(qapp, tmp_path, monkeypatch):
     assert not win.processor.is_running()
 
 
-def test_select_during_run_enqueues_file(qapp, tmp_path, monkeypatch):
-    """T8-I1-E：运行中点击未缓存文件 → 自动入队，本批结束后自动续跑完成"""
+def test_select_uncached_file_waits_for_parse(qapp, tmp_path, monkeypatch):
+    """手动解析模式：运行中点选未缓存文件 → 不自动入队，仅提示等待解析"""
     engine = _SlowFakeEngine()
-    win = _make_window(monkeypatch, engine)
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
     pdf = _make_2page_pdf(tmp_path)
     pdf2 = _make_2page_pdf(tmp_path, "doc2.pdf")
     done = []
@@ -287,23 +287,19 @@ def test_select_during_run_enqueues_file(qapp, tmp_path, monkeypatch):
     _wait_signal(win.processor, "file_started")
     assert win.processor.is_running()
 
-    win._on_file_selected(pdf2)  # 运行中点击未缓存文件
-    assert pdf2 in win.processor.pending_items()  # 已加入队列
-    assert "已加入队列" in win.status_label.text()
+    win._on_file_selected(pdf2)  # 点选未缓存文件
+    assert pdf2 not in win.processor.pending_items()  # 不自动入队
+    assert "等待解析" in win.status_label.text()
+    assert "doc2.pdf" in win.file_label.text()
 
-    # 本批结束后续跑处理 pdf2（第二次 all_done），等全部完成且线程停止
-    from PyQt6.QtCore import QCoreApplication
-    deadline = time.monotonic() + 10
-    while (len(done) < 2 or win.processor.is_running()) \
-            and time.monotonic() < deadline:
-        QCoreApplication.processEvents()
-        time.sleep(0.01)
-    assert set(done) == {pdf, pdf2}  # 续跑后两个文件均完成
-    assert win.processor.get_cache(pdf2) is not None
+    # 本批结束后 pdf2 从未入队，不会被处理
+    _wait_signal(win.processor, "all_done", timeout_ms=8000)
+    assert done == [pdf]
+    assert win.processor.get_cache(pdf2) is None
 
 
 def test_select_processing_file_no_rerun(qapp, tmp_path, monkeypatch):
-    """T8-I1-E：点击正在处理中的文件 → 仅提示，不重复入队/不触发重跑"""
+    """手动解析模式：点击正在处理中的文件 → 提示"正在处理中"，不触发重跑"""
     engine = _SlowFakeEngine()
     win = _make_window(monkeypatch, engine)
     pdf = _make_2page_pdf(tmp_path)
@@ -312,11 +308,40 @@ def test_select_processing_file_no_rerun(qapp, tmp_path, monkeypatch):
     assert win.processor.is_running()
 
     win._on_file_selected(pdf)  # 正在处理中的文件被点击
-    assert "已在处理队列中" in win.status_label.text()
+    assert "正在处理中" in win.status_label.text()
 
     _wait_signal(win.processor, "all_done", timeout_ms=8000)
     assert engine.calls == 2  # 恰好处理一遍，未被重跑
     assert win.processor.get_cache(pdf) is not None
+
+
+def test_parse_button_processes_queued(qapp, tmp_path, monkeypatch):
+    """手动解析：queue_files 只添加不启动；点「解析」处理会话等待文件，
+    历史分组文件不参与批量解析"""
+    engine = _SlowFakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    pdf = _make_2page_pdf(tmp_path)
+    pdf2 = _make_2page_pdf(tmp_path, "doc2.pdf")
+    hist = _make_2page_pdf(tmp_path, "hist.pdf")
+    win.file_panel.add_file(hist, history=True)   # 历史分组文件
+    win.queue_files([pdf, pdf2])
+    assert not win.processor.is_running()           # 只添加，不启动
+    assert win.processor.get_cache(pdf) is None
+    assert win.processor.get_cache(pdf2) is None
+
+    win._on_parse()
+    assert win.processor.is_running()               # 解析按钮启动处理
+    _wait_signal(win.processor, "all_done", timeout_ms=8000)
+    assert win.processor.get_cache(pdf) is not None
+    assert win.processor.get_cache(pdf2) is not None
+    assert win.processor.get_cache(hist) is None    # 历史文件未被批量解析
+
+    # 全部完成后再次点解析：无等待文件，不重启处理（先等 worker 线程收尾）
+    deadline = time.monotonic() + 5
+    while win.processor.is_running() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    win._on_parse()
+    assert not win.processor.is_running()
 
 
 def test_cancel_during_run_marks_badge_cancelled(qapp, tmp_path, monkeypatch):
@@ -539,8 +564,8 @@ def test_remove_file_clears_cache(qapp, tmp_path, monkeypatch):
     assert pdf not in win._render_cache           # 渲染图一并失效
 
 
-def test_restore_history_marks_click_to_reparse(qapp, tmp_path, monkeypatch):
-    """T11：历史恢复的文件带"点击重新解析"提示（未自动入队）"""
+def test_restore_history_marks_queued(qapp, tmp_path, monkeypatch):
+    """T11：历史恢复的文件带"点「重试」解析"提示（未自动入队，不参与批量解析）"""
     import json
     engine = _FakeEngine()
     pdf = _make_2page_pdf(tmp_path)
@@ -550,8 +575,9 @@ def test_restore_history_marks_click_to_reparse(qapp, tmp_path, monkeypatch):
     win = _make_isolated_window(monkeypatch, engine, tmp_path)  # 历史指向 hist.json
     fid = win.file_panel.file_id_by_path(pdf)
     assert fid is not None
-    assert "点击重新解析" in win.file_panel.status_text(fid)
-    assert pdf not in win.processor.pending_items()  # 未入队，点击才解析
+    assert "重试" in win.file_panel.status_text(fid)
+    assert pdf not in win.processor.pending_items()  # 未入队
+    assert pdf not in win.file_panel.queued_paths()  # 不参与「解析」批量处理
 
 
 def test_cancel_during_run_clears_partial_cache(qapp, tmp_path, monkeypatch):
@@ -659,3 +685,72 @@ def test_config_apply_no_restart_hot_path(qapp, tmp_path, monkeypatch):
     win._on_config_apply({"ocr": {"paddle_vl": {
         "repetition_penalty": 1.5}}})
     assert succ and "配置已应用" in succ[0]["title"]
+
+
+def test_toolbar_state_context_disabled(qapp, tmp_path, monkeypatch):
+    """按钮上下文可用性：无选中禁用重试/复制/导出，无等待禁用解析；
+    选中/入队后逐项点亮；空态页码区隐藏，选中缓存文件后出现"""
+    engine = _FakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    win.show()
+    retry_btn, copy_btn, export_btn = win._tool_buttons
+    assert not retry_btn.isEnabled()
+    assert not copy_btn.isEnabled()
+    assert not export_btn.isEnabled()
+    assert not win.parse_btn.isEnabled()
+    assert not win.page_group.isVisible()          # 空态隐藏页码（防 1/1 误导）
+
+    pdf = _make_2page_pdf(tmp_path)
+    win.queue_files([pdf])
+    assert win.parse_btn.isEnabled()               # 有等待文件 → 解析可点
+    assert not retry_btn.isEnabled()               # 仍未选中文件
+    assert not win.page_group.isVisible()
+
+    win.processor.start()
+    _wait_signal(win.processor, "all_done", timeout_ms=8000)
+    fid = win.file_panel.file_id_by_path(pdf)
+    win.file_panel.select_file(fid)                # 选中 → 视图展示
+    assert retry_btn.isEnabled()
+    assert copy_btn.isEnabled()
+    assert export_btn.isEnabled()
+    assert win.page_group.isVisible()              # 有页面 → 页码出现
+    assert win.page_spin.maximum() == 2
+
+    win.file_panel.clear()
+    win._reset_view_after_clear()
+    assert not parse_btn_enabled(win)
+    assert not win.page_group.isVisible()
+
+
+def parse_btn_enabled(win):
+    return win.parse_btn.isEnabled()
+
+
+def test_export_dispatch_formats(qapp, tmp_path, monkeypatch):
+    """导出格式分发：_do_export 单格式只调对应导出器；None 三格式全调"""
+    from app.ui.windows import ocr_main_window as mw
+    from PyQt6.QtWidgets import QFileDialog
+    engine = _FakeEngine()
+    win = _make_isolated_window(monkeypatch, engine, tmp_path)
+    pdf = _make_2page_pdf(tmp_path)
+    win.processor._cache[pdf] = [PageResult(blocks=[], markdown="x"),
+                                 PageResult(blocks=[], markdown="y")]
+    win.file_panel.add_file(pdf)
+    win.file_panel.select_file(win.file_panel.file_id_by_path(pdf))
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        lambda *a, **k: str(tmp_path))
+    calls = []
+    monkeypatch.setattr(mw, "export_txt",
+                        lambda *a: calls.append("txt") or ["a"])
+    monkeypatch.setattr(mw, "export_markdown",
+                        lambda *a: calls.append("md") or ["a"])
+    monkeypatch.setattr(mw, "export_json",
+                        lambda *a: calls.append("json") or ["a"])
+    win._do_export("txt")
+    assert calls == ["txt"]
+    calls.clear()
+    win._do_export("md")
+    assert calls == ["md"]
+    calls.clear()
+    win._do_export(None)
+    assert calls == ["txt", "md", "json"]

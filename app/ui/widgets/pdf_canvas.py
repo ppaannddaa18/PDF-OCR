@@ -567,6 +567,12 @@ class PdfCanvas(QGraphicsView):
                     if self._bbox_contains(bbox, scene_pt):
                         self.bbox_clicked.emit(list(bbox))
                         return
+            # 只读画布（OCR/GGUF 预览）：右键拖动平移页面（与框选模式同手势）
+            if event.button() == Qt.MouseButton.RightButton and self.pixmap_item:
+                self.right_dragging = True
+                self.last_mouse_pos = event.pos()
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                return
             super().mousePressEvent(event)
             return
         scene_pos = self.mapToScene(event.pos())
@@ -652,6 +658,15 @@ class PdfCanvas(QGraphicsView):
 
     def mouseMoveEvent(self, event):
         if self._is_drawing_blocked():
+            # 只读画布：右键拖动平移页面（滚动条位移，同框选模式平移手势）
+            if self.right_dragging and self.last_mouse_pos:
+                delta = event.pos() - self.last_mouse_pos
+                self.last_mouse_pos = event.pos()
+                h_bar = self.horizontalScrollBar()
+                v_bar = self.verticalScrollBar()
+                h_bar.setValue(h_bar.value() - delta.x())
+                v_bar.setValue(v_bar.value() - delta.y())
+                return
             super().mouseMoveEvent(event)
             return
         scene_pos = self.mapToScene(event.pos())
@@ -744,6 +759,11 @@ class PdfCanvas(QGraphicsView):
 
     def mouseReleaseEvent(self, event):
         if self._is_drawing_blocked():
+            if self.right_dragging and event.button() == Qt.MouseButton.RightButton:
+                self.right_dragging = False
+                self.last_mouse_pos = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+                return
             super().mouseReleaseEvent(event)
             return
 

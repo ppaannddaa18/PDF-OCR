@@ -497,3 +497,47 @@ class TestViewportRectSignal:
         rect = emitted[0]
         assert isinstance(rect, QRectF)
         assert rect.width() > 0 and rect.height() > 0
+
+
+class TestReadonlyRightDragPan:
+    """只读画布（OCR/GGUF 预览）右键拖动平移页面"""
+
+    def test_right_drag_pans_scrollbars_and_resets(self, qapp):
+        from PyQt6.QtCore import QEvent, QPointF
+        canvas = make_canvas(qapp, size=(200, 100))
+        canvas.set_drawing_enabled(False)  # 只读模式
+        canvas.scale(2.0, 2.0)  # 场景 400x200 > 视口 200x100 → 可滚动
+        qapp.processEvents()
+        assert canvas.horizontalScrollBar().maximum() > 0
+
+        def evt(typ, x, y, btn):
+            return QMouseEvent(typ, QPointF(x, y), btn, btn,
+                               Qt.KeyboardModifier.NoModifier)
+
+        press = evt(QEvent.Type.MouseButtonPress, 100, 50,
+                    Qt.MouseButton.RightButton)
+        canvas.mousePressEvent(press)
+        assert canvas.right_dragging is True
+        h0 = canvas.horizontalScrollBar().value()
+        v0 = canvas.verticalScrollBar().value()
+
+        canvas.mouseMoveEvent(evt(QEvent.Type.MouseMove, 60, 40,
+                                  Qt.MouseButton.RightButton))
+        assert canvas.horizontalScrollBar().value() > h0  # 左移 → 内容右滚
+        assert canvas.verticalScrollBar().value() > v0    # 上移 → 内容下滚
+
+        canvas.mouseReleaseEvent(evt(QEvent.Type.MouseButtonRelease, 60, 40,
+                                     Qt.MouseButton.RightButton))
+        assert canvas.right_dragging is False
+
+    def test_right_drag_ignored_without_image(self, qapp):
+        from PyQt6.QtCore import QEvent, QPointF
+        canvas = PdfCanvas()
+        canvas.set_drawing_enabled(False)
+        canvas.resize(200, 100)
+        press = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(50, 50),
+                            Qt.MouseButton.RightButton,
+                            Qt.MouseButton.RightButton,
+                            Qt.KeyboardModifier.NoModifier)
+        canvas.mousePressEvent(press)
+        assert canvas.right_dragging is False  # 无图不进入平移态

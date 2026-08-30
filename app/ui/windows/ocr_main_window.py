@@ -8,6 +8,10 @@ _post_init_base()（post-super）。
 T13：方向/扭曲矫正是引擎构造期参数 —— 解析配置弹窗改动后引擎 apply_config
 返回 True → 本窗口后台 unload + initialize 重启管线（_engine_reinit_done
 信号回主线程收尾）。
+
+T-UI：「观片台」设计 —— 冷钢灰底 × 深海蓝 accent（paddle_vl 专属 token，
+见 ThemeManager.COLORS['paddle_vl']）；签名元素为源文件栏的「胶片页码条」
+（药丸页码导航 + 下方 2px 细线显示全文阅读位置）。
 """
 import json
 import os
@@ -16,14 +20,17 @@ import threading
 from collections import OrderedDict
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSpinBox,
-                             QFileDialog, QFrame, QApplication, QMessageBox)
+                             QAbstractSpinBox, QProgressBar, QFileDialog,
+                             QFrame, QApplication, QMessageBox, QLabel, QMenu)
 from qfluentwidgets import (FluentWindow, InfoBar, PushButton, BodyLabel,
                             setTheme, Theme, setThemeColor)
 
 from app.ui.windows.base_window import AppBaseWindowMixin, _icon
 from app.ui.theme_manager import ThemeManager
+from app.ui.animation_manager import AnimationManager
+from app.ui.widgets.button_style import primary_qss, secondary_qss
 from app.core.ocr_doc_processor import OcrDocProcessor, is_image_file
 from app.core.ocr_exporter import export_txt, export_markdown, export_json
 from app.ui.widgets.ocr_file_panel import OcrFilePanel
@@ -41,7 +48,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
     # 窗口标题跟随 config["app"]["name"]（独立程序标题可经 config.yaml 定制）
     WINDOW_TITLE = None
     DESIGN = 'paddle_vl'
-    ACCENT_COLOR = '#1E7B5C'
+    ACCENT_COLOR = '#0B6FB8'   # 飞桨深海蓝（观片台设计签名色）
     FLUENT_THEME = Theme.LIGHT
     # 渲染缓存上限：总页数超过该值按文件淘汰最旧（200 DPI 单页约 6~13MB）
     _RENDER_CACHE_MAX_PAGES = 50
@@ -56,6 +63,10 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
     # ── 构造接线（post-super） ─────────────────────────────────
 
     def _post_init_base(self):
+        # 先落 design 再构建页面：paddle_vl 专属 token 对全部子组件
+        # 在构造期即生效（base 默认在构建完成后才 _apply_design，
+        # 若不提前，source_bar/file_panel 等内嵌 QSS 会用 default 调色板烘焙）
+        ThemeManager.set_design(self.DESIGN)
         super()._post_init_base()
         # 渲染缓存：path -> {page_no: PIL Image}（图片文件 page_no 恒为 1，
         # 与 PDF 同构；翻页/重绘命中缓存时跳过数百 ms~数秒的 fitz 渲染）
@@ -67,6 +78,43 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         # 矫正模块重启收尾（后台线程 emit → 主线程收尾，QThread 语义）
         self._engine_reinit_done.connect(self._on_engine_reinit_done)
 
+    def apply_theme(self):
+        """设计刷新回调（base 已在构造末尾注册 self.apply_theme，
+        多态绑定到本方法）：重建正片栏/状态条内嵌 QSS。子组件
+        （file_panel / doc / json / 弹窗）各自注册了自己的回调。"""
+        if not hasattr(self, 'source_bar'):
+            return
+        self.file_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_primary')};"
+            f"font-size: 14px; font-weight: 600;")
+        if hasattr(self, 'total_label'):
+            self.total_label.setStyleSheet(
+                f"color: {ThemeManager.get_color('text_secondary')};"
+                f"font-size: 13px;")
+        if hasattr(self, 'status_label'):
+            self.status_label.setStyleSheet(
+                f"color: {ThemeManager.get_color('text_secondary')};")
+        if hasattr(self, 'engine_name_label'):
+            self.engine_name_label.setStyleSheet(
+                f"color: {ThemeManager.get_color('text_secondary')};")
+        if hasattr(self, 'engine_dot'):
+            self.engine_dot.setStyleSheet(
+                f"background: {ThemeManager.get_color('success')};"
+                f"border-radius: 4px;")
+            self._update_engine_badge()
+        self.source_bar.setStyleSheet(self._card_qss())
+        for w, qss in getattr(self, '_chrome_qss_', {}).items():
+            if w is None:
+                continue
+            try:
+                w.setStyleSheet(qss)
+            except RuntimeError:
+                pass
+        if hasattr(self, 'page_spin'):
+            self._style_page_area()
+        if hasattr(self, 'page_position'):
+            self.page_position.setStyleSheet(self._position_qss())
+
     def _check_pending_task(self):
         pass  # 文档识别程序无待恢复任务
 
@@ -75,18 +123,30 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         不调用 super（base 会创建 BatchProcessor 并覆盖 self.processor）"""
         if hasattr(self, '_ready_gen') and self._ready_gen != self._init_gen:
             return
+        self._update_engine_badge()
         if self.ocr_engine.is_ready:
             self.loading_overlay.hide_overlay()
         else:
             error_msg = self.ocr_engine.init_error or "未知错误"
             self.loading_overlay.show_error(error_msg)
 
+    def _update_engine_badge(self):
+        """底部状态条右端引擎灯：就绪=success 圆点 / 失败=error 圆点"""
+        if not hasattr(self, 'engine_dot'):
+            return
+        ok = bool(getattr(self.ocr_engine, 'is_ready', False))
+        color = 'success' if ok else 'error'
+        self.engine_dot.setStyleSheet(
+            f"background: {ThemeManager.get_color(color)}; border-radius: 4px;")
+        self.engine_name_label.setText(
+            "PaddleOCR-VL · " + ("就绪" if ok else "初始化失败"))
+
     def _apply_design(self):
-        """应用设计：ThemeManager 暂无 paddle_vl 设计表，映射 rapid
-        （浅色暖纸 × 档案绿，强调色同为 #1E7B5C），不随系统主题变化。"""
+        """应用设计：paddle_vl 专属 token（冷钢灰 × 深海蓝观片台），
+        固定浅色、不随系统主题变化。"""
         setTheme(self.FLUENT_THEME)
         setThemeColor(self.ACCENT_COLOR)
-        ThemeManager.set_design('rapid')
+        ThemeManager.set_design(self.DESIGN)
         # 禁用 DWM 材质（同 base：截图工具不破坏窗口背景）
         self.setMicaEffectEnabled(False)
         if hasattr(self, 'navigationInterface') and hasattr(
@@ -98,8 +158,15 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
     def _register_sub_interfaces(self):
         """单页面布局：只注册工作区，不注册 result/history 页"""
         self.workspace_page.setObjectName('workspace')
-        self.addSubInterface(self.workspace_page, _icon('fa5s.file'), '文档解析')
+        self.addSubInterface(self.workspace_page,
+                             _icon('fa5s.file', self.ACCENT_COLOR), '文档解析')
         self.switchTo(self.workspace_page)
+        # 单页窗口：整条隐藏侧导航（FluentWindow 布局不分配空间给隐藏控件，
+        # 工作区占满全宽；失败时保持现状不影响功能）
+        try:
+            self.navigationInterface.setVisible(False)
+        except Exception:
+            pass
 
     def _create_result_page(self) -> QWidget:
         """单页窗口：结果/历史页不注册导航，占位空页（避免构建无用重型组件）"""
@@ -120,96 +187,275 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         """工作区：文件面板 + 源文件面板 + 视图区 + 底部状态行"""
         page = QWidget()
         root = QVBoxLayout(page)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(12, 12, 12, 12)
 
         # 左侧文件面板 + 右侧工作区
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(12)
 
         self.file_panel = OcrFilePanel()
-        self.file_panel.setFixedWidth(240)
+        self.file_panel.setFixedWidth(264)
         self.file_panel.file_selected.connect(self._on_file_selected)
         self.file_panel.clear_requested.connect(self._on_files_cleared)
         self.file_panel.file_remove_requested.connect(self._on_file_remove_requested)
+        self.file_panel.add_files_requested.connect(self._on_add_files)
+        self.file_panel.files_dropped.connect(self._on_files_dropped)
         body.addWidget(self.file_panel)
 
         right = QVBoxLayout()
-        right.setContentsMargins(8, 0, 0, 0)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(8)
         right.addWidget(self._create_source_bar())
         right.addWidget(self._create_view_area(), 1)
         body.addLayout(right, 1)
         root.addLayout(body, 1)
 
-        # 底部状态行（FluentWindow 非 QMainWindow，无 statusBar()，自建标签）
-        self.status_label = BodyLabel("就绪")
+        # 底部状态行（FluentWindow 非 QMainWindow，无 statusBar()，自建双区条）：
+        # 左=任务状态（status_label 属性名/文案契约保持，供测试与既有逻辑使用）
+        # 右=引擎就绪灯（观片台形态：圆点 + 引擎名）
+        status_frame = QFrame()
+        status_layout = QHBoxLayout(status_frame)
+        status_layout.setContentsMargins(2, 6, 2, 2)
+        status_layout.setSpacing(8)
+        self.status_label = BodyLabel("添加文件后点击「解析」开始识别")
         self.status_label.setStyleSheet(
             f"color: {ThemeManager.get_color('text_secondary')};")
-        root.addWidget(self.status_label)
+        status_layout.addWidget(self.status_label)
+        status_layout.addStretch(1)
+        self.engine_dot = QLabel()
+        self.engine_dot.setFixedSize(8, 8)
+        self.engine_dot.setStyleSheet(
+            f"background: {ThemeManager.get_color('success')};"
+            f"border-radius: 4px;")
+        self.engine_name_label = BodyLabel("PaddleOCR-VL · 就绪")
+        self.engine_name_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_secondary')};")
+        status_layout.addWidget(self.engine_dot)
+        status_layout.addWidget(self.engine_name_label)
+        root.addWidget(status_frame)
         return page
 
-    def _create_source_bar(self) -> QWidget:
-        """源文件面板：文件名/大小/页码导航/加文件 + 视图切换 + 工具按钮"""
-        bar = QFrame()
-        bar.setStyleSheet(
-            f"background: {ThemeManager.get_color('bg_surface')};"
-            f"border-radius: 8px;")
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(12, 8, 12, 8)
+    def _card_qss(self) -> str:
+        """白卡容器样式（正片栏/状态条共用视觉语言）"""
+        return (f"QFrame {{ background: "
+                f"{ThemeManager.get_color('bg_surface')};"
+                f"border: 1px solid {ThemeManager.get_color('border')};"
+                f"border-radius: {ThemeManager.get_radius('md')}px; }}")
 
+    def _pill_button_qss(self, active: bool = True) -> str:
+        """药丸翻页按钮样式：未激活（无文件可选页）时置灰且无 hover 反馈"""
+        t = ThemeManager
+        hover_bg = t.get_color('bg_surface') if active else "transparent"
+        return (f"QPushButton {{ background: transparent; border: none;"
+                f"border-radius: {t.get_radius('sm')}px;"
+                f"color: {t.get_color('text_secondary' if active
+                                     else 'text_disabled')};"
+                f"font-size: 12px; }}"
+                f"QPushButton:hover {{ background: {hover_bg};"
+                f"color: {t.get_color('text_primary' if active
+                                     else 'text_disabled')}; }}")
+
+    def _style_page_area(self):
+        """按 _page_active 重排页码药丸（数字/翻页钮/总页文本）的颜色"""
+        t = ThemeManager
+        self.page_spin.setStyleSheet(
+            f"QSpinBox {{ background: transparent; border: none;"
+            f"color: {t.get_color('text_primary' if self._page_active
+                                 else 'text_disabled')};"
+            f"font-size: 13px; font-weight: 600; }}")
+        self.total_label.setStyleSheet(
+            f"color: {t.get_color('text_secondary' if self._page_active
+                                 else 'text_disabled')};"
+            f"font-size: 13px;")
+        for b in getattr(self, '_pill_buttons', []):
+            b.setStyleSheet(self._pill_button_qss(self._page_active))
+
+    def _segment_button_qss(self) -> str:
+        return (f"QPushButton {{ background: transparent; border: 1px solid "
+                f"transparent; border-radius: {ThemeManager.get_radius('sm')}px;"
+                f"padding: 0 14px; color: "
+                f"{ThemeManager.get_color('text_secondary')}; }}"
+                f"QPushButton:hover {{ color: "
+                f"{ThemeManager.get_color('text_primary')}; }}"
+                f"QPushButton:checked {{ background: "
+                f"{ThemeManager.get_color('bg_surface')};"
+                f"border-color: {ThemeManager.get_color('border')};"
+                f"color: {ThemeManager.get_color('primary')}; font-weight: 600; }}")
+
+    def _position_qss(self) -> str:
+        return (f"QProgressBar {{ background: "
+                f"{ThemeManager.get_color('border')};"
+                f"border: none; border-radius: 1px; }}"
+                f"QProgressBar::chunk {{ background: "
+                f"{ThemeManager.get_color('primary')}; border-radius: 1px; }}")
+
+    def _create_source_bar(self) -> QWidget:
+        """正片栏：文件名 + 胶片页码条 + 视图分段开关 + 工具按钮
+
+        签名元素——胶片页码条：‹上一页 / 页码 / 下一页› 合成一枚凹陷药丸，
+        药丸正下方一条 2px 细线按「当前页 / 总页数」占比填充 accent 色，
+        显示全文阅读位置（≤1 页或未选文件时隐藏）。
+        """
+        bar = QFrame()
+        self.source_bar = bar
+        bar.setStyleSheet(self._card_qss())
+        self._chrome_qss_ = {}  # {widget: qss}，apply_theme 时统一重放
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(10)
+
+        # 文件信息（左）
         self.file_label = BodyLabel("未选择文件")
+        self.file_label.setStyleSheet(
+            f"color: {ThemeManager.get_color('text_primary')};"
+            f"font-size: 14px; font-weight: 600;")
+        self._chrome_qss_[self.file_label] = self.file_label.styleSheet()
         layout.addWidget(self.file_label, 1)
 
-        # 页码导航
-        self.page_spin = QSpinBox()
-        self.page_spin.setRange(1, 1)
-        self.page_spin.setFixedWidth(70)
-        self.total_label = BodyLabel("/ 1")
-        prev_btn = PushButton("◀")
-        next_btn = PushButton("▶")
+        # ── 胶片页码条（中，包成 widget 以便未选文件时整体隐藏） ──
+        self.page_group = QWidget()
+        page_wrap = QVBoxLayout(self.page_group)
+        page_wrap.setContentsMargins(0, 0, 0, 0)
+        page_wrap.setSpacing(3)
+        page_box = QFrame()
+        page_box.setStyleSheet(
+            f"QFrame {{ background: {ThemeManager.get_color('bg_hover')};"
+            f"border-radius: {ThemeManager.get_radius('sm')}px; }}")
+        self._chrome_qss_[page_box] = page_box.styleSheet()
+        page_inner = QHBoxLayout(page_box)
+        page_inner.setContentsMargins(4, 2, 4, 2)
+        page_inner.setSpacing(2)
+
+        prev_btn = self._pill_button("◀")
+        next_btn = self._pill_button("▶")
+        self._pill_buttons = [prev_btn, next_btn]
         prev_btn.clicked.connect(lambda: self.page_spin.setValue(
             self.page_spin.value() - 1))
         next_btn.clicked.connect(lambda: self.page_spin.setValue(
             self.page_spin.value() + 1))
-        self.page_spin.valueChanged.connect(self._on_page_changed)
-        layout.addWidget(prev_btn)
-        layout.addWidget(self.page_spin)
-        layout.addWidget(self.total_label)
-        layout.addWidget(next_btn)
-        layout.addSpacing(8)
+        page_inner.addWidget(prev_btn)
 
-        # 视图切换（文档解析 / JSON）
-        self.view_doc_btn = PushButton("文档解析")
-        self.view_json_btn = PushButton("JSON")
-        self.view_doc_btn.setCheckable(True)
-        self.view_json_btn.setCheckable(True)
+        self.page_spin = QSpinBox()
+        self.page_spin.setRange(1, 1)
+        self.page_spin.setFixedWidth(56)
+        self.page_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 紧凑药丸：隐藏上下箭头，仅用 ‹ › 与直接键入换页
+        self.page_spin.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.page_spin.valueChanged.connect(self._on_page_changed)
+        page_inner.addWidget(self.page_spin)
+
+        self.total_label = BodyLabel("/ 1")
+        page_inner.addWidget(self.total_label)
+        page_inner.addWidget(next_btn)
+        # 页码区默认未激活（未选文件时置灰）
+        self._page_active = False
+        self._style_page_area()
+        page_wrap.addWidget(page_box)
+
+        # 页码位置细线（签名元素的下半部）
+        self.page_position = QProgressBar()
+        self.page_position.setFixedHeight(2)
+        self.page_position.setTextVisible(False)
+        self.page_position.setRange(1, 1)
+        self.page_position.setValue(1)
+        self.page_position.setStyleSheet(self._position_qss())
+        self.page_position.setVisible(False)
+        page_wrap.addWidget(self.page_position)
+        # 未选文件时整体隐藏（避免「1 / 1」误导）
+        self.page_group.setVisible(False)
+        layout.addWidget(self.page_group)
+
+        # 视图分段开关（版面检视 / 原始 JSON）
+        seg = QFrame()
+        seg.setStyleSheet(
+            f"QFrame {{ background: {ThemeManager.get_color('bg_hover')};"
+            f"border-radius: {ThemeManager.get_radius('sm')}px; }}")
+        self._chrome_qss_[seg] = seg.styleSheet()
+        seg_layout = QHBoxLayout(seg)
+        seg_layout.setContentsMargins(3, 3, 3, 3)
+        seg_layout.setSpacing(2)
+        self.view_doc_btn = self._segment_button("版面检视")
+        self.view_json_btn = self._segment_button("原始 JSON")
+        self.view_doc_btn.setToolTip("切换视图：版面检视 / 原始 JSON")
+        self.view_json_btn.setToolTip("切换视图：原始 JSON / 版面检视")
         self.view_doc_btn.setChecked(True)
         self._active_view = "doc"  # 复制操作依据的当前视图
         self.view_doc_btn.clicked.connect(lambda: self._switch_view("doc"))
         self.view_json_btn.clicked.connect(lambda: self._switch_view("json"))
-        layout.addWidget(self.view_doc_btn)
-        layout.addWidget(self.view_json_btn)
-        layout.addSpacing(8)
+        seg_layout.addWidget(self.view_doc_btn)
+        seg_layout.addWidget(self.view_json_btn)
+        layout.addWidget(seg)
 
-        # 工具按钮：配置 / 重新解析 / 复制 / 导出 / 添加文件
-        for text, slot in [("≡ 配置", self._open_config_dialog),
-                           ("↻", self._on_retry),
-                           ("⧉", self._on_copy),
-                           ("⇩", self._on_export)]:
+        # 工具按钮：配置 / 重试 / 复制 / 导出（全文字标签，次级样式 + 工具提示）
+        # 重试/复制/导出按选中态禁用（_update_toolbar_state 统一刷新）；
+        # 导出为菜单按钮（点击选格式）
+        self._tool_buttons = []
+        for text, tip, slot in [("配置", "解析参数设置", self._open_config_dialog),
+                                ("重试", "重新解析当前文件", self._on_retry),
+                                ("复制", "复制当前视图内容", self._on_copy),
+                                ("导出", "导出当前文件（点击选择格式）",
+                                 self._on_export)]:
             btn = PushButton(text)
+            btn.setToolTip(tip)
+            btn.setFixedHeight(30)
+            btn.setStyleSheet(secondary_qss())
             btn.clicked.connect(slot)
+            self._chrome_qss_[btn] = btn.styleSheet()
             layout.addWidget(btn)
-        add_btn = PushButton("+ 加文件")
-        add_btn.clicked.connect(self._on_add_files)
-        layout.addWidget(add_btn)
+            if text != "配置":
+                self._tool_buttons.append(btn)
+            if text == "导出":
+                self.export_btn = btn
+
+        # 主操作：手动启动解析（文档先加入队列，点此才开始处理）
+        self.parse_btn = PushButton("解析")
+        self.parse_btn.setToolTip("开始解析所有等待中的文件")
+        self.parse_btn.setFixedHeight(30)
+        self.parse_btn.setStyleSheet(primary_qss())
+        self.parse_btn.clicked.connect(self._on_parse)
+        self._chrome_qss_[self.parse_btn] = self.parse_btn.styleSheet()
+        layout.addWidget(self.parse_btn)
+        self._update_toolbar_state()
         return bar
+
+    def _update_toolbar_state(self):
+        """按上下文刷新按钮可用性：无选中文件禁用重试/复制/导出；
+        无等待文件禁用「解析」"""
+        selected = self.file_panel.selected_path() is not None
+        for btn in getattr(self, "_tool_buttons", []):
+            btn.setEnabled(selected)
+        if hasattr(self, "parse_btn"):
+            self.parse_btn.setEnabled(
+                bool(self.file_panel.queued_paths()))
+
+    def _pill_button(self, text: str) -> PushButton:
+        """药丸页码条内的扁平翻页按钮（样式由 _style_page_area 统一管理）"""
+        btn = PushButton(text)
+        btn.setFixedSize(26, 24)
+        btn.setStyleSheet(self._pill_button_qss(False))
+        return btn
+
+    def _segment_button(self, text: str) -> PushButton:
+        """视图分段开关按钮：选中=白底 + accent 字（凹陷轨道上的浮起片）"""
+        btn = PushButton(text)
+        btn.setCheckable(True)
+        btn.setFixedHeight(26)
+        qss = self._segment_button_qss()
+        btn.setStyleSheet(qss)
+        self._chrome_qss_[btn] = qss
+        return btn
 
     def _create_view_area(self) -> QWidget:
         wrap = QWidget()
         layout = QVBoxLayout(wrap)
-        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.doc_view = OcrDocView()
         self.json_view = OcrJsonView()
         self.json_view.setVisible(False)
+        # 空态引导卡可点击：点击 = 打开文件选择器（把「第一步」变成动作）
+        self.doc_view.guide_clicked.connect(self._on_add_files)
         layout.addWidget(self.doc_view, 1)
         layout.addWidget(self.json_view, 1)
         return wrap
@@ -217,43 +463,73 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
     # ── 文件与处理 ─────────────────────────────────────────────
 
     def add_files(self, paths):
+        """添加并立即开始解析（内部/测试用语义；UI 走 queue_files + 解析按钮）"""
+        self.queue_files(paths)
+        self.processor.start()
+
+    def queue_files(self, paths):
+        """仅把文件加入队列面板，不启动解析（手动解析模式：等「解析」按钮）"""
         for p in paths:
             self.file_panel.add_file(p)
             self._add_history(p)
         self.processor.add_files(paths)
-        self.processor.start()
+        self._update_toolbar_state()
 
     def _on_add_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "选择文件", "",
             "文档/图片 (*.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff)")
         if paths:
-            self.add_files(paths)
+            self._set_status(f"已添加 {len(paths)} 个文件，点击「解析」开始")
+            self.queue_files(paths)
+
+    def _on_files_dropped(self, paths):
+        """拖拽文件入队：与「+ 加文件」同语义（手动解析模式）"""
+        self._set_status(f"已拖入 {len(paths)} 个文件，点击「解析」开始")
+        self.queue_files(paths)
+
+    def _on_parse(self):
+        """手动解析：把本次会话中状态为等待的文件入队并开始处理"""
+        files = self.file_panel.queued_paths()
+        if not files:
+            InfoBar.info(title="没有待解析的文件",
+                         content="可先点击左侧「+ 加文件」添加文档",
+                         parent=self, duration=2500)
+            return
+        # 已在队列中的条目 add_files 去重为 no-op；正在处理的文件面板
+        # 状态已是"识别中"，不会出现在 queued_paths 里
+        self.processor.add_files(files)
+        self._set_status(f"开始解析 {len(files)} 个文件")
+        if not self.processor.is_running():
+            self.processor.start()
 
     def _on_file_selected(self, path):
         pages = self.processor.get_cache(path)
         if pages is not None:
             # 已缓存（含空列表——取消等场景的部分结果）→ 直接展示，不重复入队
             self._show_file(path, pages)
+            return
+        # 未缓存：仅选中，不自动入队（手动解析模式，点「解析」后才处理）
+        self.file_label.setText(os.path.basename(path))
+        self.page_spin.blockSignals(True)
+        self.page_spin.setRange(1, 1)
+        self.page_spin.setValue(1)
+        self.page_spin.blockSignals(False)
+        self.total_label.setText("/ 1")
+        self._page_active = False
+        self.page_group.setVisible(False)
+        self._style_page_area()
+        self._update_toolbar_state()
+        if path == getattr(self, "_processing_path", None):
+            self._set_status(f"{os.path.basename(path)} 正在处理中，完成后自动展示")
+        elif path in self.processor.pending_items():
+            self._set_status(f"{os.path.basename(path)} 已在解析队列中")
+        elif self.file_panel.is_history_file(
+                self.file_panel.file_id_by_path(path)):
+            # 历史分组文件：不参与「解析」批量处理，选中后点「重试」单独解析
+            self._set_status(f"{os.path.basename(path)} 来自历史记录，点「重试」解析")
         else:
-            # 未缓存 → 自动入队解析；导航复位到单页（防残留页号）
-            self.file_label.setText(os.path.basename(path))
-            self.page_spin.blockSignals(True)
-            self.page_spin.setRange(1, 1)
-            self.page_spin.setValue(1)
-            self.page_spin.blockSignals(False)
-            self.total_label.setText("/ 1")
-            if path in self.processor.pending_items():
-                # 已在队列/正在处理：只提示不重新入队。add_files 会把目标
-                # discard 出本次运行快照再加入 _queue——若文件正在处理中，
-                # 续跑机制会重跑一次；点击应仅为选中查看，故在此拦截。
-                self._set_status(f"{os.path.basename(path)} 已在处理队列中")
-                return
-            self.processor.add_files([path])
-            if self.processor.is_running():
-                self._set_status("已加入队列（当前批次结束后处理）")
-            else:
-                self.processor.start()
+            self._set_status(f"{os.path.basename(path)} 等待解析，点击「解析」开始")
 
     def _on_file_remove_requested(self, path):
         """删除单个文件：只清该文件缓存 + 失效其渲染图。
@@ -264,6 +540,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         """
         self.processor.clear_cache(path)
         self._render_cache.pop(path, None)
+        self._update_toolbar_state()
 
     def _on_files_cleared(self):
         if self.processor.is_running():
@@ -290,18 +567,59 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         self.page_spin.setValue(1)
         self.page_spin.blockSignals(False)
         self.total_label.setText("/ 1")
+        self._page_active = False
+        self.page_group.setVisible(False)
+        self._style_page_area()
+        if hasattr(self, 'page_position'):
+            self.page_position.setVisible(False)
         self.doc_view.clear_view()
         self.json_view.clear()
         self._rendered_path = None
+        self._set_status("添加文件后点击「解析」开始识别")
+        self._update_toolbar_state()
 
     # ── 视图 ───────────────────────────────────────────────────
 
     def _switch_view(self, name):
         self._active_view = name
+        outgoing = self.json_view if name == "doc" else self.doc_view
+        incoming = self.doc_view if name == "doc" else self.json_view
         self.view_doc_btn.setChecked(name == "doc")
         self.view_json_btn.setChecked(name == "json")
-        self.doc_view.setVisible(name == "doc")
-        self.json_view.setVisible(name == "json")
+        # 视图中部切换：新版入场淡入 150ms（尊重全局动画开关/reduced-motion）
+        incoming.setVisible(True)
+        self._fade_in_view(incoming)
+        outgoing.setVisible(False)
+
+    def _fade_in_view(self, widget):
+        """视图入场淡入（150ms）。动画禁用时为纯显示，不挂载效果。
+
+        QGraphicsOpacityEffect 只负责过渡期间的透明度，动画结束后移除，
+        避免常驻效果带来额外合成开销。
+        """
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+        anim = AnimationManager.animate(effect, b"opacity", 0.0, 1.0, 150)
+        if anim is None:
+            effect.setOpacity(1.0)
+            widget.setGraphicsEffect(None)
+        else:
+            def _finished():
+                widget.setGraphicsEffect(None)
+
+            anim.finished.connect(_finished)
+
+    def _update_page_position(self):
+        """胶片页码条细线：按「当前页 / 总页」占比填充（≤1 页时隐藏）"""
+        if not hasattr(self, 'page_position'):
+            return
+        total = self.page_spin.maximum()
+        visible = total > 1
+        self.page_position.setVisible(visible)
+        if visible:
+            self.page_position.setRange(1, total)
+            self.page_position.setValue(self.page_spin.value())
 
     def _on_page_changed(self, page_no):
         # 当前文件缓存页 → 重新渲染
@@ -311,18 +629,24 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         pages = self.processor.get_cache(path)
         if pages and 1 <= page_no <= len(pages):
             self._render_page(path, pages[page_no - 1], page_no)
+        self._update_page_position()
 
     def _show_file(self, path, pages):
         if not pages:
             return
         self.file_label.setText(f"{os.path.basename(path)} · {len(pages)} 页")
         self.total_label.setText(f"/ {len(pages)}")
+        self._page_active = True
+        self.page_group.setVisible(True)
+        self._style_page_area()
+        self._update_toolbar_state()  # 文件已展示 → 重试/复制/导出点亮
         # blockSignals：setRange 钳位 / setValue(1) 都会触发 valueChanged
         # 导致 _on_page_changed 二次渲染，此处统一抑制
         self.page_spin.blockSignals(True)
         self.page_spin.setRange(1, len(pages))
         self.page_spin.setValue(1)
         self.page_spin.blockSignals(False)
+        self._update_page_position()
         self._render_page(path, pages[0], 1)
 
     def _render_page(self, path, page_result, page_no):
@@ -519,6 +843,28 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         return "\n".join(lines)
 
     def _on_export(self):
+        """导出按钮：弹出格式菜单（TXT / Markdown / JSON / 全部格式）"""
+        if not hasattr(self, 'export_btn'):
+            return
+        menu = QMenu(self)
+        txt = menu.addAction("TXT 文本")
+        md = menu.addAction("Markdown")
+        j = menu.addAction("JSON")
+        menu.addSeparator()
+        all_ = menu.addAction("全部格式")
+        chosen = menu.exec(self.export_btn.mapToGlobal(
+            QPoint(0, self.export_btn.height())))
+        if chosen is txt:
+            self._do_export("txt")
+        elif chosen is md:
+            self._do_export("md")
+        elif chosen is j:
+            self._do_export("json")
+        elif chosen is all_:
+            self._do_export(None)
+
+    def _do_export(self, fmt):
+        """执行导出：fmt ∈ {"txt","md","json", None=全部三格式}"""
         path = self.file_panel.selected_path()
         pages = self.processor.get_cache(path) if path else None
         if not pages:
@@ -531,9 +877,14 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         base = os.path.splitext(os.path.basename(path))[0]
         try:
             os.makedirs(out_dir, exist_ok=True)  # 防御：所选目录可能已被删除
-            files = export_txt(pages, out_dir, base)
-            files += export_markdown(pages, out_dir, base)
-            files += export_json(pages, out_dir, base)
+            if fmt in (None, "txt"):
+                files = export_txt(pages, out_dir, base)
+            else:
+                files = []
+            if fmt in (None, "md"):
+                files += export_markdown(pages, out_dir, base)
+            if fmt in (None, "json"):
+                files += export_json(pages, out_dir, base)
         except Exception as e:
             logger.warning(f"导出失败: {e}")
             InfoBar.error(title="导出失败", content=str(e),
@@ -570,9 +921,10 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         for entry in self._load_history():
             try:
                 if os.path.exists(entry["path"]):
-                    fid = self.file_panel.add_file(entry["path"])
-                    # 历史恢复：未自动入队，提示点击后重新解析（T8 点击即入队）
-                    self.file_panel.set_status(fid, "queued", "点击重新解析")
+                    # 历史文件归入「历史记录」分组（默认折叠），不占本次会话；
+                    # 不参与「解析」批量处理，选中后点「重试」单独解析
+                    fid = self.file_panel.add_file(entry["path"], history=True)
+                    self.file_panel.set_status(fid, "queued", "点「重试」解析")
             except Exception as e:
                 logger.warning(f"历史记录条目损坏，跳过: {e}")
 
@@ -598,6 +950,11 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
     def _on_processor_file_started(self, path, idx, total):
         self._processing_path = path
         self._set_status(f"解析中 {idx + 1}/{total}")
+        # 徽章标记"识别中"：进行中文件不再被「解析」按钮重复入队
+        fid = self.file_panel.file_id_by_path(path)
+        if fid:
+            self.file_panel.set_status(fid, "processing")
+        self._update_toolbar_state()
 
     def _on_processor_file_done(self, path, pages):
         self._render_cache.pop(path, None)  # 重解析内容变化 → 旧渲染图失效
@@ -607,6 +964,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             total = sum(1 for p in pages if p.markdown or p.blocks)
             self.file_panel.set_status(fid, "done",
                                        f"{len(pages)} 页 · 成功 {total}")
+        self._update_toolbar_state()
         if self.file_panel.selected_path() == path:
             self._show_file(path, pages)
 
@@ -615,6 +973,7 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
         fid = self.file_panel.file_id_by_path(path)
         if fid:
             self.file_panel.set_status(fid, "failed", err)
+        self._update_toolbar_state()
         InfoBar.error(title="解析失败", content=f"{os.path.basename(path)}: {err}",
                       parent=self, duration=3000)
 
@@ -636,10 +995,12 @@ class OcrMainWindow(AppBaseWindowMixin, FluentWindow):
             if fid:
                 self.file_panel.set_status(fid, "cancelled")
             self._processing_path = None
+        self._update_toolbar_state()
 
     def _on_processor_all_done(self):
         self._processing_path = None
         self._set_status("解析完成")
+        self._update_toolbar_state()
 
     # ── 窗口生命周期 ───────────────────────────────────────────
 

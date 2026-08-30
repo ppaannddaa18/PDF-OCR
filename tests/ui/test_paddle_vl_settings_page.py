@@ -162,3 +162,37 @@ class TestDynamicSettingsPage:
         _destroy(w)
         ThemeManager.set_design('default')
         ThemeManager.set_theme('dark')
+
+
+class TestSettingsItemsEffective:
+    """端到端：设置页每个调整项 → patch → config 合并 → 重建引擎实例属性
+
+    覆盖 5 个键位（block_spotting / max_new_tokens / repetition_penalty /
+    vision_sdpa / spotting_max_pixels），模拟「重启引擎」路径
+    （reset_instance + 重新构造，与 gguf 窗口 _reinit_engine_in_process 一致）。
+    """
+
+    def test_all_items_rebuild_engine_effective(self, qapp):
+        from app.core.ocr_engine_paddle_vl import PaddleOCRVLEngine
+        PaddleOCRVLEngine.reset_instance()
+        try:
+            form = PaddleVlSettingsForm({"ocr": {"paddle_vl": {}}})
+            form.sw_block_spotting.setChecked(True)
+            form.ed_max_tokens.setText("2048")
+            form.ed_repetition_penalty.setText("1.3")
+            form.sw_vision_sdpa.setChecked(False)
+            form.ed_spotting_max_pixels.setText("800000")
+            patch = form.get_config_patch()
+            pv = patch["ocr"]["paddle_vl"]
+
+            assert pv == {"block_spotting": 1, "max_new_tokens": 2048,
+                          "repetition_penalty": 1.3, "vision_sdpa": 0,
+                          "spotting_max_pixels": 800000}
+            eng = PaddleOCRVLEngine({"ocr": {"paddle_vl": dict(pv)}})
+            assert eng._block_spotting is True
+            assert eng._max_new_tokens == 2048
+            assert eng._repetition_penalty == 1.3
+            assert eng._vision_sdpa is False
+            assert eng._spotting_max_pixels == 800000
+        finally:
+            PaddleOCRVLEngine.reset_instance()
