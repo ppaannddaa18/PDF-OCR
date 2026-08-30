@@ -691,6 +691,31 @@ class PaddleOCRVLEngine(OCREngineBase):
             except (TypeError, ValueError, IndexError):
                 # 单行坐标解析失败不影响其余行
                 continue
+        # 逐块模式官方分派块（表格/图表/公式/印章/图片/text）：内容已并入
+        # markdown，这里补成带 bbox 的 Block——不补则预览检测框缺失表格/图片
+        # 区域（有文无框）。spotting 标签块与 spotting 行同源跳过防重复；
+        # 空内容/无效/零面积 bbox 过滤防噪声框。整页模式 parsing_res_list
+        # 仅假盒 spotting 块 → 行为不变。
+        for b in (res.get("parsing_res_list") or []):
+            label = (getattr(b, "label", None)
+                     or getattr(b, "block_label", None))
+            if label == "spotting":
+                continue
+            content = str(getattr(b, "content", "") or "")
+            if not content:
+                continue
+            bb = getattr(b, "bbox", None)
+            if not isinstance(bb, (list, tuple)) or len(bb) != 4:
+                continue
+            try:
+                x1, y1, x2, y2 = (float(v) for v in bb)
+            except (TypeError, ValueError):
+                continue
+            if x2 - x1 <= 0 or y2 - y1 <= 0:
+                continue
+            blocks.append(Block(
+                block_type=label or "text", content=content,
+                bbox=[x1, y1, x2, y2], confidence=1.0))
         # markdown：spotting 行 + parsing_res_list 非 spotting 块内容（逐块
         # 模式下表格/图表/公式/印章/image OCR 走官方分派落在 parsing_res_list，
         # 需并入防内容丢失；spotting 标签块内容与 spotting 行同源，跳过防重复；
@@ -705,7 +730,7 @@ class PaddleOCRVLEngine(OCREngineBase):
                 if content:
                     parts.append(str(content))
         markdown = "\n".join(parts) if parts else self._result_text(res)
-        logger.info(f"PaddleOCR-VL 页面解析完成: {len(blocks)} lines, "
+        logger.info(f"PaddleOCR-VL 页面解析完成: {len(blocks)} blocks, "
                     f"{elapsed:.0f}ms")
         # raw_json 副本必须先于 del res 构造（res 持有整页 output_img 等大对象，
         # 转换后的原生列表与原 numpy 数据解耦）

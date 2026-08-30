@@ -1119,11 +1119,14 @@ def test_assemble_table_branch_produces_html(monkeypatch):
 
 
 def test_recognize_page_auto_markdown_merges_dispatch_blocks():
-    """T3：逐块分派后表格/图表等块落在 parsing_res_list → 并入 markdown；
+    """逐块分派后表格/图表等块落在 parsing_res_list → 并入 markdown；
+    带有效 bbox 的官方分派块补成 Block（预览检测框覆盖表格/图片区域）；
     spotting 标签块与 spotting 行同源不重复"""
     spot_block = _FakeBlockReal("spotting", "文本行 A\n\n文本行 B")
-    table_block = _FakeBlockReal("table", "<table><tr><td>金额</td></tr></table>")
-    chart_block = _FakeBlockReal("chart", "图表描述文字")
+    table_block = _FakeBlockReal(
+        "table", "<table><tr><td>金额</td></tr></table>",
+        bbox=[20, 100, 620, 500])
+    chart_block = _FakeBlockReal("chart", "图表描述文字")  # bbox 默认零面积
     pipe = _FakePipe([{
         "spotting_res": _spot_res([
             ("文本行 A", (0, 0, 10, 10)),
@@ -1136,8 +1139,32 @@ def test_recognize_page_auto_markdown_merges_dispatch_blocks():
     assert result.markdown == (
         "文本行 A\n文本行 B\n<table><tr><td>金额</td></tr></table>\n"
         "图表描述文字")
-    # blocks 仍仅为 spotting 行（表格不进入行级坐标块）
-    assert [b.content for b in result.blocks] == ["文本行 A", "文本行 B"]
+    # spotting 行 + 表格块（有效 bbox）；chart 零面积 bbox 被过滤
+    assert [b.content for b in result.blocks] == [
+        "文本行 A", "文本行 B",
+        "<table><tr><td>金额</td></tr></table>"]
+    table_blk = result.blocks[2]
+    assert table_blk.block_type == "table"
+    assert table_blk.bbox == [20.0, 100.0, 620.0, 500.0]
+
+
+def test_recognize_page_auto_dispatch_blocks_filters():
+    """分派块转 Block 的过滤规则：空内容/无效 bbox/非数值坐标不进入 blocks"""
+    spot_block = _FakeBlockReal("spotting", "整页文本")
+    no_content = _FakeBlockReal("text", "", bbox=[1, 1, 50, 50])
+    bad_bbox = _FakeBlockReal("chart", "有内容但 bbox 非四元", bbox=[1, 2, 3])
+    nan_bbox = _FakeBlockReal("seal", "有内容但坐标非法", bbox=["a", "b", "c", "d"])
+    image_block = _FakeBlockReal("image", "☐☑☐", bbox=[70, 10, 120, 60])
+    pipe = _FakePipe([{
+        "spotting_res": _spot_res([("整页文本", (0, 0, 10, 10))]),
+        "parsing_res_list": [
+            spot_block, no_content, bad_bbox, nan_bbox, image_block],
+    }])
+    eng = _make_engine(pipe)
+    result = eng.recognize_page_auto(Image.new("RGB", (200, 100), "white"))
+    # 仅 spotting 行 + image 块（内容非空、bbox 有效）；其余全部过滤
+    assert [b.block_type for b in result.blocks] == ["text", "image"]
+    assert result.blocks[1].bbox == [70.0, 10.0, 120.0, 60.0]
 
 
 # ── raw_json 填充（JSON 视图/导出数据源） ─────────────────────
