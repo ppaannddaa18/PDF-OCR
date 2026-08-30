@@ -229,4 +229,4 @@ QT_QPA_PLATFORM=offscreen venv\Scripts\python.exe -m pytest tests/ -q
 
 ## 许可证
 
-MIT License
+[MIT License](LICENSE)
