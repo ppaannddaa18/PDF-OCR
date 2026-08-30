@@ -57,3 +57,9 @@ llava*.dll
 # 项目级 Codex 配置（可能包含 API Key 等敏感信息）
 .codex/
 venv-paddle/
+
+# 会话级产物（ZCode 计划文件等，不入库）
+.zcode/
+
+# 本地导出的临时文档
+知乎热榜报告-*.md
